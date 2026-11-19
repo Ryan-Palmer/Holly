@@ -40,6 +40,20 @@ class AudioConfig:
 
 
 @dataclass(frozen=True)
+class ListenConfig:
+    input_device: str
+    input_channels: list[int]
+    start_threshold: float
+    end_threshold: float
+    end_silence_ms: int
+    min_speech_ms: int
+    preroll_ms: int
+    whisper_model: str
+    whisper_device: str
+    whisper_compute_type: str
+
+
+@dataclass(frozen=True)
 class PersonaConfig:
     system_prompt: Path
     examples: Path
@@ -51,6 +65,7 @@ class Config:
     llm: LlmConfig
     tts: TtsConfig
     audio: AudioConfig
+    listen: ListenConfig
     persona: PersonaConfig
 
 
@@ -63,6 +78,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         llm=LlmConfig(**raw["llm"]),
         tts=TtsConfig(**raw["tts"]),
         audio=AudioConfig(**raw["audio"]),
+        listen=ListenConfig(**raw["listen"]),
         persona=PersonaConfig(
             system_prompt=base / p["system_prompt"],
             examples=base / p["examples"],

@@ -65,6 +65,34 @@ Audio plays through WASAPI, because Windows' default MME path adds about
 100 ms. Orpheus opens every utterance with about 170 ms of silence, so that
 silence is trimmed from the first sentence of each reply.
 
+## Milestone 3: the voice loop
+
+Speak to Holly, and she answers out loud:
+
+```
+.venv\Scripts\python -m app.listen
+```
+
+Silero VAD hears you start and stop. You've finished once you've been quiet
+for 400 ms (`end_silence_ms` in `holly.toml`; raise it if Holly cuts in
+while you pause). faster-whisper then transcribes what you said, and the
+milestone 2 pipeline answers. Timings count from when you stopped speaking.
+
+It's half-duplex for now: the mic is ignored while Holly talks and for
+0.3 s after, so she doesn't hear herself. Interrupting her is milestone 5.
+Use a headset anyway.
+
+The microphone is the WASAPI default input, with all its channels mixed. Set
+`input_device` and `input_channels` under `[listen]` to choose.
+
+Run one Holly at a time. The full loop uses about 25 GB of the 5090's
+32 GB, and Windows takes a few more for the desktop. If VRAM runs out,
+Windows quietly moves GPU memory into system RAM and everything crawls, so
+the app warns at startup when less than 1 GB is free.
+
+The first run on a new machine (or after a driver update) takes about 20 s
+longer while CUDA compiles Whisper's kernels for the GPU.
+
 ## Tuning Holly
 
 - `persona/system_prompt.md` holds the character and the rules for speech.

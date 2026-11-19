@@ -9,7 +9,9 @@ base_url = "http://127.0.0.1:1234"
 model = "google/gemma-4-31b-qat"
 # Load with a small context. LM Studio's default for these models is 100k+
 # tokens, whose KV cache spills out of VRAM and slows everything down.
-context_length = 8192
+# 4096 holds the persona (~600 tokens) and 24 turns of history (~1,300), and
+# saves 1.1 GB over 8192, which the full voice loop needs.
+context_length = 4096
 # Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.
 reasoning_effort = "none"
 temperature = 0.8
@@ -36,6 +38,29 @@ host_api = "Windows WASAPI"
 output_device = ""
 # Samples per playback block at 24 kHz; 480 is 20 ms.
 blocksize = 480
+
+[listen]
+# Microphone, within audio.host_api: a name (or part of one), or empty for
+# that host API's default input.
+input_device = ""
+# Which of the device's channels to mix into mono, counting from 1; empty
+# mixes them all. Set this to the mic's channel if the others are noisy.
+input_channels = []
+# Silero VAD: speech starts above start_threshold and is over after
+# end_silence_ms below end_threshold. 400 ms is the plan's starting point;
+# raise it if Holly cuts in while you pause mid-sentence.
+start_threshold = 0.5
+end_threshold = 0.35
+end_silence_ms = 400
+# Turns shorter than this are coughs, clicks and keyboard noise.
+min_speech_ms = 250
+# Audio kept from before speech starts, so the first syllable isn't clipped.
+preroll_ms = 300
+whisper_model = "large-v3-turbo"
+whisper_device = "cuda"
+# int8 weights: same transcripts and speed as float16 in half the VRAM
+# (2.2 GB against 4.3, counting CTranslate2's memory cache).
+whisper_compute_type = "int8_float16"
 
 [persona]
 system_prompt = "persona/system_prompt.md"

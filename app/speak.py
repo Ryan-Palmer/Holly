@@ -31,9 +31,11 @@ DIM, RESET, CYAN = "\033[2m", "\033[0m", "\033[36m"
 
 @dataclasses.dataclass
 class TurnTimes:
-    """perf_counter() stamps for one reply, from pressing Enter."""
+    """perf_counter() stamps for one reply, from pressing Enter or, when
+    talking, from the end of your speech."""
 
-    enter: float
+    start: float
+    transcribed: float | None = None
     first_token: float | None = None
     first_sentence: float | None = None
     first_audio: float | None = None
@@ -43,10 +45,11 @@ class TurnTimes:
 
     def report(self) -> str:
         def ms(t: float | None) -> str:
-            return f"{(t - self.enter) * 1000:.0f}" if t else "-"
+            return f"{(t - self.start) * 1000:.0f}" if t else "-"
 
         return (
-            f"first token {ms(self.first_token)}, first sentence {ms(self.first_sentence)}, "
+            (f"transcribed {ms(self.transcribed)}, " if self.transcribed else "")
+            + f"first token {ms(self.first_token)}, first sentence {ms(self.first_sentence)}, "
             f"first audio {ms(self.first_audio)}, first sound {ms(self.first_played)}, "
             f"first voice {ms(self.first_voice)} ms"
             + (f", {self.underruns} underruns" if self.underruns else "")
@@ -54,6 +57,8 @@ class TurnTimes:
 
 
 class Holly:
+    HINT = " /reset to start over, /quit to leave."
+
     def __init__(self, model: str | None, voice: str | None):
         cfg = load_config()
         if voice:
@@ -80,12 +85,13 @@ class Holly:
         self.player.start()
         print(
             f"{DIM}Holly is on {self.model}, voice {self.cfg.tts.voice}, "
-            f"playing through {self.player.device_name}. /reset to start over, /quit to leave.{RESET}\n"
+            f"playing through {self.player.device_name}.{self.HINT}{RESET}\n"
         )
 
-    async def respond(self, user: str) -> None:
+    async def respond(self, user: str, times: TurnTimes | None = None) -> TurnTimes:
+        """Answer `user` out loud. Pass `times` to count from an earlier start."""
         assert self.tts and self.player
-        times = TurnTimes(enter=time.perf_counter())
+        times = times or TurnTimes(start=time.perf_counter())
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
         parts: list[str] = []
         self.player.begin_turn()
@@ -125,6 +131,7 @@ class Holly:
         times.underruns = self.player.underruns
         self.convo.record(user, "".join(parts).strip())
         print(f"{DIM}  {times.report()}{RESET}\n")
+        return times
 
     async def run(self) -> None:
         await self.start()

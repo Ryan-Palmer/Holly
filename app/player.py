@@ -14,31 +14,31 @@ import sounddevice as sd
 VOICE_LEVEL = 0.01
 
 
-def find_output_device(host_api: str, device: str) -> tuple[int, str]:
-    """The output device index, and its host API's name.
+def find_device(kind: str, host_api: str, device: str) -> tuple[int, str]:
+    """An "input" or "output" device's index, and its host API's name.
 
-    With a host API, the device is that API's default output, or the first of
-    its outputs whose name contains `device`. Without one, it's sounddevice's
+    With a host API, the device is that API's default, or the first of its
+    devices whose name contains `device`. Without one, it's sounddevice's
     own default, or a match across all APIs.
     """
     apis = sd.query_hostapis()
     candidates = [
         (i, d) for i, d in enumerate(sd.query_devices())
-        if d["max_output_channels"] > 0
+        if d[f"max_{kind}_channels"] > 0
         and (not host_api or apis[d["hostapi"]]["name"] == host_api)
     ]
     if not candidates:
-        raise ValueError(f"No output devices for host API {host_api!r}")
+        raise ValueError(f"No {kind} devices for host API {host_api!r}")
     if device:
         for i, d in candidates:
             if device.lower() in d["name"].lower():
                 return i, apis[d["hostapi"]]["name"]
-        raise ValueError(f"No output device matching {device!r} in {host_api or 'any host API'}")
+        raise ValueError(f"No {kind} device matching {device!r} in {host_api or 'any host API'}")
     if host_api:
         api = next(a for a in apis if a["name"] == host_api)
-        index = api["default_output_device"]
+        index = api[f"default_{kind}_device"]
     else:
-        index = sd.default.device[1]
+        index = sd.default.device[0 if kind == "input" else 1]
     return index, apis[sd.query_devices(index)["hostapi"]]["name"]
 
 
@@ -62,7 +62,7 @@ class Player:
         self.first_voice: float | None = None
         # Blocks that ran out of audio mid-reply: audible as stutters.
         self.underruns = 0
-        index, api_name = find_output_device(host_api, device)
+        index, api_name = find_device("output", host_api, device)
         self.device_name = f"{sd.query_devices(index)['name']} ({api_name})"
         extra = sd.WasapiSettings(auto_convert=True) if "WASAPI" in api_name else None
         self.stream = sd.OutputStream(

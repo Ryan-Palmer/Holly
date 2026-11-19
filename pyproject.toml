@@ -9,6 +9,8 @@ dependencies = [
     "numpy>=1.26",
     "sounddevice>=0.4.6",
     "snac>=1.2",
+    "faster-whisper>=1.1",
+    "silero-vad>=5.1",
     # Install torch from PyTorch's CUDA 12.8+ index first; see README.
     "torch>=2.7",
 ]
