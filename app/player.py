@@ -1,0 +1,150 @@
+"""Streaming audio playback: chunks go in a queue, sounddevice pulls them out."""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import threading
+import time
+
+import numpy as np
+import sounddevice as sd
+
+# -40 dBFS: well above the silence Orpheus pads with, well below speech.
+VOICE_LEVEL = 0.01
+
+
+def find_output_device(host_api: str, device: str) -> tuple[int, str]:
+    """The output device index, and its host API's name.
+
+    With a host API, the device is that API's default output, or the first of
+    its outputs whose name contains `device`. Without one, it's sounddevice's
+    own default, or a match across all APIs.
+    """
+    apis = sd.query_hostapis()
+    candidates = [
+        (i, d) for i, d in enumerate(sd.query_devices())
+        if d["max_output_channels"] > 0
+        and (not host_api or apis[d["hostapi"]]["name"] == host_api)
+    ]
+    if not candidates:
+        raise ValueError(f"No output devices for host API {host_api!r}")
+    if device:
+        for i, d in candidates:
+            if device.lower() in d["name"].lower():
+                return i, apis[d["hostapi"]]["name"]
+        raise ValueError(f"No output device matching {device!r} in {host_api or 'any host API'}")
+    if host_api:
+        api = next(a for a in apis if a["name"] == host_api)
+        index = api["default_output_device"]
+    else:
+        index = sd.default.device[1]
+    return index, apis[sd.query_devices(index)["hostapi"]]["name"]
+
+
+class Player:
+    """Plays float32 mono chunks in order, as they arrive.
+
+    The sounddevice callback runs on its own thread, so the queue is guarded
+    by a lock. Between replies the stream keeps running and plays silence.
+    """
+
+    def __init__(self, sample_rate: int, blocksize: int, host_api: str = "", device: str = ""):
+        self._chunks: collections.deque[np.ndarray] = collections.deque()
+        self._pos = 0
+        self._lock = threading.Lock()
+        self._ending = False
+        self._done: asyncio.Event | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.first_played: float | None = None
+        # When the first sample above VOICE_LEVEL left the speakers. Orpheus
+        # opens every utterance with ~170 ms of silence, so this is later.
+        self.first_voice: float | None = None
+        # Blocks that ran out of audio mid-reply: audible as stutters.
+        self.underruns = 0
+        index, api_name = find_output_device(host_api, device)
+        self.device_name = f"{sd.query_devices(index)['name']} ({api_name})"
+        extra = sd.WasapiSettings(auto_convert=True) if "WASAPI" in api_name else None
+        self.stream = sd.OutputStream(
+            samplerate=sample_rate,
+            channels=1,
+            dtype="float32",
+            blocksize=blocksize,
+            latency="low",
+            device=index,
+            extra_settings=extra,
+            callback=self._callback,
+        )
+
+    def start(self) -> None:
+        self.stream.start()
+
+    def close(self) -> None:
+        self.stream.stop()
+        self.stream.close()
+
+    def begin_turn(self) -> None:
+        """Reset for a new reply. Call from the event loop."""
+        with self._lock:
+            self._ending = False
+            self.first_played = None
+            self.first_voice = None
+            self.underruns = 0
+        self._loop = asyncio.get_running_loop()
+        self._done = asyncio.Event()
+
+    def put(self, chunk: np.ndarray) -> None:
+        if chunk.size:
+            with self._lock:
+                self._chunks.append(chunk)
+
+    def end_turn(self) -> None:
+        """No more chunks are coming; `wait_done` returns once they've played."""
+        with self._lock:
+            self._ending = True
+            if not self._chunks:
+                self._signal_done()
+
+    def clear(self) -> None:
+        """Drop everything queued, for barge-in."""
+        with self._lock:
+            self._chunks.clear()
+            self._pos = 0
+            if self._ending:
+                self._signal_done()
+
+    async def wait_done(self) -> None:
+        assert self._done is not None
+        await self._done.wait()
+
+    def _signal_done(self) -> None:
+        if self._loop and self._done:
+            self._loop.call_soon_threadsafe(self._done.set)
+
+    def _callback(self, outdata, frames, time_info, status) -> None:
+        out = outdata[:, 0]
+        filled = 0
+        with self._lock:
+            while filled < frames and self._chunks:
+                chunk = self._chunks[0]
+                n = min(frames - filled, len(chunk) - self._pos)
+                out[filled : filled + n] = chunk[self._pos : self._pos + n]
+                filled += n
+                self._pos += n
+                if self._pos >= len(chunk):
+                    self._chunks.popleft()
+                    self._pos = 0
+            if filled < frames and self.first_played is not None and not self._ending:
+                self.underruns += 1
+            if filled and (self.first_played is None or self.first_voice is None):
+                # When this block will actually leave the speakers.
+                dac = time.perf_counter() + max(time_info.outputBufferDacTime - time_info.currentTime, 0.0)
+                if self.first_played is None:
+                    self.first_played = dac
+                loud = np.flatnonzero(np.abs(out[:filled]) > VOICE_LEVEL)
+                if loud.size:
+                    self.first_voice = dac + loud[0] / self.stream.samplerate
+            if self._ending and not self._chunks:
+                self._ending = False
+                self._signal_done()
+        out[filled:] = 0

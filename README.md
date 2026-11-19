@@ -9,8 +9,13 @@ Everything runs on this machine. LM Studio serves the LLM on port 1234.
 
 ```
 python -m venv .venv
+.venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
 .venv\Scripts\python -m pip install -e .
 ```
+
+Install PyTorch first, from PyTorch's own index. The RTX 5090 needs a build
+for CUDA 12.8 or newer. The default build from PyPI doesn't support it, and
+then everything silently falls back to the CPU.
 
 ## Milestone 1: text Holly
 
@@ -32,6 +37,33 @@ Score the persona against the 20 test prompts in `persona/test_prompts.txt`:
 ```
 
 Reports go to `runs/`. Read them for character as well as for the pass count.
+
+## Milestone 2: Holly speaks
+
+Type to Holly, and she answers out loud in a stock voice:
+
+```
+.venv\Scripts\python -m app.speak
+.venv\Scripts\python -m app.speak --voice dan
+```
+
+The reply is cut into sentences as the LLM writes it. Each sentence goes to
+Orpheus, a TTS model running in LM Studio, and the audio plays as it's
+decoded. After each reply the app shows these times, counted from pressing
+Enter:
+
+- first token: the LLM's first word of the reply
+- first sentence: the first chunk handed to TTS
+- first audio: the first decoded audio
+- first sound: that audio leaving the speakers
+- first voice: the first audible speech, which is the number that matters
+
+Underruns are moments when playback ran out of audio, which you'd hear as
+stutters.
+
+Audio plays through WASAPI, because Windows' default MME path adds about
+100 ms. Orpheus opens every utterance with about 170 ms of silence, so that
+silence is trimmed from the first sentence of each reply.
 
 ## Tuning Holly
 

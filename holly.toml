@@ -15,6 +15,28 @@ reasoning_effort = "none"
 temperature = 0.8
 max_tokens = 200
 
+[tts]
+# Stock voice until the cloned one is ready. Orpheus runs in LM Studio and
+# emits SNAC audio codes, which are decoded to 24 kHz audio on the GPU.
+model = "orpheus-3b-0.1-ft"
+context_length = 4096
+# Preset voices: tara, leah, jess, mia, zoe (female); leo, dan, zac (male).
+voice = "leo"
+temperature = 0.6
+top_p = 0.9
+repeat_penalty = 1.1
+snac_model = "hubertsiuzdak/snac_24khz"
+device = "cuda"
+
+[audio]
+# WASAPI adds a few ms of output latency; MME, sounddevice's default on
+# Windows, adds about 100 ms.
+host_api = "Windows WASAPI"
+# Output device name (or part of it) within that host API; empty for its default.
+output_device = ""
+# Samples per playback block at 24 kHz; 480 is 20 ms.
+blocksize = 480
+
 [persona]
 system_prompt = "persona/system_prompt.md"
 examples = "persona/examples.toml"

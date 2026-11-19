@@ -14,11 +14,12 @@ _HEADING = re.compile(r"^\s*#+\s*", re.MULTILINE)
 _MARKDOWN_CHARS = re.compile(r"[*_`#|>~]")
 _URL = re.compile(r"https?://\S+")
 _SENTENCE_END = re.compile(r"[.!?]+[\"')”’]*(?=\s|$)")
+_CLAUSE_BREAK = re.compile(r"[,;:—–](?=\s)")
 
-# Full stops that don't end a sentence: common abbreviations, and initials
-# such as "S.S." or "J. Smith".
-_ABBREVIATIONS = re.compile(
-    r"\b(?i:Mr|Mrs|Ms|Dr|St|vs|etc|e\.g|i\.e)\.|\b(?:[A-Z]\.)+"
+# A full stop that doesn't end a sentence: after a common abbreviation, or
+# after initials such as "S.S." or "J. Smith" (but "I." and "A." can end one).
+_NOT_AN_END = re.compile(
+    r"(?:\b(?i:mr|mrs|ms|dr|st|vs|etc|e\.g|i\.e)|\b(?:[A-Z]\.)+[A-Z]|\b(?![AI]\b)[A-Z])\.$"
 )
 
 
@@ -42,10 +43,56 @@ def speech_problems(text: str) -> list[str]:
     return problems
 
 
+class SentenceChunker:
+    """Cuts a streamed reply into speakable chunks, a sentence at a time.
+
+    A sentence end only counts once the following whitespace has arrived,
+    since "3." might be "3.5". The first chunk may also be cut at a clause
+    break (a comma, say) once it has `first_clause_words` words, so the
+    voice can start sooner. Chunks come back cleaned for speech.
+    """
+
+    def __init__(self, first_clause_words: int = 6):
+        self.first_clause_words = first_clause_words
+        self.buffer = ""
+        self.cuts = 0
+
+    def feed(self, delta: str) -> list[str]:
+        self.buffer += delta
+        raw = []
+        while (cut := self._find_cut()) is not None:
+            raw.append(self.buffer[:cut])
+            self.buffer = self.buffer[cut:]
+            self.cuts += 1
+        return [c for c in map(clean_for_speech, raw) if c]
+
+    def flush(self) -> list[str]:
+        rest = clean_for_speech(self.buffer)
+        self.buffer = ""
+        return [rest] if rest else []
+
+    def _find_cut(self) -> int | None:
+        buf = self.buffer
+        for m in _SENTENCE_END.finditer(buf):
+            if m.end() >= len(buf):
+                break  # wait for the next character to be sure
+            if _NOT_AN_END.search(buf[: m.start() + 1]):
+                continue
+            return m.end()
+        if self.cuts == 0:
+            for m in _CLAUSE_BREAK.finditer(buf):
+                if len(buf[: m.start()].split()) >= self.first_clause_words:
+                    return m.end()
+        return None
+
+
+def split_sentences(text: str) -> list[str]:
+    chunker = SentenceChunker(first_clause_words=10**9)
+    return chunker.feed(text) + chunker.flush()
+
+
 def count_sentences(text: str) -> int:
-    text = _ABBREVIATIONS.sub("", text)
-    # Pieces between sentence ends; a trailing fragment with no full stop counts too.
-    return sum(1 for piece in _SENTENCE_END.split(text) if re.search(r"\w", piece))
+    return len(split_sentences(text))
 
 
 def clean_for_speech(text: str) -> str:
