@@ -93,6 +93,30 @@ the app warns at startup when less than 1 GB is free.
 The first run on a new machine (or after a driver update) takes about 20 s
 longer while CUDA compiles Whisper's kernels for the GPU.
 
+## Voice dataset
+
+`voice/prep.py` turns recordings of Holly into a dataset for voice cloning.
+It runs in its own venv: see `voice/requirements.txt` for setup.
+
+```
+voice\.venv\Scripts\python voice\prep.py fetch URL       # or put a file at voice/data/raw/ID/source.*
+voice\.venv\Scripts\python voice\prep.py separate ID     # Demucs: voice off music and laughter
+voice\.venv\Scripts\python voice\prep.py segment ID      # cut into lines, transcribe, group by speaker
+voice\.venv\Scripts\python voice\prep.py trim ID --status pending   # cut lines down to their words
+voice\.venv\Scripts\python voice\prep.py review ID       # listen; keep, reject, mark reference, fix text
+voice\.venv\Scripts\python voice\prep.py export          # all sources -> voice/data/holly/
+```
+
+Demucs leaves audience laughter in the vocal stem, because laughter is human
+voice. The VAD hears it as speech, so lines run on into the laugh after a
+punchline. `trim` uses Whisper's word timings to cut each line from just
+before its first word to just after its last.
+
+`export` writes 24 kHz clips loudness-matched to -20 dB, `metadata.csv`
+(`file|text`), and `reference.wav` and `reference.txt`, built from the lines
+marked as reference, up to 20 s. Everything under `voice/data/` is
+git-ignored. None of it is to be published.
+
 ## Tuning Holly
 
 - `persona/system_prompt.md` holds the character and the rules for speech.

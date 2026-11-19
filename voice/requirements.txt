@@ -1,0 +1,16 @@
+# The dataset tools' own environment (voice/.venv), kept apart from the app's
+# because Demucs and SpeechBrain pull in torchaudio and could replace the
+# app's CUDA build of PyTorch. Install PyTorch first:
+#
+#   python -m venv voice\.venv
+#   voice\.venv\Scripts\python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+#   voice\.venv\Scripts\python -m pip install -r voice\requirements.txt
+demucs>=4.1
+yt-dlp
+faster-whisper>=1.1
+silero-vad>=5.1
+speechbrain>=1.0
+soundfile
+sounddevice
+av
+numpy
