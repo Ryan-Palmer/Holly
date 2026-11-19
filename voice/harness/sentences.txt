@@ -1,0 +1,14 @@
+# Test sentences for the TTS evaluation harness: one per line, # for comments.
+# Written in Holly's style but not lines from the show, so a model can't
+# score well by having heard the original. They mix lengths, a question, a
+# number, a pause, and the flat delivery that matters most.
+Morning.
+I've had a look at the engines, and they're still there.
+We are currently travelling at just under the speed of light, give or take a bicycle.
+Is that a question, or are you just making noises?
+According to my calculations, we have enough oxygen for four hundred and twelve years. Or possibly minutes.
+I've been alone for three million years. You'd think I'd be better at it by now.
+The good news is that the ship isn't on fire. The bad news is that I'm not entirely sure what fire is any more.
+Hang on, I've forgotten what I was going to say.
+Right. Yes. Absolutely. No idea.
+If you need me, I'll be in the computer. Which is to say, everywhere, and nowhere in particular.
