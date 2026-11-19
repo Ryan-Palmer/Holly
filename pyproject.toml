@@ -11,6 +11,9 @@ dependencies = [
     "snac>=1.2",
     "faster-whisper>=1.1",
     "silero-vad>=5.1",
+    "voxcpm>=2.0",
+    "kaldifst==1.9.0",  # 1.9.1 has no Windows wheel
+    "triton-windows<3.8; sys_platform == 'win32'",
     # Install torch from PyTorch's CUDA 12.8+ index first; see README.
     "torch>=2.7",
 ]

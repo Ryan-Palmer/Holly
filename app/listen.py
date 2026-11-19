@@ -1,6 +1,6 @@
 """Milestone 3: the full voice loop. Speak to Holly; she answers out loud.
 
-    python -m app.listen [--model MODEL] [--voice VOICE]
+    python -m app.listen [--model MODEL] [--engine voxcpm|orpheus] [--voice VOICE]
 
 Silero VAD hears you start and stop, faster-whisper transcribes what you
 said, and the milestone 2 pipeline answers. Timings count from the moment
@@ -95,11 +95,12 @@ class ListeningHolly(Holly):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Talk to Holly out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
-    parser.add_argument("--voice", help="Orpheus voice (default: holly.toml)")
+    parser.add_argument("--engine", choices=["voxcpm", "orpheus"], help="TTS engine (default: holly.toml)")
+    parser.add_argument("--voice", help="Orpheus preset voice, with --engine orpheus")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(ListeningHolly(args.model, args.voice).run())
+        asyncio.run(ListeningHolly(args.model, args.engine, args.voice).run())
     except KeyboardInterrupt:
         pass
 

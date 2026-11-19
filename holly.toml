@@ -12,14 +12,39 @@ model = "google/gemma-4-31b-qat"
 # 4096 holds the persona (~600 tokens) and 24 turns of history (~1,300), and
 # saves 1.1 GB over 8192, which the full voice loop needs.
 context_length = 4096
+# LM Studio's defaults (4 parallel slots, 2048-token batches) cost Gemma
+# 2.5 GB more VRAM than this. Holly sends one short request at a time, and
+# the voice loop with the cloned voice needs that VRAM.
+parallel = 1
+eval_batch_size = 256
 # Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.
 reasoning_effort = "none"
 temperature = 0.8
 max_tokens = 200
 
 [tts]
-# Stock voice until the cloned one is ready. Orpheus runs in LM Studio and
-# emits SNAC audio codes, which are decoded to 24 kHz audio on the GPU.
+# "voxcpm": Holly's cloned voice (won the blind test in voice/harness).
+# "orpheus": the stock voice from milestone 2, kept as a fallback.
+engine = "voxcpm"
+
+[tts.voxcpm]
+# VoxCPM2 clones the voice from a reference clip and its transcript, made by
+# voice/prep.py export. Runs in this process, on the GPU, at 48 kHz.
+model = "openbmb/VoxCPM2"
+reference_wav = "voice/data/holly/reference.wav"
+reference_text = "voice/data/holly/reference.txt"
+# torch.compile (needs triton-windows). The first start after an install
+# compiles for a few minutes; later starts reuse the cache.
+compile = true
+# Wait for the LLM to finish the reply before speaking. Running both at once
+# slows VoxCPM from ~26 to ~3 steps a second: the two processes share the
+# GPU, and VoxCPM's many small steps lose to Gemma's big ones. Holly's
+# replies take Gemma ~0.5-1 s, then VoxCPM runs at 4x real time.
+wait_for_reply = true
+
+[tts.orpheus]
+# Orpheus runs in LM Studio and emits SNAC audio codes, decoded to 24 kHz
+# audio on the GPU. It can't clone a voice, only use its presets.
 model = "orpheus-3b-0.1-ft"
 context_length = 4096
 # Preset voices: tara, leah, jess, mia, zoe (female); leo, dan, zac (male).
@@ -36,8 +61,8 @@ device = "cuda"
 host_api = "Windows WASAPI"
 # Output device name (or part of it) within that host API; empty for its default.
 output_device = ""
-# Samples per playback block at 24 kHz; 480 is 20 ms.
-blocksize = 480
+# Playback block length.
+block_ms = 20
 
 [listen]
 # Microphone, within audio.host_api: a name (or part of one), or empty for

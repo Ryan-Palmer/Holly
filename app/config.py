@@ -15,13 +15,15 @@ class LlmConfig:
     base_url: str
     model: str
     context_length: int
+    parallel: int
+    eval_batch_size: int
     reasoning_effort: str
     temperature: float
     max_tokens: int
 
 
 @dataclass(frozen=True)
-class TtsConfig:
+class OrpheusConfig:
     model: str
     context_length: int
     voice: str
@@ -33,10 +35,26 @@ class TtsConfig:
 
 
 @dataclass(frozen=True)
+class VoxCpmConfig:
+    model: str
+    reference_wav: Path
+    reference_text: Path
+    compile: bool
+    wait_for_reply: bool
+
+
+@dataclass(frozen=True)
+class TtsConfig:
+    engine: str  # "voxcpm" or "orpheus"
+    voxcpm: VoxCpmConfig
+    orpheus: OrpheusConfig
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     host_api: str
     output_device: str
-    blocksize: int
+    block_ms: int
 
 
 @dataclass(frozen=True)
@@ -74,9 +92,22 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         raw = tomllib.load(f)
     base = path.parent
     p = raw["persona"]
+    t = raw["tts"]
+    v = t["voxcpm"]
+    tts = TtsConfig(
+        engine=t["engine"],
+        voxcpm=VoxCpmConfig(
+            model=v["model"],
+            reference_wav=base / v["reference_wav"],
+            reference_text=base / v["reference_text"],
+            compile=v["compile"],
+            wait_for_reply=v.get("wait_for_reply", False),
+        ),
+        orpheus=OrpheusConfig(**t["orpheus"]),
+    )
     return Config(
         llm=LlmConfig(**raw["llm"]),
-        tts=TtsConfig(**raw["tts"]),
+        tts=tts,
         audio=AudioConfig(**raw["audio"]),
         listen=ListenConfig(**raw["listen"]),
         persona=PersonaConfig(

@@ -93,6 +93,37 @@ the app warns at startup when less than 1 GB is free.
 The first run on a new machine (or after a driver update) takes about 20 s
 longer while CUDA compiles Whisper's kernels for the GPU.
 
+## Milestone 4: Holly's own voice
+
+Holly speaks with a clone of Norman Lovell's voice, made by VoxCPM2 from a
+20 s reference clip. VoxCPM2 won a blind test of five open models (see
+`voice/harness/README.md`). It runs in the app's own process, compiled with
+`torch.compile` (needs `triton-windows`). The first start after an install
+spends a few minutes compiling; later starts take about 30 s.
+
+```
+.venv\Scripts\python -m pip install "kaldifst==1.9.0" voxcpm "triton-windows<3.8"
+.venv\Scripts\python -m app.listen                     # Holly's voice
+.venv\Scripts\python -m app.listen --engine orpheus    # the stock voice
+```
+
+`kaldifst` is pinned because 1.9.1 has no Windows wheel and fails to build.
+The reference clip and its transcript come from `voice/prep.py export`, and
+`[tts.voxcpm]` in `holly.toml` points at them.
+
+Two things decide the timing:
+
+- **Holly speaks only once Gemma has finished the reply** (`wait_for_reply`).
+  Run alongside Gemma, VoxCPM drops from about 26 to 3 generation steps a
+  second, because the two processes share the GPU and its many small steps
+  lose to Gemma's big ones. Taking turns, Holly's voice starts 2.0-3.4 s after
+  you stop speaking (median 2.7 s), with almost no stutters. Most of that time
+  is Gemma writing the reply, so a faster chat model is the next lever.
+- **VRAM is nearly full.** The desktop (2.2 GB), Gemma (20.0 GB), Whisper
+  (1.1 GB) and VoxCPM (5.5 GB) leave about 3 GB. Gemma is loaded with one
+  parallel slot and 256-token batches (`[llm]` in `holly.toml`); LM Studio's
+  defaults cost 2.5 GB more, which was enough to tip it over.
+
 ## Voice dataset
 
 `voice/prep.py` turns recordings of Holly into a dataset for voice cloning.

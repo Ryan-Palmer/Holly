@@ -17,7 +17,8 @@ import numpy as np
 import torch
 from snac import SNAC
 
-from .config import TtsConfig
+from .config import OrpheusConfig
+from .tts_common import trim_leading_silence
 
 SAMPLE_RATE = 24_000
 SAMPLES_PER_FRAME = 2048
@@ -35,16 +36,11 @@ _TOKEN = re.compile(r"<custom_token_(\d+)>")
 LEFT_CONTEXT = 3
 LOOKAHEAD = 2
 
-# Leading-silence trim: anything quieter than -40 dBFS before the voice
-# starts is cut down to a 20 ms lead-in.
-SILENCE_LEVEL = 0.01
-LEAD_IN = 480
-
 
 class OrpheusTts:
     sample_rate = SAMPLE_RATE
 
-    def __init__(self, cfg: TtsConfig, base_url: str):
+    def __init__(self, cfg: OrpheusConfig, base_url: str):
         self.cfg = cfg
         self.http = httpx.AsyncClient(base_url=base_url, timeout=120)
         self.device = torch.device(cfg.device)
@@ -55,32 +51,11 @@ class OrpheusTts:
         async for _ in self.stream("Ready."):
             pass
 
-    async def stream(self, text: str, trim_lead: bool = False) -> AsyncIterator[np.ndarray]:
-        """Yield float32 mono audio chunks at 24 kHz for one sentence.
-
-        Orpheus opens every utterance with ~170 ms of silence. With
-        `trim_lead`, that is cut to LEAD_IN, so the first chunk out is voice:
-        worth doing for a reply's first sentence, where it is pure latency.
-        """
-        if not trim_lead:
-            async for chunk in self._stream(text):
-                yield chunk
-            return
-        held = np.zeros(0, dtype=np.float32)
-        voiced = False
-        async for chunk in self._stream(text):
-            if voiced:
-                yield chunk
-                continue
-            held = np.concatenate([held, chunk])
-            loud = np.flatnonzero(np.abs(held) > SILENCE_LEVEL)
-            if loud.size:
-                voiced = True
-                yield held[max(0, loud[0] - LEAD_IN) :]
-            else:
-                held = held[-LEAD_IN:]
-        if not voiced and held.size:
-            yield held
+    def stream(self, text: str, trim_lead: bool = False) -> AsyncIterator[np.ndarray]:
+        """Float32 mono audio chunks at 24 kHz for one sentence. Orpheus opens
+        every utterance with ~170 ms of silence; `trim_lead` cuts it."""
+        chunks = self._stream(text)
+        return trim_leading_silence(chunks, SAMPLE_RATE) if trim_lead else chunks
 
     async def _stream(self, text: str) -> AsyncIterator[np.ndarray]:
         frames: list[list[int]] = []

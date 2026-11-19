@@ -26,7 +26,9 @@ class Transcriber:
         """The first transcription in a process is slow (~0.5 s, or ~20 s the
         very first time CUDA compiles kernels for this GPU)."""
         rng = np.random.default_rng(0)
-        self.transcribe((rng.standard_normal(16_000) * 0.01).astype(np.float32))
+        # Twice: after one pass, the next transcription is still ~2-8x slow.
+        for _ in range(2):
+            self.transcribe((rng.standard_normal(16_000) * 0.01).astype(np.float32))
 
     def transcribe(self, audio: np.ndarray) -> str:
         segments, _ = self.model.transcribe(
