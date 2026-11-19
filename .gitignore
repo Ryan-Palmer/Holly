@@ -6,6 +6,9 @@ build/
 # Eval output (reports, audio)
 runs/
 
+# One venv per TTS candidate
+voice/harness/envs/
+
 # Voice data and weights are large and not ours to publish
 voice/data/
 voice/models/

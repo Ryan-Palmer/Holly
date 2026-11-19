@@ -1,0 +1,24 @@
+# TTS candidates for the evaluation harness. Each runs in its own venv at
+# voice/harness/envs/<venv, or the candidate's name>, through its adapter.
+# Install notes are in voice/harness/README.md. Facts checked 2026-11-19.
+
+[candidate.chatterbox]
+adapter = "chatterbox_adapter.py"
+summary = "Resemble AI Chatterbox, 500M. MIT. No streaming. Archived Aug 2026."
+
+[candidate.chatterbox-turbo]
+adapter = "chatterbox_turbo_adapter.py"
+venv = "chatterbox"
+summary = "Chatterbox Turbo, 350M, English. MIT. No streaming."
+
+[candidate.qwen3-tts]
+adapter = "qwen3_tts_adapter.py"
+summary = "Qwen3-TTS 1.7B Base. Apache-2.0. Streaming only via community forks."
+
+[candidate.moss-tts-realtime]
+adapter = "moss_tts_realtime_adapter.py"
+summary = "OpenMOSS MOSS-TTS-Realtime 1.7B. Apache-2.0. Streams from LLM text deltas."
+
+[candidate.voxcpm2]
+adapter = "voxcpm2_adapter.py"
+summary = "OpenBMB VoxCPM2, 2B, 48 kHz. Apache-2.0 (check LICENSE). Streams."
