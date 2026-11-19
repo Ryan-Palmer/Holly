@@ -43,23 +43,28 @@ class LmStudio:
             self.http.post("/api/v1/models/unload", json={"instance_id": inst["id"]}).raise_for_status()
 
     def ensure_loaded(self, model: str | None = None, context_length: int | None = None) -> bool:
-        """Load the model with the given context length unless it already is.
+        """Load the model with our settings unless it already is.
 
-        A model that LM Studio loaded on demand gets its default context,
-        which for the chat models is huge and pushes the KV cache out of
-        VRAM. So an instance with a different context length is reloaded.
+        A model that LM Studio loaded on demand gets its defaults: for the
+        chat models a 100k+ context that pushes the KV cache out of VRAM, and
+        4 parallel slots with big batches that cost 2.5 GB more. So an
+        instance loaded any other way is reloaded. Chat models (called without
+        a context_length) get all the [llm] load settings; others, like the
+        Orpheus TTS, keep LM Studio's defaults for parallel slots and batches.
         Returns True if a load happened.
         """
+        chat = context_length is None
         model = model or self.cfg.model
-        context_length = context_length or self.cfg.context_length
+        want = {"context_length": context_length or self.cfg.context_length}
+        if chat:
+            want |= {"parallel": self.cfg.parallel, "eval_batch_size": self.cfg.eval_batch_size}
         instances = self.loaded_instances(model)
-        if any(i["config"].get("context_length") == context_length for i in instances):
+        if any(all(i["config"].get(k) == v for k, v in want.items()) for i in instances):
             return False
         if instances:
             self.unload(model)
         self.http.post(
-            "/api/v1/models/load",
-            json={"model": model, "context_length": context_length, "flash_attention": True},
+            "/api/v1/models/load", json={"model": model, "flash_attention": True, **want}
         ).raise_for_status()
         return True
 

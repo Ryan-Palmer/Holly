@@ -36,9 +36,10 @@ compilation. Scored blind, 10 samples each, 1 to 5.
 | chatterbox-turbo | 1.60 | 1.60 | 1172 ms | 0.33 | 3.2 GB | no |
 
 **VoxCPM2 is the choice for milestone 4.** It leads on both sound and latency.
-Its RTF of 0.94 is only just faster than real time. It ran without
-`torch.compile`, because Triton wasn't installed, so that is the first thing to
-try for speed.
+The table's timings were taken without `torch.compile`. With `triton-windows`
+3.7.1 installed, VoxCPM2 compiles itself during warm-up (about 90 s the first
+time). After that, its first audio comes in **132-163 ms** and it runs at
+**RTF about 0.25**, four times faster than real time, still in 6.1 GB.
 
 MOSS-TTS-Realtime was timed uncompiled. Compiled (with `triton-windows`
 3.5.1), its first sentence took 33 s of compiling, and the next ran at about
