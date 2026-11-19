@@ -1,0 +1,22 @@
+# Holly configuration. Paths are relative to this file.
+
+[llm]
+# Use 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and
+# adds about 2 seconds to every request.
+base_url = "http://127.0.0.1:1234"
+# Gemma plays a more convincingly senile Holly; Qwen is twice as fast to the
+# first token (about 150 ms against 330 ms) but more literal.
+model = "google/gemma-4-31b-qat"
+# Load with a small context. LM Studio's default for these models is 100k+
+# tokens, whose KV cache spills out of VRAM and slows everything down.
+context_length = 8192
+# Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.
+reasoning_effort = "none"
+temperature = 0.8
+max_tokens = 200
+
+[persona]
+system_prompt = "persona/system_prompt.md"
+examples = "persona/examples.toml"
+# Rolling history, in user+Holly exchanges.
+history_turns = 24
