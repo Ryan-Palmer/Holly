@@ -40,7 +40,7 @@ Reports go to `runs/`. Read them for character as well as for the pass count.
 
 ## Milestone 2: Holly speaks
 
-Type to Holly, and she answers out loud in a stock voice:
+Type to Holly, and he answers out loud in a stock voice:
 
 ```
 .venv\Scripts\python -m app.speak
@@ -67,7 +67,7 @@ silence is trimmed from the first sentence of each reply.
 
 ## Milestone 3: the voice loop
 
-Speak to Holly, and she answers out loud:
+Speak to Holly, and he answers out loud:
 
 ```
 .venv\Scripts\python -m app.listen
@@ -79,7 +79,7 @@ while you pause). faster-whisper then transcribes what you said, and the
 milestone 2 pipeline answers. Timings count from when you stopped speaking.
 
 It's half-duplex for now: the mic is ignored while Holly talks and for
-0.3 s after, so she doesn't hear herself. Interrupting her is milestone 5.
+0.3 s after, so he doesn't hear himself. Interrupting him is milestone 5.
 Use a headset anyway.
 
 The microphone is the WASAPI default input, with all its channels mixed. Set
@@ -111,18 +111,31 @@ spends a few minutes compiling; later starts take about 30 s.
 The reference clip and its transcript come from `voice/prep.py export`, and
 `[tts.voxcpm]` in `holly.toml` points at them.
 
-Two things decide the timing:
+The chat model and VoxCPM share the GPU, which decides both the timing and
+the choice of chat model:
 
-- **Holly speaks only once Gemma has finished the reply** (`wait_for_reply`).
-  Run alongside Gemma, VoxCPM drops from about 26 to 3 generation steps a
-  second, because the two processes share the GPU and its many small steps
-  lose to Gemma's big ones. Taking turns, Holly's voice starts 2.0-3.4 s after
-  you stop speaking (median 2.7 s), with almost no stutters. Most of that time
-  is Gemma writing the reply, so a faster chat model is the next lever.
-- **VRAM is nearly full.** The desktop (2.2 GB), Gemma (20.0 GB), Whisper
-  (1.1 GB) and VoxCPM (5.5 GB) leave about 3 GB. Gemma is loaded with one
-  parallel slot and 256-token batches (`[llm]` in `holly.toml`); LM Studio's
-  defaults cost 2.5 GB more, which was enough to tip it over.
+| Chat model | Speaking | End of speech to Holly's voice | Stutters | VRAM free |
+|---|---|---|---|---|
+| **Gemma 4 26B-A4B** (default) | **streaming** | **median 1.74 s (1.22-1.88)** | **0** | 10.6 GB |
+| Gemma 4 26B-A4B | after the full reply | median 2.03 s (1.31-2.10) | 0 | 10.6 GB |
+| Gemma 4 31B | after the full reply | median 2.7 s (2.0-3.4) | 2 | under 1 GB |
+| Gemma 4 31B | streaming | median 3.7 s | 581 | under 1 GB |
+
+- **Streaming** (`wait_for_reply = false`) speaks each sentence as soon as it's
+  written. While the chat model is still writing, VoxCPM slows down, because
+  the two processes share the GPU. With 31B it fell from about 26 to 3
+  generation steps a second and stuttered. 26B-A4B, a mixture-of-experts
+  model with 4B parameters active per word, writes about 3 times faster, so
+  the overlap is short and streaming wins.
+- **VRAM.** Gemma 31B left under 1 GB free, and in live use the desktop's
+  own usage grew enough to push it into system RAM, giving replies of 5-10 s.
+  26B-A4B needs about 4 GB less. Gemma is loaded with one parallel slot and
+  256-token batches (`[llm]` in `holly.toml`), because LM Studio's defaults
+  cost 2.5 GB more. Holly also unloads any other chat model left loaded in LM
+  Studio when he starts, and warns at startup if under 1.5 GB is free.
+- **Character.** Both Gemmas passed 39 of 40 persona prompts. 26B-A4B is a
+  little chattier and more whimsical; 31B is slightly drier. To switch back,
+  set `model = "google/gemma-4-31b-qat"` and `wait_for_reply = true`.
 
 ## Voice dataset
 
