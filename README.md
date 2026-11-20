@@ -166,7 +166,11 @@ First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the
 face. Two costs: the audio is queued 0.6 s ahead (`lead_ms`) so Ditto can
 draw each frame in time, and VoxCPM runs about half speed while Ditto shares
-the GPU. VRAM free with everything loaded: 2.5 GB.
+the GPU. VRAM free with everything loaded: 3.3 GB.
+
+The face server starts only once the chat model has loaded. Started
+earlier, its VRAM made LM Studio put part of the model in system RAM
+(see above), slowing every reply, most often on a restart.
 
 ## Voice dataset
 
