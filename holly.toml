@@ -10,16 +10,15 @@ base_url = "http://127.0.0.1:1234"
 # wait_for_reply). It's a little chattier than 31B, which is slightly drier;
 # both passed 39/40 persona prompts. 31B: "google/gemma-4-31b-qat".
 model = "google/gemma-4-26b-a4b-qat"
-# Load with a small context. LM Studio's default for these models is 100k+
-# tokens, whose KV cache spills out of VRAM and slows everything down.
-# 4096 holds the persona (~600 tokens) and 24 turns of history (~1,300), and
-# saves 1.1 GB over 8192, which the full voice loop needs.
-context_length = 4096
-# LM Studio's defaults (4 parallel slots, 2048-token batches) cost Gemma
-# 2.5 GB more VRAM than this. Holly sends one short request at a time, and
-# the voice loop with the cloned voice needs that VRAM.
+# Load with a set context, not LM Studio's default of 100k+ tokens, whose KV
+# cache fills VRAM. 8192 holds the persona (~600 tokens) and up to 48
+# exchanges of history (see [persona]), with room for the reply.
+context_length = 8192
+# One slot: Holly sends one request at a time, so more slots only cost VRAM.
+# 2048-token batches reread a long history faster than 256 (~250 against
+# ~320 ms for 24 exchanges); 256 was only needed to squeeze in Gemma 31B.
 parallel = 1
-eval_batch_size = 256
+eval_batch_size = 2048
 # Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.
 reasoning_effort = "none"
 temperature = 0.8
@@ -97,5 +96,10 @@ whisper_compute_type = "int8_float16"
 [persona]
 system_prompt = "persona/system_prompt.md"
 examples = "persona/examples.toml"
-# Rolling history, in user+Holly exchanges.
-history_turns = 24
+# Rolling history, in user+Holly exchanges. When it passes history_turns, the
+# oldest are dropped in one go, down to history_trim_to. Dropping one per turn
+# changed the start of the prompt every turn, which broke LM Studio's cache
+# and made it reread the whole history each time (2.6 s per turn, live).
+# Now a full reread (~1 s) comes once every 16 exchanges.
+history_turns = 48
+history_trim_to = 32

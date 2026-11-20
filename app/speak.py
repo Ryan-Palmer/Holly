@@ -90,7 +90,9 @@ class Holly:
         for other in self.lm.loaded_models() - keep:
             print(f"{DIM}Unloading {other} from LM Studio to free VRAM.{RESET}", flush=True)
             self.lm.unload(other)
-        self.lm.ensure_loaded(self.model)
+        # Always a fresh load, now the GPU is clear: an instance loaded while
+        # other models held VRAM may be part-way on the CPU, invisibly.
+        self.lm.ensure_loaded(self.model, fresh=True)
         if tts.engine == "orpheus":
             self.lm.ensure_loaded(tts.orpheus.model, tts.orpheus.context_length)
         self.tts = await asyncio.to_thread(make_tts, self.cfg)

@@ -10,6 +10,7 @@ from .config import PersonaConfig
 class Conversation:
     def __init__(self, cfg: PersonaConfig):
         self.max_turns = cfg.history_turns
+        self.trim_to = min(cfg.history_trim_to, cfg.history_turns)
         self.system_prompt = cfg.system_prompt.read_text(encoding="utf-8").strip()
         with open(cfg.examples, "rb") as f:
             examples = tomllib.load(f).get("example", [])
@@ -27,11 +28,15 @@ class Conversation:
         return [*self.preamble, *self.history, {"role": "user", "content": user_text}]
 
     def record(self, user_text: str, holly_text: str) -> None:
+        """Add an exchange. Past `history_turns`, the oldest are dropped in one
+        chunk, down to `history_trim_to`, not one at a time: LM Studio reuses
+        its cache only while the start of the prompt is unchanged, and
+        dropping one exchange per turn changed it every turn, so the whole
+        history was reread every time."""
         self.history.append({"role": "user", "content": user_text})
         self.history.append({"role": "assistant", "content": holly_text})
-        excess = len(self.history) - 2 * self.max_turns
-        if excess > 0:
-            del self.history[:excess]
+        if len(self.history) > 2 * self.max_turns:
+            del self.history[: len(self.history) - 2 * self.trim_to]
 
     def reset(self) -> None:
         self.history.clear()
