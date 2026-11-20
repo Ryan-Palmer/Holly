@@ -102,6 +102,8 @@ class SearchConfig:
     max_searches: int = 2
     summary_max_tokens: int = 160
     prompt: Path = ROOT / "persona/search_prompt.md"
+    weather: bool = True  # the weather tool (Open-Meteo), with search
+    home_country: str = "GB"  # places here come first in weather lookups
     fillers: tuple[str, ...] = ()
 
 

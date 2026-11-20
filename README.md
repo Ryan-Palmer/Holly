@@ -175,7 +175,8 @@ earlier, its VRAM made LM Studio put part of the model in system RAM
 ## Looking things up
 
 Holly searches the web for questions about the real world: news, sport,
-people, numbers, dates. Small talk and jokes don't trigger a search.
+people, numbers, dates. He has a weather tool for forecasts. Small talk and
+jokes don't trigger either.
 
 ```
 .venv\Scripts\python -m pip install ddgs
@@ -208,8 +209,16 @@ people, numbers, dates. Small talk and jokes don't trigger a search.
   any VPN off. For something dependable, use the Brave Search API
   (`provider = "brave"`, key in `BRAVE_API_KEY`; about 1,000 searches a
   month free, then metered).
-- **Limits.** Search snippets rarely hold a weather forecast or a price, so
-  for those he usually says he couldn't find out.
+- **Weather.** Search can't do it: the results are links to weather sites,
+  not forecasts. So a `weather` tool (`app/weather.py`) gets the place and
+  the week's forecast from Open-Meteo, which is free with no key (~0.7 s).
+  Its place lookup knows towns, villages and parks, but not counties or
+  most beaches, so a miss tells him to try again with the nearest town:
+  Kennack Sands became Helston, Cornwall became Truro, the Lake District
+  Keswick. Told he could also just say he couldn't find out, he always did.
+  Without a county or country, places in `home_country` (GB) come first.
+- **Limits.** Search snippets rarely hold a price, so for those he usually
+  says he couldn't find out.
 - **Searches stay in his history.** With only his replies kept, his history
   showed questions answered straight off, and after a few exchanges he
   stopped searching and said "I've searched the internet" instead, even when

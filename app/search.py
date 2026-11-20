@@ -162,5 +162,5 @@ class Searcher:
         hedged the fact itself ("Ninety-seven. Or perhaps ninety-eight")."""
         if not found.results:
             return found.answer
-        return (f"Search results: {found.answer}\n(These facts are right. State them plainly, without "
+        return (f"{found.answer}\n(These facts are right. State them plainly, without "
                 "changing or doubting them; any joke goes around them.)")

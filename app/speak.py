@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import functools
 import json
 import random
 import sys
@@ -31,6 +32,7 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation
 from .face_player import FacePlayer, start_server
 from .player import Player
+from . import weather
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
@@ -91,7 +93,7 @@ class Holly:
         # Every request sends the same tools: they're part of the start of the
         # prompt, so changing them between requests would break LM Studio's cache.
         self.searcher = Searcher(cfg.search, self.lm, self.model) if cfg.search.enabled else None
-        self.tools = [TOOL] if self.searcher else None
+        self.tools = ([TOOL] + ([weather.TOOL] if cfg.search.weather else [])) if self.searcher else None
         search_prompt = cfg.search.prompt.read_text(encoding="utf-8") if self.searcher else ""
         self.convo = Conversation(cfg.persona, search_prompt)
         self.fillers: list[np.ndarray] = []
@@ -260,18 +262,24 @@ class Holly:
     async def _run_tool(self, call: dict, user: str, n: int, times: TurnTimes) -> str:
         """Run one tool call; returns what goes back to the model."""
         print()
-        if call["name"] != "search" or not self.searcher:
-            return f"There is no tool called {call['name']}."
         if n > self.cfg.search.max_searches:
             return "That's enough searching. Answer with what you have."
         try:
-            query = str(json.loads(call["arguments"] or "{}").get("query", "")).strip()
+            args = json.loads(call["arguments"] or "{}")
         except json.JSONDecodeError:
-            query = ""
-        if not query:
-            return "The search needs a query."
-        print(f"{DIM}  (searching: {query}){RESET}", flush=True)
-        found = await asyncio.to_thread(self.searcher.look_up, query, user)
+            args = {}
+        if call["name"] == "search" and self.searcher:
+            if not (query := str(args.get("query", "")).strip()):
+                return "The search needs a query."
+            label, job = f"searching: {query}", functools.partial(self.searcher.look_up, query, user)
+        elif call["name"] == "weather" and self.searcher and self.cfg.search.weather:
+            if not (place := str(args.get("place", "")).strip()):
+                return "The weather tool needs a place."
+            label, job = f"weather: {place}", functools.partial(weather.forecast, place, self.cfg.search)
+        else:
+            return f"There is no tool called {call['name']}."
+        print(f"{DIM}  ({label}){RESET}", flush=True)
+        found = await asyncio.to_thread(job)
         times.search_ms += found.search_ms + found.summary_ms
         print(f"{DIM}  ({found.results} results, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
               f"{found.answer}){RESET}", flush=True)
