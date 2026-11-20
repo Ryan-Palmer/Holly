@@ -22,6 +22,7 @@ import torch
 from .config import load_config
 from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation
+from .face_player import FacePlayer, start_server
 from .player import Player
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
@@ -59,8 +60,11 @@ class TurnTimes:
 class Holly:
     HINT = " /reset to start over, /quit to leave."
 
-    def __init__(self, model: str | None, engine: str | None = None, voice: str | None = None):
+    def __init__(self, model: str | None, engine: str | None = None, voice: str | None = None,
+                 face: bool | None = None):
         cfg = load_config()
+        if face is not None:
+            cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
         tts = cfg.tts
         if engine:
             tts = dataclasses.replace(tts, engine=engine)
@@ -74,7 +78,7 @@ class Holly:
         self.lm = LmStudio(cfg.llm)
         self.convo = Conversation(cfg.persona)
         self.tts: Tts | None = None
-        self.player: Player | None = None
+        self.player: Player | FacePlayer | None = None
 
     def voice_name(self) -> str:
         t = self.cfg.tts
@@ -82,6 +86,12 @@ class Holly:
 
     async def start(self) -> None:
         tts = self.cfg.tts
+        audio = self.cfg.audio
+        face_server = None
+        if self.cfg.face.enabled:
+            # Its own process and venv; it warms up while Holly loads.
+            print(f"{DIM}Starting Holly's face (log: face/data/server.log)...{RESET}", flush=True)
+            face_server = start_server(self.cfg.face, audio.host_api, audio.output_device)
         print(f"{DIM}Loading {self.model} and the {self.voice_name()} voice...{RESET}", flush=True)
         # Holly needs nearly all of the GPU. Anything else left loaded in LM
         # Studio (another chat model, or Orpheus when the clone is in use)
@@ -102,9 +112,12 @@ class Holly:
         await self.tts.warm_up()
         async for _ in self.lm.astream_reply(self.convo.messages_for("Hello."), ReplyTiming(), self.model):
             pass
-        audio = self.cfg.audio
-        block = self.tts.sample_rate * audio.block_ms // 1000
-        self.player = Player(self.tts.sample_rate, block, audio.host_api, audio.output_device)
+        if face_server:
+            print(f"{DIM}Waiting for the face to warm up...{RESET}", flush=True)
+            self.player = await asyncio.to_thread(FacePlayer, self.tts.sample_rate, self.cfg.face.port, face_server)
+        else:
+            block = self.tts.sample_rate * audio.block_ms // 1000
+            self.player = Player(self.tts.sample_rate, block, audio.host_api, audio.output_device)
         self.player.start()
         print(
             f"{DIM}Holly is on {self.model}, voice {self.voice_name()}, "
@@ -188,11 +201,12 @@ def main() -> None:
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
     parser.add_argument("--engine", choices=["voxcpm", "orpheus"], help="TTS engine (default: holly.toml)")
     parser.add_argument("--voice", help="Orpheus preset voice, with --engine orpheus")
+    parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
     args = parser.parse_args()
     # The Windows console defaults to cp1252, which can't print emoji.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(Holly(args.model, args.engine, args.voice).run())
+        asyncio.run(Holly(args.model, args.engine, args.voice, args.face).run())
     except KeyboardInterrupt:
         pass
 

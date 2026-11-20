@@ -148,6 +148,26 @@ the choice of chat model:
   little chattier and more whimsical; 31B is slightly drier. To switch back,
   set `model = "google/gemma-4-31b-qat"` and `wait_for_reply = true`.
 
+## Phase 2 (trial): Holly's face
+
+Ditto animates a still of Holly's screen face from his voice, live, in a
+window. Setup, its own venv and the speed-ups are in `face/README.md`.
+
+```
+.venv\Scripts\python -m app.listen --face
+```
+
+`--face` (or `enabled = true` under `[face]` in `holly.toml`) starts
+`face/server.py` in `face/.venv`. The face window also plays Holly's voice,
+so the two come from one timeline and can't drift apart; between replies
+the face idles and blinks. Its log is `face/data/server.log`.
+
+First live test (7 replies): no face frame late, one stutter, and Holly's
+voice starting 1.9-2.6 s after you stop, against about 1.2 s without the
+face. Two costs: the audio is queued 0.6 s ahead (`lead_ms`) so Ditto can
+draw each frame in time, and VoxCPM runs about half speed while Ditto shares
+the GPU. VRAM free with everything loaded: 2.5 GB.
+
 ## Voice dataset
 
 `voice/prep.py` turns recordings of Holly into a dataset for voice cloning.

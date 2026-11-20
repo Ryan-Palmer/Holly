@@ -1,0 +1,18 @@
+diff --git a/core/utils/blend/__init__.py b/core/utils/blend/__init__.py
+index f9e91b0..fb47cd0 100644
+--- a/core/utils/blend/__init__.py
++++ b/core/utils/blend/__init__.py
+@@ -1,4 +1,9 @@
+-import pyximport
+-pyximport.install()
++# Holly: numpy in place of the Cython extension, which needs a C compiler on Windows.
++import numpy as np
+ 
+-from .blend import blend_images_cy
+\ No newline at end of file
++
++def blend_images_cy(mask_warped, frame_warped, frame_rgb, result):
++    mask = mask_warped[..., None]
++    blended = mask * frame_warped + (1.0 - mask) * frame_rgb
++    np.clip(blended, 0, 255, out=blended)
++    result[...] = blended.astype(np.uint8)

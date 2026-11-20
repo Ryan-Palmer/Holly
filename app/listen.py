@@ -113,10 +113,11 @@ def main() -> None:
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
     parser.add_argument("--engine", choices=["voxcpm", "orpheus"], help="TTS engine (default: holly.toml)")
     parser.add_argument("--voice", help="Orpheus preset voice, with --engine orpheus")
+    parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(ListeningHolly(args.model, args.engine, args.voice).run())
+        asyncio.run(ListeningHolly(args.model, args.engine, args.voice, args.face).run())
     except KeyboardInterrupt:
         pass
 
