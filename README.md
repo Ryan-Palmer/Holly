@@ -148,7 +148,7 @@ the choice of chat model:
   little chattier and more whimsical; 31B is slightly drier. To switch back,
   set `model = "google/gemma-4-31b-qat"` and `wait_for_reply = true`.
 
-## Phase 2 (trial): Holly's face
+## Phase 2: Holly's face
 
 Ditto animates a still of Holly's screen face from his voice, live, in a
 window. Setup, its own venv and the speed-ups are in `face/README.md`.

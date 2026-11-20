@@ -71,7 +71,7 @@ output_device = ""
 block_ms = 20
 
 [face]
-# Holly's animated face (phase 2 trial, face/README.md): a window showing
+# Holly's animated face (phase 2, face/README.md): a window showing
 # Ditto's Holly, which also plays his voice so the two stay in step.
 # --face / --no-face on the command line override this.
 enabled = false
