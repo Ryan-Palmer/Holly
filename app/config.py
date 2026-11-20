@@ -41,6 +41,7 @@ class VoxCpmConfig:
     reference_text: Path
     compile: bool
     wait_for_reply: bool
+    inference_timesteps: int
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
             reference_text=base / v["reference_text"],
             compile=v["compile"],
             wait_for_reply=v.get("wait_for_reply", False),
+            inference_timesteps=v.get("inference_timesteps", 10),
         ),
         orpheus=OrpheusConfig(**t["orpheus"]),
     )

@@ -4,9 +4,12 @@
 # Use 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and
 # adds about 2 seconds to every request.
 base_url = "http://127.0.0.1:1234"
-# Gemma plays a more convincingly senile Holly; Qwen is twice as fast to the
-# first token (about 150 ms against 330 ms) but more literal.
-model = "google/gemma-4-31b-qat"
+# Gemma 4 26B-A4B, a mixture-of-experts model with 4B parameters active per
+# token: writes ~3x faster than Gemma 4 31B (first token ~105 ms against
+# ~260 ms) in ~4 GB less VRAM, which also lets the voice stream (see
+# wait_for_reply). It's a little chattier than 31B, which is slightly drier;
+# both passed 39/40 persona prompts. 31B: "google/gemma-4-31b-qat".
+model = "google/gemma-4-26b-a4b-qat"
 # Load with a small context. LM Studio's default for these models is 100k+
 # tokens, whose KV cache spills out of VRAM and slows everything down.
 # 4096 holds the persona (~600 tokens) and 24 turns of history (~1,300), and
@@ -36,11 +39,15 @@ reference_text = "voice/data/holly/reference.txt"
 # torch.compile (needs triton-windows). The first start after an install
 # compiles for a few minutes; later starts reuse the cache.
 compile = true
-# Wait for the LLM to finish the reply before speaking. Running both at once
-# slows VoxCPM from ~26 to ~3 steps a second: the two processes share the
-# GPU, and VoxCPM's many small steps lose to Gemma's big ones. Holly's
-# replies take Gemma ~0.5-1 s, then VoxCPM runs at 4x real time.
-wait_for_reply = true
+# Wait for the LLM to finish the reply before speaking, instead of speaking
+# each sentence as it's written. The two share the GPU, and with Gemma 31B
+# VoxCPM slowed from ~26 to ~3 steps a second, so waiting was faster (2.7 s
+# against 3.7 s, and no stutters). With 26B-A4B the overlap is short enough
+# that streaming wins: 1.74 s median from end of speech, no stutters.
+wait_for_reply = false
+# Refinement steps per chunk of audio (VoxCPM's own default is 10). Fewer is
+# proportionally faster, and may cost some quality.
+inference_timesteps = 10
 
 [tts.orpheus]
 # Orpheus runs in LM Studio and emits SNAC audio codes, decoded to 24 kHz

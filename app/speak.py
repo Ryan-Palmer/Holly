@@ -1,4 +1,4 @@
-"""Milestone 2: type to Holly, and she answers out loud in a stock voice.
+"""Milestone 2: type to Holly, and he answers out loud in a stock voice.
 
     python -m app.speak [--model MODEL] [--engine voxcpm|orpheus] [--voice VOICE]
 
@@ -83,12 +83,16 @@ class Holly:
     async def start(self) -> None:
         tts = self.cfg.tts
         print(f"{DIM}Loading {self.model} and the {self.voice_name()} voice...{RESET}", flush=True)
+        # Holly needs nearly all of the GPU. Anything else left loaded in LM
+        # Studio (another chat model, or Orpheus when the clone is in use)
+        # pushes VRAM into system RAM and slows every reply.
+        keep = {self.model} | ({tts.orpheus.model} if tts.engine == "orpheus" else set())
+        for other in self.lm.loaded_models() - keep:
+            print(f"{DIM}Unloading {other} from LM Studio to free VRAM.{RESET}", flush=True)
+            self.lm.unload(other)
         self.lm.ensure_loaded(self.model)
         if tts.engine == "orpheus":
             self.lm.ensure_loaded(tts.orpheus.model, tts.orpheus.context_length)
-        else:
-            # Orpheus left loaded in LM Studio holds ~2.6 GB the clone needs.
-            self.lm.unload(tts.orpheus.model)
         self.tts = await asyncio.to_thread(make_tts, self.cfg)
         if tts.engine == "voxcpm" and tts.voxcpm.compile:
             print(f"{DIM}Warming up the voice (the first start after an install compiles for a few "
@@ -178,7 +182,7 @@ class Holly:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Talk to Holly; she answers out loud")
+    parser = argparse.ArgumentParser(description="Talk to Holly; he answers out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
     parser.add_argument("--engine", choices=["voxcpm", "orpheus"], help="TTS engine (default: holly.toml)")
     parser.add_argument("--voice", help="Orpheus preset voice, with --engine orpheus")

@@ -38,6 +38,13 @@ class LmStudio:
                 return m.get("loaded_instances", [])
         raise ValueError(f"LM Studio has no model called {model!r}")
 
+    def loaded_models(self) -> set[str]:
+        """Keys of every model LM Studio has loaded, embedding models aside."""
+        resp = self.http.get("/api/v1/models")
+        resp.raise_for_status()
+        return {m["key"] for m in resp.json()["models"]
+                if m.get("loaded_instances") and m.get("type") != "embedding"}
+
     def unload(self, model: str) -> None:
         for inst in self.loaded_instances(model):
             self.http.post("/api/v1/models/unload", json={"instance_id": inst["id"]}).raise_for_status()

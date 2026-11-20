@@ -66,6 +66,7 @@ class VoxCpmTts:
                         reference_wav_path=str(self.cfg.reference_wav),
                         prompt_wav_path=str(self.cfg.reference_wav),
                         prompt_text=self.reference_text,
+                        inference_timesteps=self.cfg.inference_timesteps,
                     ):
                         if stop.is_set():
                             break
