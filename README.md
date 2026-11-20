@@ -160,7 +160,7 @@ window. Setup, its own venv and the speed-ups are in `face/README.md`.
 `--face` (or `enabled = true` under `[face]` in `holly.toml`) starts
 `face/server.py` in `face/.venv`. The face window also plays Holly's voice,
 so the two come from one timeline and can't drift apart; between replies
-the face idles and blinks. Its log is `face/data/server.log`.
+the face blinks and his head barely moves. Its log is `face/data/server.log`.
 
 First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the
@@ -171,6 +171,51 @@ the GPU. VRAM free with everything loaded: 3.3 GB.
 The face server starts only once the chat model has loaded. Started
 earlier, its VRAM made LM Studio put part of the model in system RAM
 (see above), slowing every reply, most often on a restart.
+
+## Looking things up
+
+Holly searches the web for questions about the real world: news, sport,
+people, numbers, dates. Small talk and jokes don't trigger a search.
+
+```
+.venv\Scripts\python -m pip install ddgs
+.venv\Scripts\python -m app.listen               # searching is on by default
+.venv\Scripts\python -m app.listen --no-search
+```
+
+- **How.** Gemma gets a `search` tool, and `persona/search_prompt.md` tells
+  him to use it rather than answer from his senile memory. The same Gemma
+  then answers the question from the results in two or three sentences
+  (`app/search.py`), and only that answer goes back into Holly's
+  conversation. Raw results would fill his 8K context. Using the same model
+  saves loading another, and LM Studio restores the conversation's cache
+  after the side request (first word in ~150 ms, against ~80 fully cached).
+- **The wait.** When his reply starts with a search, he says a stock line
+  ("Hang on. I'll look it up.", `fillers` under `[search]`), rendered in his
+  voice at startup, so his voice starts ~0.3 s after you stop (~1.2 s with
+  the face). The answer follows once the search (0.8-1.3 s, sometimes 4 s)
+  and the summary (~0.3 s) are done.
+- **Facts stay facts.** Given a bare answer, he hedged the very fact he'd
+  found ("Ninety-seven. Or perhaps ninety-eight"), so the result tells him
+  the facts are right, and the prompt bans "or perhaps" on them. When the
+  search fails or the results don't hold the answer, he's told to say he
+  couldn't find out; told only that it failed, he guessed, wrongly.
+- **He knows the date.** It goes at the end of his system prompt. Without
+  it he searched for the 2024 championship.
+- **Search engines.** `ddgs` (free, no key) asks Yahoo, Brave and
+  DuckDuckGo, then every engine it has if those fail. The engines answer
+  bots with CAPTCHAs now and then, and always while a VPN was on, so turn
+  any VPN off. For something dependable, use the Brave Search API
+  (`provider = "brave"`, key in `BRAVE_API_KEY`; about 1,000 searches a
+  month free, then metered).
+- **Limits.** Search snippets rarely hold a weather forecast or a price, so
+  for those he usually says he couldn't find out.
+- **Searches stay in his history.** With only his replies kept, his history
+  showed questions answered straight off, and after a few exchanges he
+  stopped searching and said "I've searched the internet" instead, even when
+  asked to search. Kept, he searches every time and remembers what he found.
+  History is trimmed by size as well as by exchanges, since searches make
+  exchanges longer.
 
 ## Voice dataset
 

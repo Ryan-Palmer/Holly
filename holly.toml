@@ -22,7 +22,8 @@ eval_batch_size = 2048
 # Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.
 reasoning_effort = "none"
 temperature = 0.8
-max_tokens = 200
+# A poem or short story takes 100-250 tokens.
+max_tokens = 300
 
 [tts]
 # "voxcpm": Holly's cloned voice (won the blind test in voice/harness).
@@ -83,6 +84,10 @@ port = 50555
 lead_ms = 600
 # Window height in pixels.
 height = 720
+# How much of Ditto's head movement (pitch, yaw, roll and position) is kept
+# while Holly is silent: 0 holds his head still, 1 lets it sway as Ditto
+# drives it. While he speaks it moves fully.
+idle_head = 0.2
 
 [listen]
 # Microphone, within audio.host_api: a name (or part of one), or empty for
@@ -117,3 +122,35 @@ examples = "persona/examples.toml"
 # Now a full reread (~1 s) comes once every 16 exchanges.
 history_turns = 48
 history_trim_to = 32
+
+[search]
+# Holly looks things up on the web (app/search.py): his chat model asks for a
+# search, and the same model boils the results down to two or three
+# sentences, which are all that go back into his conversation.
+# --search / --no-search on the command line override this.
+enabled = true
+# "ddgs": free metasearch (DuckDuckGo and others), no key, unofficial; the
+# engines may answer with a CAPTCHA instead of results.
+# "brave": the Brave Search API, with the key in the BRAVE_API_KEY
+# environment variable (~1,000 searches a month free, then metered).
+provider = "ddgs"
+# The ddgs engines to try. "auto" tries them all but waits on the ones that
+# refuse: 2.1 s, against 0.8-1.1 s for this list. From here DuckDuckGo,
+# Mojeek and Startpage often answer with CAPTCHAs (always, with a VPN on).
+backend = "yahoo,brave,duckduckgo"
+region = "uk-en"
+max_results = 6
+timeout_s = 5.0
+# Searches allowed per reply.
+max_searches = 2
+summary_max_tokens = 160
+# Rules for when to search, added to his system prompt.
+prompt = "persona/search_prompt.md"
+# Said while a search runs, when his reply starts with one. Rendered in his
+# voice at startup so they play at once. Write your own.
+fillers = [
+    "Hang on. I'll look it up.",
+    "Bear with me. I'm having a look.",
+    "One moment. I'm checking.",
+    "Give us a second. I'll find out.",
+]

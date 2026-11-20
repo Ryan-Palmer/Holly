@@ -52,6 +52,13 @@ SPEECH_RMS = 0.01  # a frame with more than this is speech
 LIPS_HANG = 6  # frames the lips keep moving after speech (pauses between words)
 LIPS_AHEAD = 3  # frames they start moving before it
 LIPS_STEP = 1 / 3  # how fast they ease between resting and moving, per frame
+# The head: nearly still (near the photo's pose) while Holly is silent, by
+# --idle-head, and moving as Ditto drives it while he speaks. It keeps moving through pauses between sentences
+# and eases in and out more slowly than the lips, so it never snaps.
+POSE_HANG = 25  # frames the head keeps moving after speech (1 s)
+POSE_AHEAD = 5  # frames it starts moving before it (as far ahead as is known)
+POSE_STEP = 1 / 12  # ~0.5 s from still to moving
+POSE_KEYS = ("pitch", "yaw", "roll", "t")  # t: the head's position in the frame
 HEADER = struct.Struct("<cI")  # message type, payload length; see app/face_player.py
 
 
@@ -81,6 +88,7 @@ class Turn:
         self.ended = False
         self.start = self.voice = self.last = None
         self.underruns = 0
+        self.gap = False  # a pause is expected (Holly is searching): not a stutter
         self.times = {}  # "start", "voice", "end": when each left the speakers
         self.reported = False
 
@@ -88,8 +96,9 @@ class Turn:
 class Timeline:
     """The continuous audio stream: fed to Ditto and the speakers, in step."""
 
-    def __init__(self, sdk, lead, send):
+    def __init__(self, sdk, lead, send, idle_head=0.2):
         self.sdk = sdk
+        self.idle_head = idle_head  # how much of Ditto's head movement is kept in silence
         self.lead = lead
         self.send = send
         self.lock = threading.Lock()
@@ -105,6 +114,7 @@ class Timeline:
         self.chunks = 0
         self.voiced = {}  # frame -> speech in it?
         self.lips = 0.0  # 0 resting, 1 following the audio
+        self.pose = idle_head  # 0 still, 1 moving as Ditto drives it
 
     # -- from Holly ---------------------------------------------------------
 
@@ -120,6 +130,13 @@ class Timeline:
             if self.turn and not self.turn.ended:
                 self.turn.pending.append(samples)
                 self.turn.pending_len += len(samples)
+                self.turn.gap = False
+
+    def expect_gap(self):
+        """The audio so far is followed by a pause (a search), until more comes."""
+        with self.lock:
+            if self.turn:
+                self.turn.gap = True
 
     def end(self):
         with self.lock:
@@ -172,7 +189,7 @@ class Timeline:
                 if turn is None:
                     continue
                 if not turn.pending_len:
-                    if turn is self.turn and turn.start is not None:
+                    if turn is self.turn and turn.start is not None and not turn.gap:
                         turn.underruns += 1  # Holly's voice ran out mid-reply: a stutter
                     continue
                 taken = self._take(turn, BLOCK)
@@ -184,7 +201,7 @@ class Timeline:
                     if loud.size:
                         turn.voice = pos + int(loud[0])
                 turn.last = pos + len(taken)
-                if len(taken) < BLOCK and not turn.ended:
+                if len(taken) < BLOCK and not turn.ended and not turn.gap:
                     turn.underruns += 1  # Holly's voice ran out mid-reply: a stutter
                 break  # one turn per block; a new turn waits for the old one's audio
             self.blocks.append((pos, block))
@@ -203,14 +220,19 @@ class Timeline:
         self.chunks += 1
 
     def _set_lips(self, start, stop):
-        """Tell Ditto how much the lips follow the audio for frames start..stop-1."""
+        """Tell Ditto how much the lips and head follow the audio for frames start..stop-1."""
         ctrl = self.sdk.ctrl_info
+
+        def speaking(k, hang, ahead):
+            return any(self.voiced.get(i, False) for i in range(k - hang, k + ahead + 1))
+
         for k in range(start, stop):
-            speaking = any(self.voiced.get(i, False) for i in range(k - LIPS_HANG, k + LIPS_AHEAD + 1))
-            target = 1.0 if speaking else 0.0
+            target = 1.0 if speaking(k, LIPS_HANG, LIPS_AHEAD) else 0.0
             self.lips += max(-LIPS_STEP, min(LIPS_STEP, target - self.lips))
-            ctrl[k] = {"vad_alpha": self.lips}
-        for old in [i for i in self.voiced if i < start - LIPS_HANG]:
+            target = 1.0 if speaking(k, POSE_HANG, POSE_AHEAD) else self.idle_head
+            self.pose += max(-POSE_STEP, min(POSE_STEP, target - self.pose))
+            ctrl[k] = {"vad_alpha": self.lips, "pose_alpha": self.pose}
+        for old in [i for i in self.voiced if i < start - max(LIPS_HANG, POSE_HANG)]:
             del self.voiced[old]
         for old in [i for i in ctrl if isinstance(i, int) and i < start - 250]:
             del ctrl[old]
@@ -344,6 +366,8 @@ class Link:
                 timeline.end()
             elif kind == b"C":
                 timeline.clear()
+            elif kind == b"G":
+                timeline.expect_gap()
 
 
 def lips_only_vad(x_d_info, dst, alpha):
@@ -357,12 +381,37 @@ def lips_only_vad(x_d_info, dst, alpha):
     return x_d_info
 
 
+def hold_pose_when_told(motion_stitch):
+    """Ditto sways the head while Holly is silent, too. This adds a per-frame "pose_alpha"
+    control: 1 leaves the head as Ditto drives it, 0 holds it at the source photo's pose.
+    ctrl_motion gets the frame's controls but not the source, so __call__ notes it first
+    (one motion-stitch thread, so a plain dict is safe)."""
+    call, ctrl_motion = motion_stitch.MotionStitch.__call__, motion_stitch.ctrl_motion
+    source = {}
+
+    def noting_call(self, x_s_info, x_d_info, **kwargs):
+        source["info"] = x_s_info
+        return call(self, x_s_info, x_d_info, **kwargs)
+
+    def holding_ctrl_motion(x_d_info, **kwargs):
+        alpha = kwargs.get("pose_alpha", 1.0)
+        if alpha < 1 and "info" in source:
+            src = source["info"]
+            for k in POSE_KEYS:
+                x_d_info[k] = src[k] + (x_d_info[k] - src[k]) * alpha
+        return ctrl_motion(x_d_info, **kwargs)
+
+    motion_stitch.MotionStitch.__call__ = noting_call
+    motion_stitch.ctrl_motion = holding_ctrl_motion
+
+
 def build_ditto(image, height, overlap):
     import core.atomic_components.motion_stitch as motion_stitch
     from fast_ditto import speed_up
     from stream_pipeline_online import StreamSDK
 
     motion_stitch.ctrl_vad = lips_only_vad
+    hold_pose_when_told(motion_stitch)
 
     sdk = StreamSDK(str(CHECKPOINTS / "ditto_cfg" / "v0.4_hubert_cfg_pytorch.pkl"), str(CHECKPOINTS / "ditto_pytorch"))
     speed_up(sdk, height)
@@ -405,6 +454,8 @@ def main():
     p.add_argument("--lead", type=float, default=0.6, help="seconds of audio queued ahead of the speakers")
     p.add_argument("--overlap", type=int, default=75, help="Ditto's overlap_v2 (its own streaming config: 70)")
     p.add_argument("--height", type=int, default=720, help="window height in pixels")
+    p.add_argument("--idle-head", type=float, default=0.2,
+                   help="head movement kept while Holly is silent: 0 still, 1 as Ditto drives it")
     p.add_argument("--host-api", default="Windows WASAPI")
     p.add_argument("--device", default="", help="output device name (or part of it)")
     args = p.parse_args()
@@ -415,7 +466,7 @@ def main():
 
     timeline = None
     link = Link(args.port, lambda: timeline)
-    timeline = Timeline(sdk, args.lead, link.send)
+    timeline = Timeline(sdk, args.lead, link.send, args.idle_head)
 
     sys.path.insert(0, str(FACE.parent))
     from app.player import find_device  # same device choice as Holly's own player

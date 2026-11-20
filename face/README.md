@@ -57,6 +57,13 @@ screen face, 1820x1024.
   `ctrl_vad` replaced by a lips-only version: Ditto's own builds a lips mask
   but never applies it, which would freeze blinks too. The lips keep moving
   for 0.24 s after speech and start 0.12 s before it, easing over 3 frames.
+- calms the head when Holly is silent. Ditto otherwise sways it between
+  replies as much as while he talks. A per-frame `pose_alpha` control added
+  to Ditto's motion step (`hold_pose_when_told`) blends pitch, yaw, roll and
+  position from the photo's (0) to Ditto's (1): 1 while he speaks,
+  `idle_head` under `[face]` in `holly.toml` (0.2) while he's silent. The head keeps
+  moving for 1 s after speech, so it doesn't stop between sentences, and
+  eases in and out over about 0.5 s.
 
 Every 10 s the server logs frames shown, late and how far ahead Ditto is.
 
