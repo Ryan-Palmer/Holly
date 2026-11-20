@@ -146,6 +146,11 @@ max_searches = 2
 summary_max_tokens = 160
 # Rules for when to search, added to his system prompt.
 prompt = "persona/search_prompt.md"
+# A weather tool too (app/weather.py): forecasts from Open-Meteo, which is
+# free and needs no key. Web search can't do the weather: its results are
+# links to weather sites, not forecasts. Places in home_country come first.
+weather = true
+home_country = "GB"
 # Said while a search runs, when his reply starts with one. Rendered in his
 # voice at startup so they play at once. Write your own.
 fillers = [
