@@ -95,7 +95,7 @@ longer while CUDA compiles Whisper's kernels for the GPU.
 
 ## Milestone 4: Holly's own voice
 
-Holly speaks with a clone of Norman Lovell's voice, made by VoxCPM2 from a
+Holly speaks with a clone of Norman Lovett's voice, made by VoxCPM2 from a
 20 s reference clip. VoxCPM2 won a blind test of five open models (see
 `voice/harness/README.md`). It runs in the app's own process, compiled with
 `torch.compile` (needs `triton-windows`). The first start after an install

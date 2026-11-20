@@ -5,7 +5,7 @@ to animate a still of Holly from his voice. It uses Ditto's PyTorch weights,
 not its TensorRT engines, which were built before the RTX 5090.
 
 Ditto's code, its venv, the weights and everything under `face/data/` are
-git-ignored. Nothing made with Norman Lovell's likeness is to be published.
+git-ignored. Nothing made with Norman Lovett's likeness is to be published.
 
 ## Setup
 
