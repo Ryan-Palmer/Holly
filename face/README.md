@@ -1,7 +1,7 @@
-# Holly's face (phase 2, trial)
+# Holly's face (phase 2)
 
-Trying [Ditto](https://github.com/antgroup/ditto-talkinghead) (Apache-2.0)
-to animate a still of Holly from his voice. It uses Ditto's PyTorch weights,
+[Ditto](https://github.com/antgroup/ditto-talkinghead) (Apache-2.0)
+animates a still of Holly from his voice. It uses Ditto's PyTorch weights,
 not its TensorRT engines, which were built before the RTX 5090.
 
 Ditto's code, its venv, the weights and everything under `face/data/` are
