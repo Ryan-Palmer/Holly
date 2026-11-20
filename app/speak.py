@@ -87,11 +87,6 @@ class Holly:
     async def start(self) -> None:
         tts = self.cfg.tts
         audio = self.cfg.audio
-        face_server = None
-        if self.cfg.face.enabled:
-            # Its own process and venv; it warms up while Holly loads.
-            print(f"{DIM}Starting Holly's face (log: face/data/server.log)...{RESET}", flush=True)
-            face_server = start_server(self.cfg.face, audio.host_api, audio.output_device)
         print(f"{DIM}Loading {self.model} and the {self.voice_name()} voice...{RESET}", flush=True)
         # Holly needs nearly all of the GPU. Anything else left loaded in LM
         # Studio (another chat model, or Orpheus when the clone is in use)
@@ -105,6 +100,23 @@ class Holly:
         self.lm.ensure_loaded(self.model, fresh=True)
         if tts.engine == "orpheus":
             self.lm.ensure_loaded(tts.orpheus.model, tts.orpheus.context_length)
+        face_server = None
+        if self.cfg.face.enabled:
+            # Its own process and venv; it warms up while the voice loads. Only
+            # now, after the chat model: Ditto's VRAM, taken during that load,
+            # would push part of the model onto the CPU (see ensure_loaded).
+            print(f"{DIM}Starting Holly's face (log: face/data/server.log)...{RESET}", flush=True)
+            face_server = start_server(self.cfg.face, audio.host_api, audio.output_device)
+        try:
+            await self._start_voice(face_server)
+        except BaseException:
+            if face_server:  # don't leave it holding the GPU
+                face_server.terminate()
+            raise
+
+    async def _start_voice(self, face_server) -> None:
+        tts = self.cfg.tts
+        audio = self.cfg.audio
         self.tts = await asyncio.to_thread(make_tts, self.cfg)
         if tts.engine == "voxcpm" and tts.voxcpm.compile:
             print(f"{DIM}Warming up the voice (the first start after an install compiles for a few "
