@@ -49,15 +49,23 @@ class LmStudio:
         for inst in self.loaded_instances(model):
             self.http.post("/api/v1/models/unload", json={"instance_id": inst["id"]}).raise_for_status()
 
-    def ensure_loaded(self, model: str | None = None, context_length: int | None = None) -> bool:
+    def ensure_loaded(
+        self, model: str | None = None, context_length: int | None = None, fresh: bool = False
+    ) -> bool:
         """Load the model with our settings unless it already is.
 
         A model that LM Studio loaded on demand gets its defaults: for the
-        chat models a 100k+ context that pushes the KV cache out of VRAM, and
-        4 parallel slots with big batches that cost 2.5 GB more. So an
-        instance loaded any other way is reloaded. Chat models (called without
-        a context_length) get all the [llm] load settings; others, like the
-        Orpheus TTS, keep LM Studio's defaults for parallel slots and batches.
+        chat models a 100k+ context that pushes the KV cache out of VRAM. So
+        an instance loaded any other way is reloaded. Chat models (called
+        without a context_length) get all the [llm] load settings; others,
+        like the Orpheus TTS, keep LM Studio's defaults for parallel slots and
+        batches.
+
+        `fresh` reloads even a matching instance. LM Studio splits a model
+        between GPU and CPU at load time, by the VRAM free then, and its
+        reported config doesn't show the split. An instance loaded while
+        another model held the GPU read prompts 6x slower than a clean load
+        (640 against 3,700 tokens/s), with settings that looked identical.
         Returns True if a load happened.
         """
         chat = context_length is None
@@ -66,7 +74,7 @@ class LmStudio:
         if chat:
             want |= {"parallel": self.cfg.parallel, "eval_batch_size": self.cfg.eval_batch_size}
         instances = self.loaded_instances(model)
-        if any(all(i["config"].get(k) == v for k, v in want.items()) for i in instances):
+        if not fresh and any(all(i["config"].get(k) == v for k, v in want.items()) for i in instances):
             return False
         if instances:
             self.unload(model)

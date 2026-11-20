@@ -77,6 +77,7 @@ class PersonaConfig:
     system_prompt: Path
     examples: Path
     history_turns: int
+    history_trim_to: int
 
 
 @dataclass(frozen=True)
@@ -116,5 +117,6 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
             system_prompt=base / p["system_prompt"],
             examples=base / p["examples"],
             history_turns=p["history_turns"],
+            history_trim_to=p.get("history_trim_to", p["history_turns"] * 2 // 3),
         ),
     )

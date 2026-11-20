@@ -114,10 +114,11 @@ The reference clip and its transcript come from `voice/prep.py export`, and
 The chat model and VoxCPM share the GPU, which decides both the timing and
 the choice of chat model:
 
-| Chat model | Speaking | End of speech to Holly's voice | Stutters | VRAM free |
+| Chat model | Speaking | End of speech to Holly's voice | Stutters (5 replies) | VRAM free |
 |---|---|---|---|---|
-| **Gemma 4 26B-A4B** (default) | **streaming** | **median 1.74 s (1.22-1.88)** | **0** | 10.6 GB |
-| Gemma 4 26B-A4B | after the full reply | median 2.03 s (1.31-2.10) | 0 | 10.6 GB |
+| **Gemma 4 26B-A4B** (default: 8K context, 2048-token batches) | **streaming** | **median 1.16 s (0.92-1.30)** | 4 | 5.0 GB |
+| Gemma 4 26B-A4B (4K, 256-token batches) | streaming | median 1.74 s (1.22-1.88) | 0 | 10.6 GB |
+| Gemma 4 26B-A4B (4K, 256-token batches) | after the full reply | median 2.03 s (1.31-2.10) | 0 | 10.6 GB |
 | Gemma 4 31B | after the full reply | median 2.7 s (2.0-3.4) | 2 | under 1 GB |
 | Gemma 4 31B | streaming | median 3.7 s | 581 | under 1 GB |
 
@@ -129,10 +130,20 @@ the choice of chat model:
   the overlap is short and streaming wins.
 - **VRAM.** Gemma 31B left under 1 GB free, and in live use the desktop's
   own usage grew enough to push it into system RAM, giving replies of 5-10 s.
-  26B-A4B needs about 4 GB less. Gemma is loaded with one parallel slot and
-  256-token batches (`[llm]` in `holly.toml`), because LM Studio's defaults
-  cost 2.5 GB more. Holly also unloads any other chat model left loaded in LM
-  Studio when he starts, and warns at startup if under 1.5 GB is free.
+  26B-A4B needs about 4 GB less. Holly unloads any other model left in LM
+  Studio when he starts, then **always reloads his chat model fresh**. LM
+  Studio splits a model between GPU and CPU at load time, by the VRAM free
+  then, and doesn't report the split. An instance loaded while another
+  model held the GPU read prompts 6 times slower (640 against 3,700 tokens a
+  second), with settings that looked identical. Holly warns at startup if
+  under 1.5 GB is free.
+- **History and LM Studio's cache.** LM Studio reuses its cache only while
+  the start of the prompt is unchanged. Holly used to drop the oldest
+  exchange every turn once his history was full, which changed that start
+  every turn, so the whole history was reread each time (2.6 s per turn in a
+  long live session). History now runs to 48 exchanges and is then cut to 32
+  in one go, so a full reread comes once every 16 exchanges. Over a 60-turn
+  test, the first word came in 110-230 ms on every turn.
 - **Character.** Both Gemmas passed 39 of 40 persona prompts. 26B-A4B is a
   little chattier and more whimsical; 31B is slightly drier. To switch back,
   set `model = "google/gemma-4-31b-qat"` and `wait_for_reply = true`.
