@@ -70,6 +70,20 @@ output_device = ""
 # Playback block length.
 block_ms = 20
 
+[face]
+# Holly's animated face (phase 2 trial, face/README.md): a window showing
+# Ditto's Holly, which also plays his voice so the two stay in step.
+# --face / --no-face on the command line override this.
+enabled = false
+python = "face/.venv/Scripts/python.exe"
+image = "face/data/holly_colour.jpg"
+port = 50555
+# Audio queued ahead of the speakers, giving Ditto time to draw each frame.
+# Holly starts speaking this much later than without a face.
+lead_ms = 600
+# Window height in pixels.
+height = 720
+
 [listen]
 # Microphone, within audio.host_api: a name (or part of one), or empty for
 # that host API's default input.

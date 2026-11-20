@@ -12,3 +12,9 @@ voice/harness/envs/
 # Voice data and weights are large and not ours to publish
 voice/data/
 voice/models/
+
+# Talking head: Ditto's code, venv, weights and Holly's face are not ours to publish
+face/ditto-src/
+face/.venv/
+face/checkpoints/
+face/data/

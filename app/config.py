@@ -81,12 +81,23 @@ class PersonaConfig:
 
 
 @dataclass(frozen=True)
+class FaceConfig:
+    enabled: bool = False
+    python: str = "face/.venv/Scripts/python.exe"
+    image: str = "face/data/holly_colour.jpg"
+    port: int = 50555
+    lead_ms: int = 600
+    height: int = 720
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
     audio: AudioConfig
     listen: ListenConfig
     persona: PersonaConfig
+    face: FaceConfig
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -119,4 +130,5 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
             history_turns=p["history_turns"],
             history_trim_to=p.get("history_trim_to", p["history_turns"] * 2 // 3),
         ),
+        face=FaceConfig(**raw.get("face", {})),
     )
