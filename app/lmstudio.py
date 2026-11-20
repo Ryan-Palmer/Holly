@@ -85,8 +85,8 @@ class LmStudio:
 
     # Chat ------------------------------------------------------------
 
-    def _chat_args(self, messages: list[dict], model: str | None) -> dict:
-        return dict(
+    def _chat_args(self, messages: list[dict], model: str | None, tools: list[dict] | None = None) -> dict:
+        args = dict(
             model=model or self.cfg.model,
             messages=messages,
             stream=True,
@@ -94,6 +94,21 @@ class LmStudio:
             max_tokens=self.cfg.max_tokens,
             reasoning_effort=self.cfg.reasoning_effort,
         )
+        if tools:
+            args["tools"] = tools
+        return args
+
+    @staticmethod
+    def _tool_calls(chunk, calls: dict[int, dict]) -> None:
+        """Gather streamed tool-call fragments into `calls`, by index."""
+        if not chunk.choices:
+            return
+        for tc in chunk.choices[0].delta.tool_calls or []:
+            c = calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+            c["id"] = tc.id or c["id"]
+            if tc.function:
+                c["name"] += tc.function.name or ""
+                c["arguments"] += tc.function.arguments or ""
 
     @staticmethod
     def _content(chunk, timing: ReplyTiming, t0: float) -> str | None:
@@ -135,22 +150,28 @@ class LmStudio:
             timing.total_ms = (time.perf_counter() - t0) * 1000
 
     async def astream_reply(
-        self, messages: list[dict], timing: ReplyTiming, model: str | None = None
+        self, messages: list[dict], timing: ReplyTiming, model: str | None = None,
+        tools: list[dict] | None = None, calls: list[dict] | None = None,
     ) -> AsyncIterator[str]:
-        """The async version of `stream_reply`."""
+        """The async version of `stream_reply`. With `tools`, any tool calls the
+        model makes are added to `calls` as {"id", "name", "arguments"}."""
         t0 = time.perf_counter()
         try:
             for _ in range(self.EMPTY_REPLY_ATTEMPTS):
-                stream = await self.aopenai.chat.completions.create(**self._chat_args(messages, model))
+                stream = await self.aopenai.chat.completions.create(**self._chat_args(messages, model, tools))
                 got_text = False
+                gathered: dict[int, dict] = {}
                 try:
                     async for chunk in stream:
+                        self._tool_calls(chunk, gathered)
                         if text := self._content(chunk, timing, t0):
                             got_text = True
                             yield text
                 finally:
                     await stream.close()
-                if got_text:
+                if gathered and calls is not None:
+                    calls.extend(gathered[i] for i in sorted(gathered))
+                if got_text or gathered:
                     return
         finally:
             timing.total_ms = (time.perf_counter() - t0) * 1000

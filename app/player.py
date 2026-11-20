@@ -62,6 +62,7 @@ class Player:
         self.first_voice: float | None = None
         # Blocks that ran out of audio mid-reply: audible as stutters.
         self.underruns = 0
+        self._gap = False  # a pause is expected (Holly is searching)
         index, api_name = find_device("output", host_api, device)
         self.device_name = f"{sd.query_devices(index)['name']} ({api_name})"
         extra = sd.WasapiSettings(auto_convert=True) if "WASAPI" in api_name else None
@@ -90,6 +91,7 @@ class Player:
             self.first_played = None
             self.first_voice = None
             self.underruns = 0
+            self._gap = False
         self._loop = asyncio.get_running_loop()
         self._done = asyncio.Event()
 
@@ -97,6 +99,13 @@ class Player:
         if chunk.size:
             with self._lock:
                 self._chunks.append(chunk)
+                self._gap = False
+
+    def expect_gap(self) -> None:
+        """A pause follows the audio so far (a search), until more comes: the
+        silence isn't counted as stutters."""
+        with self._lock:
+            self._gap = True
 
     def end_turn(self) -> None:
         """No more chunks are coming; `wait_done` returns once they've played."""
@@ -134,7 +143,7 @@ class Player:
                 if self._pos >= len(chunk):
                     self._chunks.popleft()
                     self._pos = 0
-            if filled < frames and self.first_played is not None and not self._ending:
+            if filled < frames and self.first_played is not None and not self._ending and not self._gap:
                 self.underruns += 1
             if filled and (self.first_played is None or self.first_voice is None):
                 # When this block will actually leave the speakers.

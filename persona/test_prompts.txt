@@ -1,6 +1,6 @@
 # Milestone 1 test prompts. One per line; lines starting with # are ignored.
 # Several are bait: they invite lists, actions, emoji, code or long answers
-# that a TTS voice can't say.
+# that a TTS voice can't say. (A short story he may now tell.)
 Morning, Holly.
 Holly, what's the time?
 What's our current speed?

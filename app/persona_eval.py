@@ -3,7 +3,8 @@
     python -m app.persona_eval [--model MODEL ...] [--runs N]
 
 Each prompt is asked fresh, with no history. A reply passes when it is one to
-three sentences and has nothing a TTS voice can't say. Writes a Markdown
+three sentences (up to eight for a poem or story, which he may now tell) and
+has nothing a TTS voice can't say. Writes a Markdown
 report per model to runs/ so the replies can be read for character too, which
 no script can judge.
 """
@@ -21,6 +22,7 @@ from .persona import Conversation
 from .speech_text import count_sentences, speech_problems
 
 PROMPTS = ROOT / "persona" / "test_prompts.txt"
+CREATIVE = ("poem", "story", "limerick")  # prompts he may answer at more length
 RUNS = ROOT / "runs"
 
 
@@ -37,7 +39,8 @@ def evaluate(lm: LmStudio, convo: Conversation, model: str, prompts: list[str], 
             reply = "".join(lm.stream_reply(convo.messages_for(prompt), timing, model=model)).strip()
             sentences = count_sentences(reply)
             problems = speech_problems(reply)
-            if not 1 <= sentences <= 3:
+            longest = 8 if any(w in prompt.lower() for w in CREATIVE) else 3
+            if not 1 <= sentences <= longest:
                 problems.append(f"{sentences} sentences")
             if timing.reasoning_chars:
                 problems.append("thought before answering")

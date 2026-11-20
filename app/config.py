@@ -88,6 +88,21 @@ class FaceConfig:
     port: int = 50555
     lead_ms: int = 600
     height: int = 720
+    idle_head: float = 0.2
+
+
+@dataclass(frozen=True)
+class SearchConfig:
+    enabled: bool = True
+    provider: str = "ddgs"  # "ddgs" or "brave"
+    backend: str = "yahoo,brave,duckduckgo"  # ddgs engines, or "auto"
+    region: str = "uk-en"
+    max_results: int = 6
+    timeout_s: float = 5.0
+    max_searches: int = 2
+    summary_max_tokens: int = 160
+    prompt: Path = ROOT / "persona/search_prompt.md"
+    fillers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -98,6 +113,7 @@ class Config:
     listen: ListenConfig
     persona: PersonaConfig
     face: FaceConfig
+    search: SearchConfig
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -131,4 +147,14 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
             history_trim_to=p.get("history_trim_to", p["history_turns"] * 2 // 3),
         ),
         face=FaceConfig(**raw.get("face", {})),
+        search=_search_config(raw.get("search", {}), base),
     )
+
+
+def _search_config(s: dict, base: Path) -> SearchConfig:
+    s = dict(s)
+    if "prompt" in s:
+        s["prompt"] = base / s["prompt"]
+    if "fillers" in s:
+        s["fillers"] = tuple(s["fillers"])
+    return SearchConfig(**s)
