@@ -98,8 +98,10 @@ class ListeningHolly(Holly):
                     continue
                 print(f"You: {text}")
                 await self.respond(text, times)
-                # Drop what the mic heard while Holly spoke, plus the echo tail.
-                self.deaf_until = time.perf_counter() + ECHO_TAIL_S
+                # Drop what the mic heard while Holly spoke, until his last sample has
+                # left the speakers, plus the echo tail.
+                spoke_until = max(time.perf_counter(), self.player.last_played or 0.0)
+                self.deaf_until = spoke_until + ECHO_TAIL_S
                 self.detector.reset()
         except KeyboardInterrupt:
             print()

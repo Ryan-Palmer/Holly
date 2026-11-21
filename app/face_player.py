@@ -57,6 +57,7 @@ class FacePlayer:
         self.device_name = "Holly's face window"
         self.first_played: float | None = None
         self.first_voice: float | None = None
+        self.last_played: float | None = None  # when the reply's last sample leaves the speakers
         self.underruns = 0
         self._turn = 0
         self._done: asyncio.Event | None = None
@@ -79,7 +80,7 @@ class FacePlayer:
 
     def begin_turn(self) -> None:
         self._turn += 1
-        self.first_played = self.first_voice = None
+        self.first_played = self.first_voice = self.last_played = None
         self.underruns = 0
         self._loop = asyncio.get_running_loop()
         self._done = asyncio.Event()
@@ -117,6 +118,7 @@ class FacePlayer:
                 if msg.get("type") == "done" and msg["turn"] == self._turn:
                     self.first_played = msg["first_played"]
                     self.first_voice = msg["first_voice"]
+                    self.last_played = msg.get("last_played")
                     self.underruns = msg["underruns"]
                     if self._loop and self._done:
                         self._loop.call_soon_threadsafe(self._done.set)
