@@ -26,8 +26,8 @@ ships, as none is on the PATH.
 ## Try it
 
 ```
-face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_face.png --audio voice/data/holly/reference.wav
-face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_face.png --audio voice/data/holly/reference.wav --online --warmup
+face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_colour.jpg --audio voice/data/holly/reference.wav
+face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_colour.jpg --audio voice/data/holly/reference.wav --online --warmup
 face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_colour.jpg --audio voice/data/holly/reference.wav --online --fast
 ```
 
