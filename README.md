@@ -351,6 +351,17 @@ jokes don't trigger either.
   It includes sunrise and sunset, so those come from it too, and the local
   time there: asked the time in New York, he otherwise worked it out
   himself, half an hour out.
+- **Timers and reminders.** A `timer` tool (`app/timers.py`): "set a timer
+  for 20 minutes for the pasta", "remind me at half seven tomorrow to ring
+  Mum", "what have I got set?", "cancel the pasta". Gemma passes a duration,
+  or a 24-hour time and a day word, and the code works out the moment (its
+  own date sums were off). They're kept in `data/timers.json`. When one is
+  due he speaks up by himself, at the next pause in the room (or between
+  your turns, typed), and stays awake for a reply; one that came due while
+  he was off is mentioned when he's next up. Like the clock it's local and
+  instant: no stock line, and it doesn't count towards `max_searches`. In a
+  test, every step took ~0.5 s, and the pasta timer came with "The pasta is
+  ready. Or it's ruined. It's hard to tell from up here."
 - **The time.** A `clock` tool (`app/clock.py`) reads the PC's clock, which
   Windows keeps to internet time: the time here, in UTC, or in any IANA
   time zone. It's instant, so no stock line plays; the tool's round trip
@@ -400,8 +411,8 @@ git-ignored. None of it is to be published.
 - `persona/system_prompt.md` holds the character and the rules for speech.
 - `persona/examples.toml` holds example exchanges. They steer tone more than
   the prompt does, so rewrite them in your own words.
-- `persona/search_prompt.md` and `persona/recall_prompt.md` hold the rules
-  for when he uses his tools.
+- `persona/search_prompt.md`, `persona/recall_prompt.md` and
+  `persona/timers_prompt.md` hold the rules for when he uses his tools.
 - `holly.toml` sets the model, sampling, context and history budgets.
 
 ## LM Studio notes
