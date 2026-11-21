@@ -72,6 +72,24 @@ screen face, 1820x1024.
   while Holly was silent. Now ~6% for the whole face server, with no late
   frames. On the CPU it costs no VRAM or GPU time.
 
+  On the GPU (tried 2026-11-21, with onnxruntime's CUDA 13 libraries from
+  `pip install onnxruntime-gpu[cuda,cudnn]`), HuBERT takes 8 ms a chunk
+  against 61, but 1.5 GB of VRAM: its weights are 1.4 GB. It didn't let the
+  lead shrink, since Ditto's motion model, not HuBERT, sets it. Four
+  replies with the face at each setting:
+
+  | HuBERT | Lead | VRAM free | Voice starts | Late frames |
+  |---|---|---|---|---|
+  | CPU | 600 ms | 3.5 GB | 1.82 s | 1 |
+  | GPU | 600 ms | 1.9 GB | 1.64 s | 80 |
+  | GPU | 450 ms | 2.1 GB | 1.56 s | 442 |
+  | CPU | 450 ms | 3.4 GB | 1.44 s | 741 |
+  | GPU | 350 ms | 1.9 GB | 1.50 s | 1,064 |
+  | CPU | 350 ms | 3.4 GB | 1.27 s | 1,244 |
+
+  So it stays on the CPU. With the GPU, keep TF32 off: on, its features
+  differed from the CPU's by up to 0.07.
+
 Every 10 s the server logs frames shown, late and how far ahead Ditto is.
 
 ## Results (2026-11-20)
