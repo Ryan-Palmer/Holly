@@ -27,7 +27,7 @@ import subprocess
 import time
 
 from .mic import Mic
-from .speak import DIM, FORGET_HELP, RESET, RESET_HELP, YELLOW, Holly, TurnTimes
+from .speak import DIM, FORGET_HELP, RESET, RESET_HELP, YELLOW, Holly, TurnTimes, stamp
 from .stt import Transcriber
 from .vad import TurnDetector
 
@@ -149,9 +149,9 @@ class ListeningHolly(Holly):
                     started = utterance.speech_end - utterance.duration_ms / 1000
                     if self.wake_words and started > self.awake_until and not addressed(
                             text, self.wake_words, self.cfg.listen.wake_edge_words):
-                        print(f"{DIM}(not for Holly) {text}{RESET}")
+                        print(f"{stamp()}{DIM}(not for Holly) {text}{RESET}")
                         continue
-                    print(f"You: {text}")
+                    print(f"{stamp()}You: {text}")
                     try:
                         await self.respond(text, times)
                     except Exception as e:  # the voice or the speakers failed: report it and carry on

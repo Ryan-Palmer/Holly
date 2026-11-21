@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import datetime
 import functools
 import json
 import random
@@ -41,6 +42,13 @@ from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
 
 DIM, RESET, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
+
+
+def stamp() -> str:
+    """The time now, dimmed, to start a line of talk in the console."""
+    return f"{DIM}{datetime.datetime.now():%H:%M:%S}{RESET} "
+
+
 # Tools that answer at once (Spotify in well under a second): no stock line, and they
 # don't count towards the lookups allowed per reply.
 LOCAL_TOOLS = ("clock", "timer", "spotify")
@@ -293,7 +301,7 @@ class Holly:
         async def think_through() -> None:
             chunker = SentenceChunker()
             timing = ReplyTiming()
-            print(f"{CYAN}Holly:{RESET} ", end="", flush=True)
+            print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
             messages = self.convo.messages_for(user)
             asked = len(messages)
             searches = 0
@@ -332,7 +340,7 @@ class Holly:
                         searches += 1
                     result = await self._run_tool(call, user, searches, times)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
-                print(f"{CYAN}Holly:{RESET} ", end="", flush=True)
+                print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
             steps.extend(messages[asked:])
             if timing.prompt_tokens is not None:
                 times.context_tokens = timing.prompt_tokens + (timing.completion_tokens or 0)
