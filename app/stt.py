@@ -18,6 +18,10 @@ _HALLUCINATIONS = {"you", "thanks for watching", "thank you for watching", "uh",
 
 class Transcriber:
     def __init__(self, cfg: ListenConfig):
+        # Whisper is told to expect Holly's name, which it otherwise sometimes
+        # cuts short ("You alright, ho?"). It doesn't make it hear the name in
+        # silence or noise (tested).
+        self.hotwords = cfg.whisper_hotwords or None
         self.model = WhisperModel(
             cfg.whisper_model, device=cfg.whisper_device, compute_type=cfg.whisper_compute_type
         )
@@ -37,6 +41,7 @@ class Transcriber:
             beam_size=1,
             without_timestamps=True,
             condition_on_previous_text=False,
+            hotwords=self.hotwords,
         )
         text = " ".join(s.text.strip() for s in segments).strip()
         bare = re.sub(r"[^\w\s]", "", text).strip().lower()

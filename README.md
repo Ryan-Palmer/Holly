@@ -78,6 +78,15 @@ for 400 ms (`end_silence_ms` in `holly.toml`; raise it if Holly cuts in
 while you pause). faster-whisper then transcribes what you said, and the
 milestone 2 pipeline answers. Timings count from when you stopped speaking.
 
+He answers only when you say his name among your first or last three
+words ("Holly, what's...", "Hey Holly", "...tomorrow, Holly?"), or carry on
+within 8 s of his last reply; anything else shows as "(not for Holly)" and
+is ignored. The name is found in Whisper's transcript, which is made
+anyway, so it costs nothing, and Whisper is told to expect it (it heard
+"You alright, Holly?" as "You alright, ho?"). The hint doesn't make Whisper
+hear "Holly" in silence or noise. `--no-wake` (or an empty `wake_words`
+under `[listen]`) makes him answer everything.
+
 It's half-duplex for now: the mic is ignored while Holly talks and for
 0.3 s after, so he doesn't hear himself. Interrupting him is milestone 5.
 Use a headset anyway.

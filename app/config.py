@@ -70,6 +70,10 @@ class ListenConfig:
     whisper_model: str
     whisper_device: str
     whisper_compute_type: str
+    whisper_hotwords: str = "Holly"
+    wake_words: tuple[str, ...] = ("holly", "hollie", "holley")
+    wake_edge_words: int = 3
+    follow_up_s: float = 8.0
 
 
 @dataclass(frozen=True)
