@@ -82,8 +82,11 @@ port = 50555
 # Audio queued ahead of the speakers, giving Ditto time to draw each frame.
 # Holly starts speaking this much later than without a face.
 lead_ms = 600
-# Window height in pixels.
-height = 720
+# The height Ditto's frames are drawn at; 0 for the still's own (1820x1024),
+# so full screen isn't a stretched 720p. The window opens 720 high; resize
+# or maximise it, or press F11 or double-click for full screen (Escape
+# leaves), and the face is scaled to fit with black around it.
+height = 0
 # How much of Ditto's head movement (pitch, yaw, roll and position) is kept
 # while Holly is silent: 0 holds his head still, 1 lets it sway as Ditto
 # drives it. While he speaks it moves fully.

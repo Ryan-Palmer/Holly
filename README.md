@@ -172,7 +172,9 @@ so the two come from one timeline and can't drift apart; between replies
 the face blinks and his head barely moves. 30 s after he last spoke, the
 same moment he stops listening without his name, he nods off: his face
 settles into the still with his eyes closed, and pauses to spare the GPU.
-He opens his eyes when anyone speaks. Its log is `face/data/server.log`.
+He opens his eyes when anyone speaks. The window can be any size: the face
+scales to fit, and F11 or a double-click goes full screen (Escape leaves).
+Its log is `face/data/server.log`.
 
 First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the

@@ -23,6 +23,7 @@ and can't drift apart:
 """
 
 import argparse
+import ctypes
 import collections
 import json
 import socket
@@ -30,12 +31,12 @@ import struct
 import sys
 import threading
 import time
-import tkinter as tk
 from pathlib import Path
 
+import cv2
 import numpy as np
 import sounddevice as sd
-from PIL import Image, ImageTk
+from PIL import Image
 from scipy.signal import firwin, lfilter, lfilter_zi, resample_poly
 
 FACE = Path(__file__).resolve().parent
@@ -61,6 +62,7 @@ LIPS_STEP = 1 / 3  # how fast they ease between resting and moving, per frame
 POSE_HANG = 25  # frames the head keeps moving after speech (1 s)
 POSE_AHEAD = 5  # frames it starts moving before it (as far ahead as is known)
 POSE_STEP = 1 / 12  # ~0.5 s from still to moving
+WINDOW_HEIGHT = 720  # the window opens this tall; it can then be any size
 DOZE_S = 1.5  # before sleeping, the face settles to the photo itself for this long
 DOZE_STEP = 1 / 25  # ~1 s to settle into the photo, eyes closing, when dozing off
 WAKE_STEP = 1 / 10  # ~0.4 s to open the eyes and come back to life on waking
@@ -572,7 +574,8 @@ def main():
     p.add_argument("--port", type=int, default=50555)
     p.add_argument("--lead", type=float, default=0.6, help="seconds of audio queued ahead of the speakers")
     p.add_argument("--overlap", type=int, default=75, help="Ditto's overlap_v2 (its own streaming config: 70)")
-    p.add_argument("--height", type=int, default=720, help="window height in pixels")
+    p.add_argument("--height", type=int, default=0,
+                   help="height Ditto's frames are drawn at; 0 for the still's own (the window scales them)")
     p.add_argument("--idle-head", type=float, default=0.2,
                    help="head movement kept while Holly is silent: 0 still, 1 as Ditto drives it")
     p.add_argument("--sleep-after", type=float, default=30.0,
@@ -581,7 +584,7 @@ def main():
     p.add_argument("--device", default="", help="output device name (or part of it)")
     args = p.parse_args()
 
-    sdk, setup = build_ditto(Path(args.image).resolve(), args.height, args.overlap)
+    sdk, setup = build_ditto(Path(args.image).resolve(), args.height or None, args.overlap)
     frames = Frames()
     setup(frames)
 
@@ -603,28 +606,61 @@ def main():
     log(f"Ready on port {args.port}, playing through {sd.query_devices(index)['name']} ({api}), "
         f"lead {args.lead:.2f} s")
 
-    root = tk.Tk()
-    root.title("Holly")
-    root.configure(background="black")
-    label = tk.Label(root, background="black", borderwidth=0)
-    label.pack(fill="both", expand=True)
-    shown = {"k": -1, "photo": None, "late": 0, "frames": 0, "skipped": 0, "draw": 0.0, "ahead": [],
-             "made": 0, "report": time.perf_counter()}
+    # The window: OpenCV's, which Windows stretches to any size for free (~15 ms a frame at
+    # 5120x1440 or 3840x2160, as at 720p). Tk's took 47 ms at 2560x1440 and 97 ms at 4K,
+    # past the 40 ms a frame. Frames stay at Ditto's resolution, padded with black to the
+    # window's shape, so the face keeps its own.
+    title = "Holly"
+    cv2.namedWindow(title, cv2.WINDOW_NORMAL | cv2.WINDOW_FREERATIO)
+    w, h = Image.open(args.image).size
+    cv2.resizeWindow(title, round(WINDOW_HEIGHT * w / h), WINDOW_HEIGHT)  # to start with
+    winmm = ctypes.windll.winmm if sys.platform == "win32" else None
+    if winmm:
+        winmm.timeBeginPeriod(1)  # 1 ms waits, not Windows' default 15.6 ms ticks
+    shown = {"k": -1, "img": None, "rect": None, "late": 0, "frames": 0, "skipped": 0,
+             "draw": 0.0, "ahead": [], "made": 0, "report": time.perf_counter()}
+
+    def draw(img):
+        """Show a frame, padded with black to the window's shape; Windows stretches it."""
+        rect = cv2.getWindowImageRect(title)
+        box_w, box_h = max(rect[2], 1), max(rect[3], 1)
+        ih, iw = img.shape[:2]
+        if box_w * ih > box_h * iw:  # window wider than the frame: black at the sides
+            pad_w, pad_h = round(ih * box_w / box_h), ih
+        else:  # taller: black above and below
+            pad_w, pad_h = iw, round(iw * box_h / box_w)
+        canvas = np.zeros((pad_h, pad_w, 3), np.uint8)
+        y, x = (pad_h - ih) // 2, (pad_w - iw) // 2
+        canvas[y:y + ih, x:x + iw] = img[..., ::-1]  # Ditto's RGB to OpenCV's BGR
+        cv2.imshow(title, canvas)
+        shown["img"], shown["rect"] = img, rect
+
+    def full_screen(on=None):
+        now_on = cv2.getWindowProperty(title, cv2.WND_PROP_FULLSCREEN) == cv2.WINDOW_FULLSCREEN
+        on = not now_on if on is None else on
+        cv2.setWindowProperty(title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if on else cv2.WINDOW_NORMAL)
+
+    def on_mouse(event, *_):
+        if event == cv2.EVENT_LBUTTONDBLCLK:
+            full_screen()
+
+    cv2.setMouseCallback(title, on_mouse)
+    F11, ESCAPE = 0x7A0000, 27  # waitKeyEx codes on Windows
 
     def tick():
         k = int(timeline.now() // FRAME)
         if k != shown["k"]:
             shown["skipped"] += max(k - shown["k"] - 1, 0) if shown["k"] >= 0 else 0
-            if timeline.held(k):  # asleep: keep showing the last frame
+            if timeline.held(k):  # asleep: keep showing the last frame, refitted if the window changed
                 shown["k"] = k
-                root.after(5, tick)
+                if shown["img"] is not None and shown["rect"] != cv2.getWindowImageRect(title):
+                    draw(shown["img"])
                 return
             shown["ahead"].append(frames.latest - k)  # frames Ditto has ready beyond this one
             img, on_time = frames.at(k)
             if img is not None:
                 t = time.perf_counter()
-                shown["photo"] = ImageTk.PhotoImage(Image.fromarray(img))
-                label.configure(image=shown["photo"])
+                draw(img)
                 shown["draw"] += time.perf_counter() - t
                 shown["frames"] += 1
                 shown["late"] += not on_time
@@ -638,11 +674,21 @@ def main():
                 f"ready ahead min {ahead[0]} median {ahead[len(ahead) // 2]}, "
                 f"draw {shown['draw'] / n * 1000:.1f} ms")
             shown.update(late=0, frames=0, skipped=0, draw=0.0, ahead=[], made=frames.count, report=now)
-        root.after(5, tick)
 
-    root.protocol("WM_DELETE_WINDOW", root.destroy)
-    tick()
-    root.mainloop()
+    try:
+        while True:
+            tick()
+            key = cv2.waitKeyEx(2)
+            if key == F11:
+                full_screen()
+            elif key == ESCAPE:
+                full_screen(False)
+            if cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:  # closed
+                break
+    finally:
+        if winmm:
+            winmm.timeEndPeriod(1)
+        cv2.destroyAllWindows()
     stream.stop()
 
 

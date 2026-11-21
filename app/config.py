@@ -91,7 +91,7 @@ class FaceConfig:
     image: str = "face/data/holly_colour.jpg"
     port: int = 50555
     lead_ms: int = 600
-    height: int = 720
+    height: int = 0  # 0: the still's own size
     idle_head: float = 0.2
 
 

@@ -46,6 +46,12 @@ screen face, 1820x1024.
   is leaving the speakers;
 - keeps the speakers' queue `--lead` seconds ahead (0.6 s), giving Ditto
   time to draw each frame;
+- shows the frames in an OpenCV window that scales them to its size: frames
+  stay at the still's own 1820x1024 (`height = 0`; it was 720p for a fixed
+  window), padded with black to the window's shape, and Windows stretches
+  them, in ~5-6 ms a frame at any size up to full screen (F11 or a
+  double-click; Escape leaves). Tk's window, scaling in Python, took 47 ms a
+  frame at 2560x1440 and 97 ms at 4K, past the 40 ms there is;
 - runs Ditto's motion model 5 frames at a time (`--overlap 75`) rather than
   the 10 of Ditto's own streaming config (70). With 10, the motion trailed
   the audio by about 0.7 s and frames came out barely in time even with a
