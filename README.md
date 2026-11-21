@@ -201,6 +201,44 @@ the choice of chat model:
   at 0.3, one run in two left out the cat. The token count is characters /
   4, which ran about 10% high (16.8K counted, 15.1K real), so the limits are
   safe.
+- **The archive, and recall.** Notes keep a few lines; the detail (which
+  story, what recipe, what was said on Tuesday) goes to an archive
+  (`app/archive.py`, `data/archive.db`, git-ignored): every exchange that
+  leaves his history, folded into notes or dropped, with when it was said.
+  His `recall` tool searches it the way `search` searches the web, three
+  ways at once: SQLite's full-text search by keyword (stemmed, and longer
+  words by prefix, so "lasagna" finds "lasagne"); by meaning, with vectors
+  from a small embedding model in LM Studio (nomic-embed, ~0.3 GB, loaded at
+  startup), kept in the same file and compared with numpy, so "her mother"
+  finds "Jo's mum"; and by any day named ("yesterday", "on Tuesday", "21
+  November"), which then counts alone. The same Gemma answers from the
+  matches in two or three sentences, out of his sight (`[recall]` in
+  `holly.toml`, rules in `persona/recall_prompt.md`). In tests he recalled a
+  womble's name and a lasagne's oven time, answered "when's her mother
+  coming over?" and "what does Jo do for a living?", said what was talked about
+  "yesterday", and said he didn't remember a name that was never given,
+  each in under a second. Nomic's similarities bunch between 0.4 and 0.65,
+  related or not, so the closest few go to the judge, which drops the
+  misses. Told only to recall, he once said "I'll check my archives"
+  without doing it; told never to say he doesn't remember without recalling
+  first, he recalls. `--forget` sets the archive aside too, and `/reset`
+  empties it.
+- **The ship's records.** Holly's memory of Red Dwarf itself: the Red Dwarf
+  fandom wiki's articles (CC BY-SA), fetched through its API, cut into
+  paragraph-sized entries and kept like his conversations in
+  `data/records.db` (git-ignored: the show isn't ours to publish). Pages
+  about actors, production and fan works, and sections such as "Trivia"
+  and "Behind the scenes", are left out, so he remembers the show from
+  inside it. Recall searches the records too ("what happened with the
+  Polymorph?"), and while he sleeps a few entries close to what's been said,
+  and one at random, go into his system prompt as things that have come
+  back to him, to mention now and then in passing (`reminders`). They
+  change only while he sleeps, and LM Studio rereads the prompt then.
+
+  ```
+  .venv\Scripts\python -m app.records fetch    # ~25 min, once; pages cached in data/records_raw
+  .venv\Scripts\python -m app.records build    # data/records.db, with vectors
+  ```
 - **Reading is cheap.** 26B-A4B rereads 16K tokens of history in a few
   hundred ms: a reply's first word came ~100-150 ms later than with the
   history cached.
@@ -362,6 +400,8 @@ git-ignored. None of it is to be published.
 - `persona/system_prompt.md` holds the character and the rules for speech.
 - `persona/examples.toml` holds example exchanges. They steer tone more than
   the prompt does, so rewrite them in your own words.
+- `persona/search_prompt.md` and `persona/recall_prompt.md` hold the rules
+  for when he uses his tools.
 - `holly.toml` sets the model, sampling, context and history budgets.
 
 ## LM Studio notes

@@ -60,9 +60,9 @@ class LmStudio:
         A model that LM Studio loaded on demand gets its defaults: for the
         chat models a 100k+ context that pushes the KV cache out of VRAM. So
         an instance loaded any other way is reloaded. Chat models (called
-        without a context_length) get all the [llm] load settings; others,
-        keep LM Studio's defaults for parallel slots and
-        batches.
+        without a context_length) get all the [llm] load settings and flash
+        attention; others (the embedding model for recall) just the context
+        length: LM Studio refuses flash attention for embedding models.
 
         `fresh` reloads even a matching instance. LM Studio splits a model
         between GPU and CPU at load time, by the VRAM free then, and its
@@ -82,7 +82,7 @@ class LmStudio:
         if instances:
             self.unload(model)
         self.http.post(
-            "/api/v1/models/load", json={"model": model, "flash_attention": True, **want}
+            "/api/v1/models/load", json={"model": model, **want, **({"flash_attention": True} if chat else {})}
         ).raise_for_status()
         return True
 
@@ -154,6 +154,11 @@ class LmStudio:
                     return
         finally:
             timing.total_ms = (time.perf_counter() - t0) * 1000
+
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """One vector per text, from an embedding model in LM Studio."""
+        resp = self.openai.embeddings.create(model=model, input=texts)
+        return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
     async def prewarm(self, messages: list[dict], model: str | None = None,
                       tools: list[dict] | None = None) -> int | None:

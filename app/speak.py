@@ -21,6 +21,7 @@ import dataclasses
 import functools
 import json
 import random
+import re
 import sys
 import time
 
@@ -32,7 +33,8 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation, set_aside, when
 from .face_player import FacePlayer, start_server
 from .player import Player
-from . import clock, memory, weather
+from . import archive, clock, memory, weather
+from .records import reminders as pick_reminders, source_of
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
@@ -41,6 +43,9 @@ DIM, RESET, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
 COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
+# A time of day in a reply: "10:14", "10 pm", "ten o'clock". Not "12.50": that's money.
+CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
+                        r"\bo'clock\b", re.IGNORECASE)
 
 
 @dataclasses.dataclass
@@ -113,17 +118,35 @@ class Holly:
         # Every request sends the same tools: they're part of the start of the
         # prompt, so changing them between requests would break LM Studio's cache.
         self.searcher = Searcher(cfg.search, self.lm, self.model) if cfg.search.enabled else None
-        self.tools = ([TOOL, clock.TOOL] + ([weather.TOOL] if cfg.search.weather else [])) if self.searcher else None
-        search_prompt = cfg.search.prompt.read_text(encoding="utf-8") if self.searcher else ""
         memory_file = cfg.persona.memory_file
-        if forget and memory_file and memory_file.exists():
+        if forget:
             # Set aside, not deleted, in case it was a mistake; each with its own
             # time, so a second --forget doesn't overwrite the first.
-            aside = set_aside(memory_file, "forgotten")
-            print(f"{DIM}Holly's memory of earlier sessions is set aside ({aside.name}); "
-                  f"he starts afresh.{RESET}")
-        self.convo = Conversation(cfg.persona, search_prompt, memory_file)
-        self.fillers: list[np.ndarray] = []
+            asides = [set_aside(memory_file, "forgotten")] if memory_file and memory_file.exists() else []
+            if cfg.recall.enabled and (a := archive.set_aside_archive(cfg.recall.file)):
+                asides.append(a)
+            if asides:
+                print(f"{DIM}Holly's memory of earlier sessions is set aside "
+                      f"({', '.join(a.name for a in asides)}); he starts afresh.{RESET}")
+        # The ship's records (app/records.py), if they've been built: searched by recall, and a
+        # few, fitting what's been said, put in his prompt while he sleeps to bring up now and then.
+        self.records = (archive.Archive(cfg.recall, self.lm, self.model, cfg.recall.records_file)
+                        if cfg.recall.enabled and cfg.recall.records_file.exists() else None)
+        self.reminded = False  # the reminders fit the talk so far
+        self.archive = (archive.Archive(cfg.recall, self.lm, self.model, records=self.records)
+                        if cfg.recall.enabled else None)
+        tools, prompts = [], []
+        if self.searcher:
+            tools += [TOOL, clock.TOOL] + ([weather.TOOL] if cfg.search.weather else [])
+            prompts.append(cfg.search.prompt.read_text(encoding="utf-8"))
+        if self.archive:
+            tools.append(archive.TOOL)
+            prompts.append(cfg.recall.prompt.read_text(encoding="utf-8"))
+        self.tools = tools or None
+        self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)
+        # Stock lines in his voice for while a tool works, by kind: "search" (web
+        # search and weather) and "recall" (his archive).
+        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": []}
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
@@ -147,6 +170,13 @@ class Holly:
         # Always a fresh load, now the GPU is clear: an instance loaded while
         # other models held VRAM may be part-way on the CPU, invisibly.
         self.lm.ensure_loaded(self.model, fresh=True)
+        if self.archive and (embedder := self.cfg.recall.embed_model):
+            # Now, before the face takes its VRAM, rather than when he first recalls.
+            try:
+                self.lm.ensure_loaded(embedder, context_length=2048)
+            except Exception as e:  # not downloaded: recall still works by keyword and day
+                print(f"{YELLOW}Couldn't load {embedder} for recall by meaning ({e!r}); "
+                      f"recall uses keywords and days only.{RESET}", flush=True)
         # Last session's history goes into his notes while the voice loads.
         if self.convo.previous_end:
             print(f"{DIM}He remembers talking until {when(self.convo.previous_end)}"
@@ -183,14 +213,21 @@ class Holly:
                 await self.resuming
             except Exception as e:  # he starts with the history as it was
                 print(f"{DIM}  (couldn't write his notes: {e!r}){RESET}", flush=True)
+        if self.records:
+            try:
+                await self.refresh_reminders(prewarm=False)  # the warm-up below reads them
+            except Exception as e:
+                print(f"{DIM}  (couldn't pick reminders from the ship's records: {e!r}){RESET}", flush=True)
         async for _ in self.lm.astream_reply(self.convo.messages_for("Hello."), ReplyTiming(), self.model,
                                              self.tools):
             pass
-        if self.searcher:
-            for line in self.cfg.search.fillers:
+        lines = {"search": self.cfg.search.fillers if self.searcher else (),
+                 "recall": self.cfg.recall.fillers if self.archive else ()}
+        for kind, said in lines.items():
+            for line in said:
                 chunks = [a async for a in self.tts.stream(line, trim_lead=True)]
                 if chunks:
-                    self.fillers.append(np.concatenate(chunks))
+                    self.fillers[kind].append(np.concatenate(chunks))
         if face_server:
             print(f"{DIM}Waiting for the face to warm up...{RESET}", flush=True)
             self.player = await asyncio.to_thread(FacePlayer, self.tts.sample_rate, self.cfg.face.port, face_server)
@@ -257,8 +294,9 @@ class Holly:
                 for sentence in chunker.flush():
                     times.first_sentence = times.first_sentence or time.perf_counter()
                     await sentences.put(sentence)
-                if not parts and any(c["name"] != "clock" for c in calls):  # the clock is instant
-                    self._say_filler(times)
+                slow = [c["name"] for c in calls if c["name"] != "clock"]  # the clock is instant
+                if not parts and slow:
+                    self._say_filler(times, "recall" if all(n == "recall" for n in slow) else "search")
                 self.player.expect_gap()
                 messages = [*messages, {
                     "role": "assistant",
@@ -305,7 +343,14 @@ class Holly:
         if failed:  # not kept: half a turn would confuse the next one
             print()
             return times
-        dropped = self.convo.record(user, "".join(last_said).strip(), steps)
+        said = "".join(last_said).strip()
+        if CLOCK_TIME.search(said) and not any(c["function"]["name"] == "clock" for m in steps
+                                                for c in (m.get("tool_calls") or [])):
+            # He gave a time without the clock: a guess. Kept as fact in his history, it
+            # stuck: greeted, he said "10:14 PM" at 7:56, and repeated it four times,
+            # asked to use the clock or not. (The brackets are never spoken.)
+            said += " [That time was a guess, not from the clock: it's probably wrong.]"
+        dropped = self.convo.record(user, said, steps)
         print(f"{DIM}  {times.report()}{RESET}")
         if dropped:
             print(f"{DIM}  (history past {self.cfg.persona.history_hard_tokens:,} tokens: dropped the "
@@ -347,22 +392,28 @@ class Holly:
             self.writing_notes = False
         if not notes or not convo.apply_compaction(end, dropped, notes):
             return False
+        self.reminded = False  # the talk has moved on: reminders to fit it
         t1 = time.perf_counter()
         prompt = await self.lm.prewarm(convo.messages_for(), self.model, self.tools)
+        if self.archive:  # the archived exchanges' vectors, now rather than at his next recall
+            try:
+                await asyncio.to_thread(self.archive.embed_missing)
+            except Exception as e:
+                print(f"{DIM}  (couldn't embed the archive: {e!r}){RESET}", flush=True)
         print(f"{DIM}  ({label}: folded {exchanges} exchanges into his notes, ~{len(notes) // 4} tokens; "
               f"history ~{before:,} -> ~{convo.tokens():,} tokens; {t1 - t0:.1f} s to write, "
               f"{time.perf_counter() - t1:.1f} s to reread)\n  {self.context_report(prompt)}{RESET}",
               flush=True)
         return True
 
-    def _say_filler(self, times: TurnTimes) -> None:
+    def _say_filler(self, times: TurnTimes, kind: str = "search") -> None:
         """Play a stock line ("Hang on, let me look that up") in his voice."""
-        if not self.fillers:
+        if not (fillers := self.fillers[kind]):
             return
-        pick = random.choice([i for i in range(len(self.fillers)) if i != self.last_filler] or [0])
+        pick = random.choice([i for i in range(len(fillers)) if i != self.last_filler] or [0])
         self.last_filler = pick
         times.first_audio = times.first_audio or time.perf_counter()
-        audio = self.fillers[pick]
+        audio = fillers[pick]
         step = self.tts.sample_rate // 10  # 100 ms pieces, like the voice's own stream
         for i in range(0, len(audio), step):
             self.player.put(audio[i:i + step])
@@ -390,6 +441,10 @@ class Holly:
             if not (place := str(args.get("place", "")).strip()):
                 return "The weather tool needs a place."
             label, job = f"weather: {place}", functools.partial(weather.forecast, place, self.cfg.search)
+        elif call["name"] == "recall" and self.archive:
+            if not (query := str(args.get("query", "")).strip()):
+                return "Recall needs a query."
+            label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, user)
         else:
             return f"There is no tool called {call['name']}."
         print(f"{DIM}  ({label}){RESET}", flush=True)
@@ -403,17 +458,42 @@ class Holly:
         again = f"; searched again: {'; '.join(found.queries[1:])}" if len(found.queries) > 1 else ""
         print(f"{DIM}  ({found.results} results{again}, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
               f"{found.answer}){RESET}", flush=True)
-        return self.searcher.for_holly(found)
+        return Searcher.for_holly(found)
 
     def start_compaction(self) -> None:
-        """Fold older history into his notes in the background, if it's due
-        (see compact). Cancel `self.compaction` while `self.writing_notes`
-        to leave the history as it was."""
-        if (self.compaction or time.perf_counter() < self.compact_retry_at
-                or not self.convo.needs_compacting()):
+        """In the background, if due: fold older history into his notes (see
+        compact), and pick fresh reminders from the ship's records. Cancel
+        `self.compaction` while `self.writing_notes` to leave the history as
+        it was."""
+        due = self.convo.needs_compacting() or (self.records and not self.reminded)
+        if self.compaction or time.perf_counter() < self.compact_retry_at or not due:
             return
-        self.compaction = asyncio.create_task(self.compact())
+        self.compaction = asyncio.create_task(self.sleep_work())
         self.compaction.add_done_callback(self._compacted)
+
+    async def sleep_work(self) -> bool:
+        """What's done while he sleeps. False if the notes couldn't be written."""
+        ok = True
+        if self.convo.needs_compacting():
+            ok = await self.compact()
+        if self.records and not self.reminded:
+            await self.refresh_reminders()
+        return ok
+
+    async def refresh_reminders(self, prewarm: bool = True) -> None:
+        """A few entries from the ship's records for his system prompt, close to
+        what's been said lately (app/records.py); then, if they changed, LM
+        Studio rereads the prompt, as after his notes."""
+        picks = await asyncio.to_thread(pick_reminders, self.records, self.convo.recent_topics(),
+                                        self.cfg.recall.reminders)
+        self.reminded = True
+        if picks == self.convo.reminders:
+            return
+        self.convo.reminders = picks
+        names = "; ".join(source_of(p) for p in picks)
+        print(f"{DIM}  (from the ship's records, on his mind: {names}){RESET}", flush=True)
+        if prewarm:
+            await self.lm.prewarm(self.convo.messages_for(), self.model, self.tools)
 
     def _compacted(self, task: asyncio.Task) -> None:
         self.compaction = None
