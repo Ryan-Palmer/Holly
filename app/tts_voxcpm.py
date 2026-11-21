@@ -28,6 +28,12 @@ _DONE = object()
 class VoxCpmTts:
     def __init__(self, cfg: VoxCpmConfig):
         from voxcpm import VoxCPM
+        import voxcpm.model.voxcpm2 as voxcpm2
+        from tqdm import tqdm
+
+        # VoxCPM wraps every sentence's generation in a progress bar, which cluttered the
+        # console mid-reply. Only its own loop goes quiet: downloads keep their progress.
+        voxcpm2.tqdm = lambda *args, **kwargs: tqdm(*args, **{**kwargs, "disable": True})
 
         if not cfg.reference_wav.exists():
             raise FileNotFoundError(
