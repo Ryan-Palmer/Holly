@@ -3,7 +3,7 @@ r"""Render a talking-head clip of Holly with Ditto, and time it.
 Runs in face/.venv, with Ditto's code in face/ditto-src and its PyTorch
 weights in face/checkpoints (see face/README.md).
 
-    face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_face.png --audio voice/data/holly/reference.wav
+    face\.venv\Scripts\python face\try_ditto.py --image face/data/holly_colour.jpg --audio voice/data/holly/reference.wav
     face\.venv\Scripts\python face\try_ditto.py ... --online     # Ditto's streaming mode
 
 The audio is fed in as fast as Ditto will take it, so "frames a second" is
