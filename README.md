@@ -40,17 +40,17 @@ Reports go to `runs/`. Read them for character as well as for the pass count.
 
 ## Milestone 2: Holly speaks
 
-Type to Holly, and he answers out loud in a stock voice:
+Type to Holly, and he answers out loud:
 
 ```
 .venv\Scripts\python -m app.speak
-.venv\Scripts\python -m app.speak --voice dan
 ```
 
 The reply is cut into sentences as the LLM writes it. Each sentence goes to
-Orpheus, a TTS model running in LM Studio, and the audio plays as it's
-decoded. After each reply the app shows these times, counted from pressing
-Enter:
+the voice (milestone 4), and the audio plays as it's made. This milestone
+began with Orpheus, a stock voice running in LM Studio; it was removed once
+the clone had replaced it. After each reply the app shows these times,
+counted from pressing Enter:
 
 - first token: the LLM's first word of the reply
 - first sentence: the first chunk handed to TTS
@@ -62,8 +62,12 @@ Underruns are moments when playback ran out of audio, which you'd hear as
 stutters.
 
 Audio plays through WASAPI, because Windows' default MME path adds about
-100 ms. Orpheus opens every utterance with about 170 ms of silence, so that
-silence is trimmed from the first sentence of each reply.
+100 ms. A voice may open a sentence with silence, so that silence is
+trimmed from the first sentence of each reply.
+
+If a reply fails part-way (LM Studio restarted, a request timed out), Holly
+says he's lost his train of thought, the turn isn't kept in his history, and
+he carries on; a tool that fails tells him he couldn't find out.
 
 ## Milestone 3: the voice loop
 
@@ -112,8 +116,7 @@ spends a few minutes compiling; later starts take about 30 s.
 
 ```
 .venv\Scripts\python -m pip install "kaldifst==1.9.0" voxcpm "triton-windows<3.8"
-.venv\Scripts\python -m app.listen                     # Holly's voice
-.venv\Scripts\python -m app.listen --engine orpheus    # the stock voice
+.venv\Scripts\python -m app.listen
 ```
 
 `kaldifst` is pinned because 1.9.1 has no Windows wheel and fails to build.
@@ -157,15 +160,17 @@ the choice of chat model:
   rounds 30,000 up to that; ~29.8 GB of VRAM in use with the face up). The
   persona and tools take ~1K tokens, leaving room for ~23K of history.
   Past ~20K (`history_soft_tokens`), once Holly is asleep (`awake_s` after
-  he last spoke), the same Gemma folds the older exchanges into a few lines
+  he last spoke) and the room has been quiet for 5 s, the same Gemma folds the older exchanges into a few lines
   of notes (`app/memory.py`), which go at the end of his system prompt, and
   keeps the newest ~8K word for word. LM Studio then rereads the shorter
   prompt, still while he sleeps, so his next reply starts cached. On a
   16.8K-token test conversation, writing the notes took 1.5-2.7 s and the
   reread 0.6 s, and afterwards he still knew the crew member's name, the
   cat, the holiday dates, a reminder and a football score from the start
-  of it. If anyone speaks while the notes are being written, the job is
-  dropped and the history left as it was; the reply doesn't wait for it.
+  of it. If anyone speaks while the notes are being written (even a cough,
+  or talk not meant for Holly), the job is dropped and the history left as
+  it was; the reply doesn't wait for it, and the notes are tried again after
+  the next quiet spell. Typed (`app.speak`), they're written while you type.
   Past ~26K (`history_hard_tokens`) without a sleep, the oldest is dropped
   at once, without notes. After each reply the console shows the context in
   use (LM Studio's own count) and how far the history is from being folded.
@@ -175,7 +180,8 @@ the choice of chat model:
   startup, all but the newest ~1,500 tokens (`history_resume_tokens`) of the
   last session go into his notes while the voice loads (~1-3 s), and his
   system prompt says when he last talked with you. `--forget` sets the file
-  aside as `memory.forgotten.json` and starts afresh; `/reset` (typed) wipes
+  aside as `memory.forgotten-<date>-<time>.json` and starts afresh (a file
+  that won't read, after a slip in a hand edit, is set aside the same way); `/reset` (typed) wipes
   it; `memory_file = ""` keeps nothing. In a test across three days he
   answered "Tuesday 24 November at 10:00" to a boiler service booked for
   "next Tuesday" on the Wednesday before, said that Jo, coming "on Saturday",
@@ -251,13 +257,14 @@ jokes don't trigger either.
   saves loading another, and LM Studio restores the conversation's cache
   after the side request (first word in ~150 ms, against ~80 fully cached).
 - **A second look.** That summary step also judges the results, out of
-  Holly's sight: it answers, reads the page of a promising result (ddgs
-  `extract`, menus stripped, 6,000 characters), or runs a better search, up
+  Holly's sight: it answers, reads the page of a promising result (fetched with
+  ddgs's HTTP client, menus stripped, 6,000 characters), or runs a better search, up
   to 3 searches and reads (`max_rounds`), starting none after 5 s
   (`max_lookup_s`). Offered "no answer" as an equal choice, it always took
   it, so that's only allowed on the last round. Reading a page got a sunset
   time the snippets lacked. Pages only load from public addresses, never
-  this machine or network. Gemma's thinking for the judgement took 3-11 s
+  this machine or network, and each redirect is checked the same way
+  before it's followed. Gemma's thinking for the judgement took 3-11 s
   instead of ~0.3 s and answered no better, so it's off
   (`summary_reasoning`).
 - **The wait.** When his reply starts with a search, he says a stock line

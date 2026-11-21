@@ -61,7 +61,7 @@ class LmStudio:
         chat models a 100k+ context that pushes the KV cache out of VRAM. So
         an instance loaded any other way is reloaded. Chat models (called
         without a context_length) get all the [llm] load settings; others,
-        like the Orpheus TTS, keep LM Studio's defaults for parallel slots and
+        keep LM Studio's defaults for parallel slots and
         batches.
 
         `fresh` reloads even a matching instance. LM Studio splits a model

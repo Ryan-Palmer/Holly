@@ -1,6 +1,6 @@
 """Milestone 3: the full voice loop. Speak to Holly; he answers out loud.
 
-    python -m app.listen [--model MODEL] [--engine voxcpm|orpheus] [--voice VOICE] [--no-wake]
+    python -m app.listen [--model MODEL] [--face] [--no-search] [--no-wake] [--forget]
 
 Silero VAD hears you start and stop, faster-whisper transcribes what you
 said, and the milestone 2 pipeline answers. Timings count from the moment
@@ -27,7 +27,7 @@ import subprocess
 import time
 
 from .mic import Mic
-from .speak import DIM, RESET, Holly, TurnTimes
+from .speak import DIM, RESET, YELLOW, Holly, TurnTimes
 from .stt import Transcriber
 from .vad import TurnDetector
 
@@ -37,7 +37,10 @@ ECHO_TAIL_S = 0.3
 # Below this much free VRAM after loading, a browser tab or the next
 # allocation spike can spill GPU memory into system RAM.
 LOW_VRAM_GB = 1.5
-YELLOW = "\033[33m"
+# Asleep, his notes are written once the room has been quiet this long. Any
+# speech cancels them (they're redone after the next quiet spell): with one
+# try per sleep, a cough or the TV could stop them for good.
+COMPACT_QUIET_S = 5.0
 
 
 def gpu_free_gb() -> float | None:
@@ -69,8 +72,7 @@ class ListeningHolly(Holly):
             self.cfg = dataclasses.replace(self.cfg, listen=dataclasses.replace(self.cfg.listen, wake_words=()))
         self.wake_words = set(self.cfg.listen.wake_words)
         self.awake_until = 0.0  # the follow-up window: no name needed until then
-        self.compaction: asyncio.Task | None = None
-        self.compacted_for = 0.0  # the awake_until compaction last ran after: once per sleep
+        self.quiet_since = 0.0  # when the room last went quiet; notes wait for COMPACT_QUIET_S of it
 
     async def start(self) -> None:
         await super().start()
@@ -115,22 +117,15 @@ class ListeningHolly(Holly):
                 print(f"{DIM}(listening){RESET}", end="\r", flush=True)
             if utterance:
                 return utterance
-            if not self.detector.in_speech:
+            if hearing and not self.detector.in_speech:
                 hearing = False
+                self.quiet_since = time.perf_counter()
 
     def _maybe_compact(self) -> None:
-        """Once he's asleep, compact a long history (Holly.compact)."""
-        if (self.compaction or self.compacted_for == self.awake_until
-                or time.perf_counter() < self.awake_until or not self.convo.needs_compacting()):
-            return
-        self.compacted_for = self.awake_until
-        self.compaction = asyncio.create_task(self.compact())
-        self.compaction.add_done_callback(self._compacted)
-
-    def _compacted(self, task: asyncio.Task) -> None:
-        self.compaction = None
-        if not task.cancelled() and (e := task.exception()):
-            print(f"{DIM}  (couldn't write his notes: {e!r}){RESET}", flush=True)
+        """Once he's asleep and the room is quiet, compact a long history (Holly.compact)."""
+        now = time.perf_counter()
+        if now >= self.awake_until and now - self.quiet_since >= COMPACT_QUIET_S:
+            self.start_compaction()
 
     async def run(self) -> None:
         await self.start()
@@ -148,7 +143,10 @@ class ListeningHolly(Holly):
                     print(f"{DIM}(not for Holly) {text}{RESET}")
                     continue
                 print(f"You: {text}")
-                await self.respond(text, times)
+                try:
+                    await self.respond(text, times)
+                except Exception as e:  # the voice or the speakers failed: report it and carry on
+                    print(f"{YELLOW}  (that reply failed: {e!r}){RESET}\n", flush=True)
                 # Drop what the mic heard while Holly spoke, until his last sample has
                 # left the speakers, plus the echo tail.
                 spoke_until = max(time.perf_counter(), self.player.last_played or 0.0)
@@ -167,8 +165,6 @@ class ListeningHolly(Holly):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Talk to Holly out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
-    parser.add_argument("--engine", choices=["voxcpm", "orpheus"], help="TTS engine (default: holly.toml)")
-    parser.add_argument("--voice", help="Orpheus preset voice, with --engine orpheus")
     parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
     parser.add_argument("--search", action=argparse.BooleanOptionalAction,
                         help="let Holly search the web (default: holly.toml)")
@@ -179,7 +175,7 @@ def main() -> None:
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(ListeningHolly(args.model, args.engine, args.voice, args.face, args.search, args.forget,
+        asyncio.run(ListeningHolly(args.model, args.face, args.search, args.forget,
                                    wake=args.wake).run())
     except KeyboardInterrupt:
         pass

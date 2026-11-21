@@ -3,7 +3,7 @@
 Holly's chat model asks for a search with a tool call. The results go to the
 same model in a separate request, which answers the question from them in
 two or three plain sentences, and only that answer goes back into Holly's
-conversation. Raw results would fill his 8K context and tempt him to read
+conversation. Raw results would soon fill his context and tempt him to read
 out URLs. Using the same model avoids loading a second one, and LM Studio
 restores the conversation's cache after the side request (first token
 ~150 ms against ~80 fully cached, measured).
@@ -17,7 +17,7 @@ import re
 import socket
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from dataclasses import dataclass, field
 
 import httpx
@@ -175,26 +175,48 @@ def search_brave_context(query: str, cfg: SearchConfig) -> list[Result]:
 PROVIDERS = {"ddgs": search_ddgs, "brave": search_brave, "brave_context": search_brave_context}
 
 
+MAX_REDIRECTS = 5
+
+
+def _public(url: str) -> bool:
+    """Is `url` an http(s) address whose host resolves only to public internet addresses?"""
+    parts = urlparse(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return False
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(parts.hostname, parts.port or None)}
+        return bool(addresses) and all(ipaddress.ip_address(a.split("%")[0]).is_global for a in addresses)
+    except (OSError, ValueError):
+        return False
+
+
 def fetch_page(url: str, cfg: SearchConfig) -> str:
     """A result's page as plain text, menus dropped, cut to PAGE_CHARS.
 
-    Only public web pages: a page could name an address on this machine or
-    network, and Holly shouldn't fetch those."""
-    from ddgs import DDGS
+    Only public web pages: a result could name, or redirect to, an address
+    on this machine or network (a router's admin page, say), and Holly
+    shouldn't read those. So redirects are followed here, one at a time, each
+    checked, rather than by the HTTP client, which would follow them unseen."""
+    import primp  # ddgs's HTTP client, which also turns HTML into text
 
-    host = urlparse(url).hostname or ""
-    try:
-        private = ipaddress.ip_address(socket.gethostbyname(host)).is_private
-    except (OSError, ValueError):
-        private = True
-    if urlparse(url).scheme not in ("http", "https") or private or host == "localhost":
-        return "(not a public web page)"
-    try:
-        text = DDGS(timeout=cfg.timeout_s).extract(url, fmt="text_plain").get("content", "")
-    except Exception as e:  # sites that refuse bots, timeouts
-        return f"(this page couldn't be read ({type(e).__name__}): pick another result or search)"
-    if isinstance(text, bytes):
-        text = text.decode("utf-8", "replace")
+    client = primp.Client(follow_redirects=False, impersonate="random", impersonate_os="random",
+                          timeout=cfg.timeout_s)
+    for _ in range(MAX_REDIRECTS + 1):
+        if not _public(url):
+            return "(not a public web page)"
+        try:
+            resp = client.get(url)
+        except Exception as e:  # sites that refuse bots, timeouts
+            return f"(this page couldn't be read ({type(e).__name__}): pick another result or search)"
+        if resp.status_code in (301, 302, 303, 307, 308) and (to := resp.headers.get("location")):
+            url = urljoin(url, to)
+            continue
+        if resp.status_code != 200:
+            return f"(this page couldn't be read (HTTP {resp.status_code}): pick another result or search)"
+        text = resp.text_plain
+        break
+    else:
+        return "(this page redirected too many times: pick another result or search)"
     # Menus and buttons are short lines with no numbers: "News Home", "Sign in".
     lines = [ln.strip() for ln in text.splitlines()]
     kept = [ln for ln in lines if len(ln.split()) >= 5 or re.search(r"\d", ln)]
