@@ -69,8 +69,30 @@ class TurnTimes:
         )
 
 
+def quiet_connection_resets(loop: asyncio.AbstractEventLoop) -> None:
+    """Don't print asyncio's harmless report when LM Studio has closed an idle connection.
+
+    The OpenAI client keeps its connection to LM Studio open between replies. When LM
+    Studio has closed its end, Windows' asyncio, tidying the connection up, prints
+    "Exception in callback _ProactorBasePipeTransport._call_connection_lost" with a
+    ConnectionResetError (WinError 10054), though nothing failed: the next request opens a
+    new connection. Only that case is dropped; everything else is reported as before."""
+    default = loop.get_exception_handler()
+
+    def handler(loop, context):
+        if (isinstance(context.get("exception"), ConnectionResetError)
+                and "_call_connection_lost" in repr(context.get("handle"))):
+            return
+        if default:
+            default(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
+
+
 class Holly:
-    HINT = " /reset to start over, /quit to leave."
+    HINT =" /reset to start over, /quit to leave."
 
     def __init__(self, model: str | None, engine: str | None = None, voice: str | None = None,
                  face: bool | None = None, search: bool | None = None):
@@ -108,6 +130,7 @@ class Holly:
     async def start(self) -> None:
         tts = self.cfg.tts
         audio = self.cfg.audio
+        quiet_connection_resets(asyncio.get_running_loop())
         print(f"{DIM}Loading {self.model} and the {self.voice_name()} voice...{RESET}", flush=True)
         # Holly needs nearly all of the GPU. Anything else left loaded in LM
         # Studio (another chat model, or Orpheus when the clone is in use)
