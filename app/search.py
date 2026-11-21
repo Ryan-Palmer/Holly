@@ -15,6 +15,7 @@ import ipaddress
 import os
 import re
 import socket
+import sys
 import time
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
@@ -110,13 +111,32 @@ def search_ddgs(query: str, cfg: SearchConfig) -> list[Result]:
     return [Result(_clean(h.get("title", "")), h.get("href", ""), _clean(h.get("body", ""))) for h in hits]
 
 
+def _user_env(name: str) -> str | None:
+    """An environment variable, or on Windows the user's saved one: set with
+    SetEnvironmentVariable(..., "User"), it only reaches terminals opened afterwards."""
+    if value := os.environ.get(name):
+        return value
+    if sys.platform != "win32":
+        return None
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            return str(winreg.QueryValueEx(key, name)[0]) or None
+    except OSError:
+        return None
+
+
 def search_brave(query: str, cfg: SearchConfig) -> list[Result]:
-    key = os.environ.get("BRAVE_API_KEY")
+    key = _user_env("BRAVE_API_KEY")
     if not key:
         raise RuntimeError("set BRAVE_API_KEY to use the Brave search provider")
+    country, _, lang = cfg.region.partition("-")  # "uk-en"
     resp = httpx.get(
         "https://api.search.brave.com/res/v1/web/search",
-        params={"q": query, "count": cfg.max_results, "country": cfg.region.split("-")[0].upper()},
+        # Brave wants ISO country codes: "GB", not "UK".
+        params={"q": query, "count": cfg.max_results, "search_lang": lang or "en",
+                "country": {"uk": "GB"}.get(country.lower(), country.upper())},
         headers={"X-Subscription-Token": key, "Accept": "application/json"},
         timeout=cfg.timeout_s,
     )
@@ -129,7 +149,30 @@ def search_brave(query: str, cfg: SearchConfig) -> list[Result]:
     ]
 
 
-PROVIDERS = {"ddgs": search_ddgs, "brave": search_brave}
+def search_brave_context(query: str, cfg: SearchConfig) -> list[Result]:
+    """Brave's LLM Context API: instead of a title and a short snippet, each result comes
+    with passages extracted from its page that bear on the query (tables included), up to
+    `context_tokens` in all. Prices and times that snippets lacked were often in them, so
+    pages rarely need reading. ~1.3 s, like a web search."""
+    key = _user_env("BRAVE_API_KEY")
+    if not key:
+        raise RuntimeError("set BRAVE_API_KEY to use the Brave search provider")
+    country, _, lang = cfg.region.partition("-")
+    resp = httpx.get(
+        "https://api.search.brave.com/res/v1/llm/context",
+        params={"q": query, "search_lang": lang or "en", "maximum_number_of_tokens": cfg.context_tokens,
+                "country": {"uk": "GB"}.get(country.lower(), country.upper())},
+        headers={"X-Subscription-Token": key, "Accept": "application/json"},
+        timeout=max(cfg.timeout_s, 10.0),
+    )
+    resp.raise_for_status()
+    hits = resp.json().get("grounding", {}).get("generic", [])
+    return [Result(_clean(h.get("title", "")), h.get("url", ""),
+                   "\n".join(s.strip() for s in h.get("snippets", []) if s.strip()))
+            for h in hits]
+
+
+PROVIDERS = {"ddgs": search_ddgs, "brave": search_brave, "brave_context": search_brave_context}
 
 
 def fetch_page(url: str, cfg: SearchConfig) -> str:
@@ -160,20 +203,26 @@ def fetch_page(url: str, cfg: SearchConfig) -> str:
 
 class Searcher:
     def __init__(self, cfg: SearchConfig, lm: LmStudio, model: str):
-        if cfg.provider not in PROVIDERS:
-            raise ValueError(f"unknown search provider {cfg.provider!r}; use one of {', '.join(PROVIDERS)}")
+        # "brave,ddgs": tried in order, the next when one fails or finds nothing.
+        self.providers = [p.strip() for p in cfg.provider.split(",") if p.strip()]
+        if unknown := [p for p in self.providers if p not in PROVIDERS]:
+            raise ValueError(f"unknown search provider {unknown[0]!r}; use any of {', '.join(PROVIDERS)}")
         self.cfg = cfg
         self.lm = lm
         self.model = model
 
     def _search(self, query: str) -> tuple[list[Result], str]:
-        """Results, or none and what went wrong."""
-        try:
-            results = PROVIDERS[self.cfg.provider](query, self.cfg)
-            return results, "" if results else "it found nothing"
-        except Exception as e:  # a failed search is something Holly can say, not a crash
-            # ddgs says "No results found." when the engines answer with CAPTCHAs.
-            return [], f"it failed: {type(e).__name__}: {str(e)[:120]}"
+        """Results from the first provider that gives any, or none and what went wrong."""
+        problems = []
+        for name in self.providers:
+            try:
+                if results := PROVIDERS[name](query, self.cfg):
+                    return results, ""
+                problems.append(f"{name} found nothing")
+            except Exception as e:  # a failed search is something Holly can say, not a crash
+                # ddgs says "No results found." when the engines answer with CAPTCHAs.
+                problems.append(f"{name} failed: {type(e).__name__}: {str(e)[:100]}")
+        return [], "; ".join(problems)
 
     def look_up(self, query: str, question: str) -> Lookup:
         """Search for `query` and answer `question` (what was asked) from the results.

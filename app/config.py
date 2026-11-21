@@ -107,6 +107,7 @@ class SearchConfig:
     summary_max_tokens: int = 160
     max_rounds: int = 3  # searches and page reads one lookup may make
     max_lookup_s: float = 5.0  # no new search or read is started after this long
+    context_tokens: int = 2048  # page text brave_context returns per search, in all
     summary_reasoning: str = "none"  # Gemma's thinking when judging results: "none", "low"...
     prompt: Path = ROOT / "persona/search_prompt.md"
     weather: bool = True  # the weather tool (Open-Meteo), with search

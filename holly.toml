@@ -149,7 +149,16 @@ enabled = true
 # engines may answer with a CAPTCHA instead of results.
 # "brave": the Brave Search API, with the key in the BRAVE_API_KEY
 # environment variable (~1,000 searches a month free, then metered).
-provider = "ddgs"
+# "brave_context": Brave's LLM Context API, same key: passages from each
+# result's page rather than a snippet. Over 16 varied questions it answered
+# 16 (web search 15), in the same ~1.6 s, never needed a second search, and
+# said a cricket score was out of date where web search passed an August
+# match off as live.
+# A list is tried in order: with no key, an error or no results, the next.
+# Not brave after brave_context: one service and key, so they fail together.
+provider = "brave_context,ddgs"
+# Page text brave_context returns per search, in all.
+context_tokens = 2048
 # The ddgs engines to try. "auto" tries them all but waits on the ones that
 # refuse: 2.1 s, against 0.8-1.1 s for this list. From here DuckDuckGo,
 # Mojeek and Startpage often answer with CAPTCHAs (always, with a VPN on).
