@@ -259,16 +259,25 @@ class Timeline:
             self.clock = (start, dac)
             end = self.played
             for turn in [*self.finishing, *([self.turn] if self.turn else [])]:
-                for key, at in (("start", turn.start), ("voice", turn.voice), ("end", turn.last)):
+                for key, at in (("start", turn.start), ("voice", turn.voice)):
                     if at is not None and key not in turn.times and at <= end:
                         turn.times[key] = dac + max(at - start, 0) / SR
-            done = [t for t in self.finishing if t.pending_len == 0 and (t.last is None or "end" in t.times)]
+            # A turn is done once it has ended, all its audio is on the timeline, and the
+            # last of it is in this callback. "end" used to be stamped the first time
+            # playback caught up with the audio so far, which happens mid-reply whenever
+            # the voice runs dry (most replies, and every search). So "done" came as soon
+            # as the last audio was queued, up to the 0.6 s lead early, and the mic,
+            # listening again 0.3 s after, heard Holly's last words and answered them.
+            done = [t for t in self.finishing if t.pending_len == 0 and (t.last is None or t.last <= end)]
             for turn in done:
+                if turn.last is not None:
+                    turn.times["end"] = dac + max(turn.last - start, 0) / SR
                 self.finishing.remove(turn)
         for turn in done:
             self.send({
                 "type": "done", "turn": turn.number,
                 "first_played": turn.times.get("start"), "first_voice": turn.times.get("voice"),
+                "last_played": turn.times.get("end"),
                 "underruns": turn.underruns,
             })
 

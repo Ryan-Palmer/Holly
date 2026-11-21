@@ -60,6 +60,8 @@ class Player:
         # When the first sample above VOICE_LEVEL left the speakers. Orpheus
         # opens every utterance with ~170 ms of silence, so this is later.
         self.first_voice: float | None = None
+        # When the reply's last sample leaves the speakers.
+        self.last_played: float | None = None
         # Blocks that ran out of audio mid-reply: audible as stutters.
         self.underruns = 0
         self._gap = False  # a pause is expected (Holly is searching)
@@ -90,6 +92,7 @@ class Player:
             self._ending = False
             self.first_played = None
             self.first_voice = None
+            self.last_played = None
             self.underruns = 0
             self._gap = False
         self._loop = asyncio.get_running_loop()
@@ -145,15 +148,16 @@ class Player:
                     self._pos = 0
             if filled < frames and self.first_played is not None and not self._ending and not self._gap:
                 self.underruns += 1
+            # When this block will actually leave the speakers.
+            dac = time.perf_counter() + max(time_info.outputBufferDacTime - time_info.currentTime, 0.0)
             if filled and (self.first_played is None or self.first_voice is None):
-                # When this block will actually leave the speakers.
-                dac = time.perf_counter() + max(time_info.outputBufferDacTime - time_info.currentTime, 0.0)
                 if self.first_played is None:
                     self.first_played = dac
                 loud = np.flatnonzero(np.abs(out[:filled]) > VOICE_LEVEL)
                 if loud.size:
                     self.first_voice = dac + loud[0] / self.stream.samplerate
             if self._ending and not self._chunks:
+                self.last_played = dac + filled / self.stream.samplerate
                 self._ending = False
                 self._signal_done()
         out[filled:] = 0
