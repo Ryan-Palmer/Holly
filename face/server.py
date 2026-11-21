@@ -414,6 +414,28 @@ def hold_pose_when_told(motion_stitch):
     motion_stitch.ctrl_motion = holding_ctrl_motion
 
 
+def quiet_onnxruntime(threads=4):
+    """Ditto runs HuBERT (its audio features, a chunk every 0.2 s, silence included) and its
+    face detectors through onnxruntime, asking for the GPU first. onnxruntime-gpu 1.32 is
+    built for CUDA 13 and this venv's CUDA is torch's 12.8, so the GPU provider never loads
+    and HuBERT runs on the CPU, with a thread per physical core (24) that spins between
+    chunks: 72% of the machine, all the time. 4 threads that sleep instead: 61 ms a chunk
+    against 40, and ~3% of the machine. Kept on the CPU, it costs no VRAM or GPU time."""
+    import onnxruntime
+
+    session = onnxruntime.InferenceSession
+
+    def quiet_session(path, sess_options=None, providers=None, **kwargs):
+        so = sess_options or onnxruntime.SessionOptions()
+        so.intra_op_num_threads = threads
+        so.inter_op_num_threads = 1
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        so.add_session_config_entry("session.inter_op.allow_spinning", "0")
+        return session(path, sess_options=so, providers=["CPUExecutionProvider"], **kwargs)
+
+    onnxruntime.InferenceSession = quiet_session
+
+
 def build_ditto(image, height, overlap):
     import core.atomic_components.motion_stitch as motion_stitch
     from fast_ditto import speed_up
@@ -421,6 +443,7 @@ def build_ditto(image, height, overlap):
 
     motion_stitch.ctrl_vad = lips_only_vad
     hold_pose_when_told(motion_stitch)
+    quiet_onnxruntime()
 
     sdk = StreamSDK(str(CHECKPOINTS / "ditto_cfg" / "v0.4_hubert_cfg_pytorch.pkl"), str(CHECKPOINTS / "ditto_pytorch"))
     speed_up(sdk, height)
