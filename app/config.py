@@ -124,6 +124,13 @@ class RecallConfig:
 
 
 @dataclass(frozen=True)
+class TimersConfig:
+    enabled: bool = True
+    file: Path = ROOT / "data/timers.json"  # what's set, kept between sessions
+    prompt: Path = ROOT / "persona/timers_prompt.md"
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
@@ -133,6 +140,7 @@ class Config:
     face: FaceConfig
     search: SearchConfig
     recall: RecallConfig = RecallConfig()
+    timers: TimersConfig = TimersConfig()
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -167,6 +175,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         face=FaceConfig(**raw.get("face", {})),
         search=_search_config(raw.get("search", {}), base),
         recall=_recall_config(raw.get("recall", {}), base),
+        timers=TimersConfig(**{k: (base / v if k in ("file", "prompt") else v)
+                               for k, v in raw.get("timers", {}).items()}),
     )
 
 

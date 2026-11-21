@@ -33,13 +33,16 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation, set_aside, when
 from .face_player import FacePlayer, start_server
 from .player import Player
-from . import archive, clock, memory, weather
+from . import archive, clock, memory, timers, weather
 from .records import reminders as pick_reminders, source_of
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
 
 DIM, RESET, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
+# Tools that answer at once, from this machine: no stock line, and they don't count
+# towards the lookups allowed per reply.
+LOCAL_TOOLS = ("clock", "timer")
 COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
@@ -142,7 +145,12 @@ class Holly:
         if self.archive:
             tools.append(archive.TOOL)
             prompts.append(cfg.recall.prompt.read_text(encoding="utf-8"))
+        self.timers = timers.Timers(cfg.timers.file) if cfg.timers.enabled else None
+        if self.timers:
+            tools.append(timers.TOOL)
+            prompts.append(cfg.timers.prompt.read_text(encoding="utf-8"))
         self.tools = tools or None
+        self.turn_lock = asyncio.Lock()  # one reply at a time: yours, or his speaking up
         self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)
         # Stock lines in his voice for while a tool works, by kind: "search" (web
         # search and weather) and "recall" (his archive).
@@ -294,7 +302,7 @@ class Holly:
                 for sentence in chunker.flush():
                     times.first_sentence = times.first_sentence or time.perf_counter()
                     await sentences.put(sentence)
-                slow = [c["name"] for c in calls if c["name"] != "clock"]  # the clock is instant
+                slow = [c["name"] for c in calls if c["name"] not in LOCAL_TOOLS]  # these are instant
                 if not parts and slow:
                     self._say_filler(times, "recall" if all(n == "recall" for n in slow) else "search")
                 self.player.expect_gap()
@@ -306,7 +314,7 @@ class Holly:
                                    for c in calls],
                 }]
                 for call in calls:
-                    if call["name"] != "clock":  # the clock is instant and local: no limit
+                    if call["name"] not in LOCAL_TOOLS:  # instant and local: no limit
                         searches += 1
                     result = await self._run_tool(call, user, searches, times)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
@@ -344,7 +352,7 @@ class Holly:
             print()
             return times
         said = "".join(last_said).strip()
-        if CLOCK_TIME.search(said) and not any(c["function"]["name"] == "clock" for m in steps
+        if CLOCK_TIME.search(said) and not any(c["function"]["name"] in LOCAL_TOOLS for m in steps
                                                 for c in (m.get("tool_calls") or [])):
             # He gave a time without the clock: a guess. Kept as fact in his history, it
             # stuck: greeted, he said "10:14 PM" at 7:56, and repeated it four times,
@@ -431,6 +439,10 @@ class Holly:
             print(f"{DIM}  (clock{': ' + zone if zone else ''}) {result.splitlines()[-1]}{RESET}", flush=True)
             # Given the right time, he still hedged it ("11:42 AM. Or 11:42 PM").
             return result + "\n(This is the exact time. Say it plainly, without doubting it.)"
+        if call["name"] == "timer" and self.timers:
+            result = self.timers.handle(args)
+            print(f"{DIM}  (timer) {result.split('. Tell the crew')[0]}{RESET}", flush=True)
+            return result
         if n > self.cfg.search.max_searches:
             return "That's enough searching. Answer with what you have."
         if call["name"] == "search" and self.searcher:
@@ -506,8 +518,30 @@ class Holly:
             print(f"{DIM}  (couldn't write his notes{f': {e!r}' if e else ''}; trying again in "
                   f"{COMPACT_RETRY_S:.0f} s){RESET}", flush=True)
 
+    async def announce(self, due: list[dict]) -> TurnTimes | None:
+        """Speak up about timers and reminders that have come due: his reply to a
+        note saying so, which is kept in his history like any turn."""
+        print(f"{DIM}  (due: {', '.join(i['label'] for i in due)}){RESET}", flush=True)
+        self.player.wake()
+        try:
+            return await self.respond(timers.announcement(due))
+        except Exception as e:
+            print(f"{YELLOW}  (couldn't announce it: {e!r}){RESET}\n", flush=True)
+            return None
+
+    async def _watch_timers(self) -> None:
+        """Typed: there's no listening loop to check between, so a task checks
+        every second and speaks up between your turns."""
+        while True:
+            await asyncio.sleep(1)
+            if self.timers and (due := self.timers.due()):
+                async with self.turn_lock:
+                    await self.announce(due)
+                print("You: ", end="", flush=True)
+
     async def run(self) -> None:
         await self.start()
+        watcher = asyncio.create_task(self._watch_timers())
         try:
             while True:
                 # Typed, there's no sleep to wait for: his notes are written while
@@ -525,12 +559,14 @@ class Holly:
                     print(f"{DIM}Conversation and notes cleared, on disk too.{RESET}\n")
                     continue
                 try:
-                    await self.respond(user)
+                    async with self.turn_lock:
+                        await self.respond(user)
                 except Exception as e:  # the voice or the speakers failed: report it and carry on
                     print(f"{YELLOW}  (that reply failed: {e!r}){RESET}\n", flush=True)
         except (EOFError, KeyboardInterrupt):
             print()
         finally:
+            watcher.cancel()
             if self.player:
                 self.player.close()
 

@@ -1,0 +1,203 @@
+"""Holly's timers and reminders: set by a tool, kept on disk, announced when due.
+
+"Set a timer for 20 minutes for the pasta", "remind me at half seven to ring
+Mum": Gemma calls the `timer` tool with a duration, or a time of day and
+perhaps a day, and the code works out the moment (Gemma's own sums with dates
+were off; see persona.resolve_day). They're saved to data/timers.json, so a
+reminder survives a restart; one that came due while he was off is announced
+when he's next up. When one is due, Holly speaks up unprompted, at the next
+pause (app/listen.py, Holly.run).
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import re
+from pathlib import Path
+
+from .persona import day, resolve_day, _DAY_WORDS
+
+TOOL = {
+    "type": "function",
+    "function": {
+        "name": "timer",
+        "description": "Timers and reminders: set one (for a length of time, or for a time of day), "
+                       "list what's set, or cancel one. When it's due, you'll be told, and say so.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["set", "list", "cancel"]},
+                "label": {"type": "string", "description":
+                          "What it's for, in a few words: 'pasta', 'ring Mum'. To cancel: its label, or 'all'."},
+                "duration": {"type": "string", "description":
+                             "For a timer: how long, like '20 minutes', '1 hour 30 minutes', '90 seconds'."},
+                "at": {"type": "string", "description":
+                       "For a reminder: the time of day, 24-hour, like '19:30' or '07:00'."},
+                "day": {"type": "string", "description":
+                        "With 'at', if not the next time it comes round: 'tomorrow', 'Friday', '25 December'."},
+            },
+            "required": ["action"],
+        },
+    },
+}
+
+_UNITS = {"h": 3600, "hr": 3600, "hour": 3600, "m": 60, "min": 60, "minute": 60, "s": 1, "sec": 1, "second": 1}
+_PART = re.compile(r"(\d+(?:\.\d+)?|an?|half an?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
+                   re.IGNORECASE)
+_AT = re.compile(r"^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.IGNORECASE)
+MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+          "october", "november", "december"]
+_DATE = re.compile(r"(\d{1,2})(?:st|nd|rd|th)?\s+(" + "|".join(MONTHS) + r")", re.IGNORECASE)
+
+
+def parse_duration(text: str) -> datetime.timedelta | None:
+    """'20 minutes', '1 hour 30 minutes', '1.5 hours', 'half an hour', '90 seconds'."""
+    total = 0.0
+    for amount, unit in _PART.findall(text or ""):
+        n = 0.5 if amount.lower().startswith("half") else 1.0 if amount.lower() in ("a", "an") else float(amount)
+        u = unit.lower()
+        total += n * _UNITS[u if u in _UNITS else u.rstrip("s")]
+    if not total and (bare := re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", text or "")):
+        total = float(bare.group(1)) * 60  # a bare number: minutes
+    return datetime.timedelta(seconds=total) if total > 0 else None
+
+
+def parse_when(at: str, day_text: str, now: datetime.datetime) -> datetime.datetime | None:
+    """A time of day ('19:30', '7:30 pm', '7pm'), on a day if given ('tomorrow',
+    'Friday', '25 December'), else the next time it comes round."""
+    at = {"noon": "12:00", "midday": "12:00", "midnight": "00:00"}.get((at or "").strip().lower(), at)
+    m = _AT.match(at or "")
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2) or 0)
+    if (ampm := (m.group(3) or "").lower().replace(".", "")) == "pm" and hour < 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    on = None
+    day_text = (day_text or "").strip()
+    if day_text:
+        if dm := _DATE.search(day_text):
+            try:
+                on = datetime.date(now.year, MONTHS.index(dm.group(2).lower()) + 1, int(dm.group(1)))
+            except ValueError:
+                return None
+            if on < now.date():
+                on = on.replace(year=now.year + 1)
+        elif wm := _DAY_WORDS.search(day_text):
+            words = wm.group(1)
+            # "Friday", said on a Friday, means today if the time's still to come, else next week.
+            if words.lower().split()[-1] == now.strftime("%A").lower() and words.lower().split()[0] != "next":
+                on = now.date()
+                if datetime.datetime.combine(on, datetime.time(hour, minute)) <= now:
+                    on += datetime.timedelta(days=7)
+            else:
+                on = resolve_day(words, now.date())
+        else:
+            return None
+    when = datetime.datetime.combine(on or now.date(), datetime.time(hour, minute))
+    if not on and when <= now:
+        when += datetime.timedelta(days=1)  # "at 7": the next 7 o'clock
+    return when if when > now else None  # "today at 9" said at 10: gone
+
+
+def say_when(when: datetime.datetime, now: datetime.datetime) -> str:
+    """'19:52 today, in 20 minutes', '07:00 tomorrow', '19:30 on Friday 27 November'."""
+    days = (when.date() - now.date()).days
+    on = "today" if days == 0 else "tomorrow" if days == 1 else f"on {day(when.date()).rsplit(' ', 1)[0]}"
+    left = when - now
+    if days == 0 or left < datetime.timedelta(hours=12):
+        mins = round(left.total_seconds() / 60)
+        span = (f"in {mins // 60} hour{'s' * (mins // 60 != 1)}" + (f" {mins % 60} minutes" if mins % 60 else "")
+                if mins >= 60 else f"in {mins} minute{'s' * (mins != 1)}" if mins else
+                f"in {round(left.total_seconds())} seconds")
+        return f"{when:%H:%M} {on}, {span}"
+    return f"{when:%H:%M} {on}"
+
+
+class Timers:
+    """The timers and reminders set, saved to `path` after every change."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.items: list[dict] = []  # {"label", "due" (ISO, local), "kind": "timer" or "reminder"}
+        if path.exists():
+            try:
+                self.items = json.loads(path.read_text(encoding="utf-8"))
+            except (ValueError, OSError) as e:
+                print(f"Couldn't read Holly's timers ({e}); starting with none.", flush=True)
+
+    def _save(self) -> None:
+        tmp = self.path.with_suffix(".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(self.items, indent=1), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError as e:
+            print(f"Couldn't save Holly's timers: {e}", flush=True)
+
+    def handle(self, args: dict, now: datetime.datetime | None = None) -> str:
+        """Do what the tool call asks; returns what Holly is told."""
+        now = (now or datetime.datetime.now()).replace(microsecond=0)
+        action = str(args.get("action") or "set").lower()
+        label = " ".join(str(args.get("label") or "").split()) or "timer"
+        if action == "list":
+            if not self.items:
+                return "Nothing is set."
+            return "Set: " + "; ".join(
+                f"{i['label']} ({i['kind']}), due {say_when(datetime.datetime.fromisoformat(i['due']), now)}"
+                for i in sorted(self.items, key=lambda i: i["due"])) + "."
+        if action == "cancel":
+            gone = [i for i in self.items if label.lower() == "all" or label.lower() in i["label"].lower()
+                    or i["label"].lower() in label.lower()]
+            if not gone:
+                return f"There's nothing set called {label!r}. " + self.handle({"action": "list"}, now)
+            self.items = [i for i in self.items if i not in gone]
+            self._save()
+            return "Cancelled: " + ", ".join(i["label"] for i in gone) + "."
+        if duration := parse_duration(str(args.get("duration") or "")):
+            due, kind = now + duration, "timer"
+        elif args.get("at"):
+            due = parse_when(str(args["at"]), str(args.get("day") or ""), now)
+            if not due:
+                return (f"Nothing set: {args.get('at')!r} (day {args.get('day')!r}) has already passed, or "
+                        "isn't a time I can read. If it's a time to come, call the timer tool again with 'at' "
+                        "as a 24-hour time like '19:30', and 'day' like 'tomorrow'.")
+            kind = "reminder"
+        else:
+            return ("A timer needs a 'duration' (like '20 minutes'), or a reminder an 'at' time (like '19:30'). "
+                    "Call the timer tool again with one.")
+        self.items.append({"label": label, "due": due.isoformat(), "kind": kind})
+        self._save()
+        return (f"Set: {label}, due {say_when(due, now)}. Tell the crew when it's due, exactly as given here, "
+                "in your own words.")
+
+    def due(self, now: datetime.datetime | None = None) -> list[dict]:
+        """Timers and reminders whose time has come, oldest first; taken off the list."""
+        now = now or datetime.datetime.now()
+        ready = [i for i in self.items if datetime.datetime.fromisoformat(i["due"]) <= now]
+        if ready:
+            self.items = [i for i in self.items if i not in ready]
+            self._save()
+        return sorted(ready, key=lambda i: i["due"])
+
+    def next_due(self) -> datetime.datetime | None:
+        return min((datetime.datetime.fromisoformat(i["due"]) for i in self.items), default=None)
+
+
+def announcement(items: list[dict], now: datetime.datetime | None = None) -> str:
+    """What Holly is told, as the crew's turn, when timers or reminders come due."""
+    now = now or datetime.datetime.now()
+    lines = []
+    for i in items:
+        due = datetime.datetime.fromisoformat(i["due"])
+        late = now - due
+        when = (f"it came due at {due:%H:%M}" + (f" on {day(due.date())}" if due.date() != now.date() else "")
+                + ", while you were switched off") if late > datetime.timedelta(minutes=2) else "it's due now"
+        lines.append(f"The {i['kind']} '{i['label']}': {when}.")
+    return ("[" + " ".join(lines) + " Tell the crew, in a sentence or two, in your own words. "
+            "Nobody has spoken: you're speaking up by yourself.]")

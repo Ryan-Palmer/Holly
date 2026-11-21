@@ -232,3 +232,14 @@ fillers = [
     "Let me think. It rings a bell.",
     "One moment. I'm having a rummage.",
 ]
+
+[timers]
+# Timers and reminders (app/timers.py): "set a timer for 20 minutes", "remind
+# me at half seven to ring Mum". The code works out when, from a duration or a
+# time and day; they're kept in this file between sessions. When one is due,
+# Holly speaks up at the next pause; one that came due while he was off is
+# mentioned when he's next up.
+enabled = true
+file = "data/timers.json"
+prompt = "persona/timers_prompt.md"
+

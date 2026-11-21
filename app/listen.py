@@ -97,11 +97,17 @@ class ListeningHolly(Holly):
         print(f"{DIM}Listening on {self.mic.device_name}. {how} Ctrl-C to quit.{RESET}\n")
 
     async def next_utterance(self):
-        """Wait for you to say something; returns the detector's Utterance."""
+        """Wait for you to say something; returns the detector's Utterance, or a list
+        of timers and reminders that have come due (checked while nobody's speaking)."""
         hearing = False
         while True:
             block, captured = await self.mic.queue.get()
             if not hearing:
+                if self.timers and (due := self.timers.due()):
+                    if self.compaction and self.writing_notes:
+                        self.compaction.cancel()  # as for speech: he's about to talk
+                    self.detector.reset()
+                    return due
                 self._maybe_compact()
             if captured < self.deaf_until:
                 continue
@@ -133,20 +139,23 @@ class ListeningHolly(Holly):
         try:
             while True:
                 utterance = await self.next_utterance()
-                text = await asyncio.to_thread(self.stt.transcribe, utterance.audio)
-                times = TurnTimes(start=utterance.speech_end, transcribed=time.perf_counter())
-                if not text:
-                    continue
-                started = utterance.speech_end - utterance.duration_ms / 1000
-                if self.wake_words and started > self.awake_until and not addressed(
-                        text, self.wake_words, self.cfg.listen.wake_edge_words):
-                    print(f"{DIM}(not for Holly) {text}{RESET}")
-                    continue
-                print(f"You: {text}")
-                try:
-                    await self.respond(text, times)
-                except Exception as e:  # the voice or the speakers failed: report it and carry on
-                    print(f"{YELLOW}  (that reply failed: {e!r}){RESET}\n", flush=True)
+                if isinstance(utterance, list):  # timers or reminders due: he speaks up
+                    await self.announce(utterance)
+                else:
+                    text = await asyncio.to_thread(self.stt.transcribe, utterance.audio)
+                    times = TurnTimes(start=utterance.speech_end, transcribed=time.perf_counter())
+                    if not text:
+                        continue
+                    started = utterance.speech_end - utterance.duration_ms / 1000
+                    if self.wake_words and started > self.awake_until and not addressed(
+                            text, self.wake_words, self.cfg.listen.wake_edge_words):
+                        print(f"{DIM}(not for Holly) {text}{RESET}")
+                        continue
+                    print(f"You: {text}")
+                    try:
+                        await self.respond(text, times)
+                    except Exception as e:  # the voice or the speakers failed: report it and carry on
+                        print(f"{YELLOW}  (that reply failed: {e!r}){RESET}\n", flush=True)
                 # Drop what the mic heard while Holly spoke, until his last sample has
                 # left the speakers, plus the echo tail.
                 spoke_until = max(time.perf_counter(), self.player.last_played or 0.0)
