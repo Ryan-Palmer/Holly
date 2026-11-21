@@ -34,16 +34,17 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation, set_aside, when
 from .face_player import FacePlayer, start_server
 from .player import Player
-from . import archive, clock, memory, timers, weather
+from . import archive, clock, memory, spotify, timers, weather
 from .records import reminders as pick_reminders, source_of
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
 
 DIM, RESET, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
-# Tools that answer at once, from this machine: no stock line, and they don't count
-# towards the lookups allowed per reply.
-LOCAL_TOOLS = ("clock", "timer")
+# Tools that answer at once (Spotify in well under a second): no stock line, and they
+# don't count towards the lookups allowed per reply.
+LOCAL_TOOLS = ("clock", "timer", "spotify")
+TIME_TOOLS = ("clock", "timer")  # a time of day in his reply from one of these isn't a guess
 COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
@@ -157,6 +158,11 @@ class Holly:
         if self.timers:
             tools.append(timers.TOOL)
             prompts.append(cfg.timers.prompt.read_text(encoding="utf-8"))
+        self.spotify = (spotify.Spotify(cfg.spotify)
+                        if cfg.spotify.enabled and spotify.available() else None)
+        if self.spotify:
+            tools.append(spotify.TOOL)
+            prompts.append(cfg.spotify.prompt.read_text(encoding="utf-8"))
         self.tools = tools or None
         self.turn_lock = asyncio.Lock()  # one reply at a time: yours, or his speaking up
         self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)
@@ -360,7 +366,7 @@ class Holly:
             print()
             return times
         said = "".join(last_said).strip()
-        if CLOCK_TIME.search(said) and not any(c["function"]["name"] in LOCAL_TOOLS for m in steps
+        if CLOCK_TIME.search(said) and not any(c["function"]["name"] in TIME_TOOLS for m in steps
                                                 for c in (m.get("tool_calls") or [])):
             # He gave a time without the clock: a guess. Kept as fact in his history, it
             # stuck: greeted, he said "10:14 PM" at 7:56, and repeated it four times,
@@ -450,6 +456,16 @@ class Holly:
         if call["name"] == "timer" and self.timers:
             result = self.timers.handle(args)
             print(f"{DIM}  (timer) {result.split('. Tell the crew')[0]}{RESET}", flush=True)
+            return result
+        if call["name"] == "spotify" and self.spotify:
+            t0 = time.perf_counter()
+            try:
+                result = await asyncio.to_thread(self.spotify.handle, args)
+            except Exception as e:  # the network, or Spotify itself
+                print(f"{YELLOW}  (spotify failed: {e!r}){RESET}", flush=True)
+                return "Spotify didn't answer. Tell the crew, in a few words."
+            print(f"{DIM}  (spotify {args.get('action')}{': ' + str(args['query']) if args.get('query') else ''}"
+                  f" - {(time.perf_counter() - t0) * 1000:.0f} ms) {result}{RESET}", flush=True)
             return result
         if n > self.cfg.search.max_searches:
             return "That's enough searching. Answer with what you have."

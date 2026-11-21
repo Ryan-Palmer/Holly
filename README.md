@@ -368,6 +368,33 @@ jokes don't trigger either.
   instant: no stock line, and it doesn't count towards `max_searches`. In a
   test, every step took ~0.5 s, and the pasta timer came with "The pasta is
   ready. Or it's ruined. It's hard to tell from up here."
+- **Music.** A `spotify` tool (`app/spotify.py`, spotipy): "play some
+  Talking Heads", "play Once in a Lifetime", "put on my liked songs", "what's
+  this song?", "skip this", "turn it down", "pause", shuffle and queue.
+  Spotify does the playing, on whichever device is open (the desktop app
+  here, a phone, a speaker); with none open, the desktop app on this PC is
+  started. It needs Spotify Premium. To set it up, create an app at
+  developer.spotify.com/dashboard (redirect URI
+  `http://127.0.0.1:8888/callback`, Web API), save its client ID as the
+  Windows user variable `SPOTIFY_CLIENT_ID`, and sign in once:
+
+  ```
+  .venv\Scripts\python -m app.spotify login       # a browser asks you to allow access
+  .venv\Scripts\python -m app.spotify do now_playing   # try any action without Holly
+  ```
+
+  The sign-in is PKCE, made for apps on your own machine, so there's no
+  client secret. The login is kept in `data/spotify_token.json` and renews
+  itself. `--reset` leaves it alone. Without the variable, Holly simply has
+  no music tool. Each action takes 0.1–1 s (local and uncounted, like the
+  clock). A track plays on from within its album, and an artist plays their
+  most played. Spotify's search always finds something ("zzqxv nonsense"
+  found the Gummy Bear song), so a result must share a word with what was
+  asked. Release clutter ("- 2024 Remaster", "(Deluxe Edition)") is stripped
+  before he hears the names. Told in the tool's answer to "say so in a few
+  words: the music has started", he said "The music is playing over you"
+  word for word, so his rules live in `persona/spotify_prompt.md` and the
+  answers just say what happened.
 - **The time.** A `clock` tool (`app/clock.py`) reads the PC's clock, which
   Windows keeps to internet time: the time here, in UTC, or in any IANA
   time zone. It's instant, so no stock line plays; the tool's round trip
@@ -417,8 +444,9 @@ git-ignored. None of it is to be published.
 - `persona/system_prompt.md` holds the character and the rules for speech.
 - `persona/examples.toml` holds example exchanges. They steer tone more than
   the prompt does, so rewrite them in your own words.
-- `persona/search_prompt.md`, `persona/recall_prompt.md` and
-  `persona/timers_prompt.md` hold the rules for when he uses his tools.
+- `persona/search_prompt.md`, `persona/recall_prompt.md`,
+  `persona/timers_prompt.md` and `persona/spotify_prompt.md` hold the rules
+  for when he uses his tools.
 - `holly.toml` sets the model, sampling, context and history budgets.
 
 ## LM Studio notes

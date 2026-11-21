@@ -131,6 +131,20 @@ class TimersConfig:
 
 
 @dataclass(frozen=True)
+class SpotifyConfig:
+    enabled: bool = True  # and only if SPOTIFY_CLIENT_ID is set
+    token_file: Path = ROOT / "data/spotify_token.json"  # the login, from `python -m app.spotify login`
+    redirect_uri: str = "http://127.0.0.1:8888/callback"  # as registered with the Spotify app
+    device: str = ""  # with nothing playing, play here (part of its name); else this PC, else any
+    launch: bool = True  # with Spotify open nowhere, open the desktop app on this PC
+    launch_wait_s: float = 10.0  # and wait this long for it to appear
+    volume_step: int = 15  # "turn it up": by this many percent
+    market: str = "GB"  # the country whose catalogue to search (Spotify's own "from_token" needs more access)
+    timeout_s: float = 5.0
+    prompt: Path = ROOT / "persona/spotify_prompt.md"
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
@@ -141,6 +155,7 @@ class Config:
     search: SearchConfig
     recall: RecallConfig = RecallConfig()
     timers: TimersConfig = TimersConfig()
+    spotify: SpotifyConfig = SpotifyConfig()
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -177,6 +192,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         recall=_recall_config(raw.get("recall", {}), base),
         timers=TimersConfig(**{k: (base / v if k in ("file", "prompt") else v)
                                for k, v in raw.get("timers", {}).items()}),
+        spotify=SpotifyConfig(**{k: (base / v if k in ("token_file", "prompt") else v)
+                                 for k, v in raw.get("spotify", {}).items()}),
     )
 
 

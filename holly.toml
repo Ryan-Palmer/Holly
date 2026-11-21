@@ -243,3 +243,16 @@ enabled = true
 file = "data/timers.json"
 prompt = "persona/timers_prompt.md"
 
+
+[spotify]
+# The crew's music on Spotify (app/spotify.py): "play some Talking Heads",
+# "skip this", "turn it down", "what's this song?". Needs Spotify Premium, a
+# Spotify app's client ID in the user environment variable SPOTIFY_CLIENT_ID,
+# and signing in once: .venv\Scripts\python -m app.spotify login. Spotify does
+# the playing, on whichever device is open; with none, the desktop app is opened.
+enabled = true
+token_file = "data/spotify_token.json"
+device = ""  # part of a device's name, to play there when nothing is playing
+volume_step = 15
+market = "GB"  # the country whose catalogue to search
+prompt = "persona/spotify_prompt.md"
