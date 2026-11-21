@@ -185,6 +185,10 @@ class Timers:
             self._save()
         return sorted(ready, key=lambda i: i["due"])
 
+    def clear(self) -> None:
+        self.items = []
+        self._save()
+
     def next_due(self) -> datetime.datetime | None:
         return min((datetime.datetime.fromisoformat(i["due"]) for i in self.items), default=None)
 

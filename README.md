@@ -179,10 +179,16 @@ the choice of chat model:
   file and renamed over the old one, so a crash can't leave half a file. At
   startup, all but the newest ~1,500 tokens (`history_resume_tokens`) of the
   last session go into his notes while the voice loads (~1-3 s), and his
-  system prompt says when he last talked with you. `--forget` sets the file
-  aside as `memory.forgotten-<date>-<time>.json` and starts afresh (a file
-  that won't read, after a slip in a hand edit, is set aside the same way); `/reset` (typed) wipes
-  it; `memory_file = ""` keeps nothing. In a test across three days he
+  system prompt says when he last talked with you. `--forget` (with
+  `app.listen` or `app.speak`) sets aside everything of yours, renamed with
+  the time (`memory.forgotten-<date>-<time>.json`, the archive, timers and
+  reminders), and he starts afresh; the ship's records stay. A file that
+  won't read, after a slip in a hand edit, is set aside the same way.
+  `--reset` deletes all of that for good instead, with anything `--forget`
+  set aside; the ship's records (`records.db`, `records_raw`) still stay.
+  In the typed version (`app.speak`), typing `/reset` wipes history, notes,
+  the archive, timers and reminders for good. `memory_file = ""` keeps
+  nothing. In a test across three days he
   answered "Tuesday 24 November at 10:00" to a boiler service booked for
   "next Tuesday" on the Wednesday before, said that Jo, coming "on Saturday",
   was visiting today, and knew they'd left a chess game unfinished.
@@ -221,8 +227,8 @@ the choice of chat model:
   related or not, so the closest few go to the judge, which drops the
   misses. Told only to recall, he once said "I'll check my archives"
   without doing it; told never to say he doesn't remember without recalling
-  first, he recalls. `--forget` sets the archive aside too, and `/reset`
-  empties it.
+  first, he recalls. `--forget` sets the archive aside too, `--reset`
+  deletes it, and `/reset` (typed) empties it.
 - **The ship's records.** Holly's memory of Red Dwarf itself: the Red Dwarf
   fandom wiki's articles (CC BY-SA), fetched through its API, cut into
   paragraph-sized entries and kept like his conversations in

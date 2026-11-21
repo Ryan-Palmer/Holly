@@ -21,6 +21,7 @@ import dataclasses
 import functools
 import json
 import random
+from pathlib import Path
 import re
 import sys
 import time
@@ -107,7 +108,7 @@ class Holly:
     HINT =" /reset to start over, /quit to leave."
 
     def __init__(self, model: str | None, face: bool | None = None, search: bool | None = None,
-                 forget: bool = False):
+                 forget: bool = False, reset: bool = False):
         cfg = load_config()
         if face is not None:
             cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
@@ -122,12 +123,19 @@ class Holly:
         # prompt, so changing them between requests would break LM Studio's cache.
         self.searcher = Searcher(cfg.search, self.lm, self.model) if cfg.search.enabled else None
         memory_file = cfg.persona.memory_file
-        if forget:
-            # Set aside, not deleted, in case it was a mistake; each with its own
-            # time, so a second --forget doesn't overwrite the first.
-            asides = [set_aside(memory_file, "forgotten")] if memory_file and memory_file.exists() else []
-            if cfg.recall.enabled and (a := archive.set_aside_archive(cfg.recall.file)):
-                asides.append(a)
+        if reset:
+            # Everything of yours, for good: history and notes, the archive, timers and
+            # reminders, and whatever --forget or an unreadable file set aside. Not the
+            # ship's records.
+            gone = wipe_yours([memory_file, cfg.recall.file, cfg.timers.file])
+            print(f"{DIM}Deleted {len(gone)} file{'s' * (len(gone) != 1)} of Holly's memory"
+                  f"{': ' + ', '.join(p.name for p in gone) if gone else ''}; he starts afresh.{RESET}")
+        elif forget:
+            # Everything of yours (history and notes, the archive, timers and reminders), but
+            # not the ship's records. Set aside, not deleted, in case it was a mistake; each
+            # with its own time, so a second --forget doesn't overwrite the first.
+            yours = [memory_file, cfg.recall.file, cfg.timers.file]
+            asides = [set_aside(f, "forgotten") for f in yours if f and f.exists()]
             if asides:
                 print(f"{DIM}Holly's memory of earlier sessions is set aside "
                       f"({', '.join(a.name for a in asides)}); he starts afresh.{RESET}")
@@ -556,7 +564,10 @@ class Holly:
                     return
                 if user == "/reset":
                     self.convo.reset()
-                    print(f"{DIM}Conversation and notes cleared, on disk too.{RESET}\n")
+                    if self.timers:
+                        self.timers.clear()
+                    print(f"{DIM}History, notes, archive, timers and reminders cleared, on disk "
+                          f"too.{RESET}\n")
                     continue
                 try:
                     async with self.turn_lock:
@@ -571,19 +582,40 @@ class Holly:
                 self.player.close()
 
 
+FORGET_HELP = ("start afresh, setting aside (renamed, not deleted) his history, notes, archive, timers "
+               "and reminders; the ship's records stay")
+RESET_HELP = ("start afresh, deleting his history, notes, archive, timers and reminders for good, and "
+              "anything --forget set aside; the ship's records stay")
+
+
+def wipe_yours(files: list[Path | None]) -> list[Path]:
+    """Delete these files and any copies set aside from them (".forgotten-<time>",
+    ".unreadable-<time>"), and their half-written ".tmp" files. Returns what went."""
+    gone = []
+    for f in files:
+        if not f:
+            continue
+        for p in [f, f.with_suffix(".tmp"), *f.parent.glob(f"{f.stem}.forgotten-*{f.suffix}"),
+                  *f.parent.glob(f"{f.stem}.unreadable-*{f.suffix}")]:
+            if p.exists():
+                p.unlink()
+                gone.append(p)
+    return gone
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Talk to Holly; he answers out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
     parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
     parser.add_argument("--search", action=argparse.BooleanOptionalAction,
                         help="let Holly search the web (default: holly.toml)")
-    parser.add_argument("--forget", action="store_true",
-                        help="start afresh, setting aside his memory of earlier sessions")
+    parser.add_argument("--forget", action="store_true", help=FORGET_HELP)
+    parser.add_argument("--reset", action="store_true", help=RESET_HELP)
     args = parser.parse_args()
     # The Windows console defaults to cp1252, which can't print emoji.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(Holly(args.model, args.face, args.search, args.forget).run())
+        asyncio.run(Holly(args.model, args.face, args.search, args.forget, args.reset).run())
     except KeyboardInterrupt:
         pass
 
