@@ -61,7 +61,16 @@ LIPS_STEP = 1 / 3  # how fast they ease between resting and moving, per frame
 POSE_HANG = 25  # frames the head keeps moving after speech (1 s)
 POSE_AHEAD = 5  # frames it starts moving before it (as far ahead as is known)
 POSE_STEP = 1 / 12  # ~0.5 s from still to moving
-DOZE_S = 1.5  # before sleeping, the head settles at the photo's pose for this long
+DOZE_S = 1.5  # before sleeping, the face settles to the photo itself for this long
+DOZE_STEP = 1 / 25  # ~1 s to settle into the photo, eyes closing, when dozing off
+WAKE_STEP = 1 / 10  # ~0.4 s to open the eyes and come back to life on waking
+# The eyes shut: Ditto's own deepest blink, as offsets to the photo's expression keypoints
+# 11, 13, 15, 16 and 18 (x, y, z). Captured by running Ditto on silence and taking the
+# frame whose eye keypoints moved furthest from the photo's; it showed the eyes fully closed.
+EYES_CLOSED = np.zeros((21, 3), np.float32)
+EYES_CLOSED[[11, 13, 15, 16, 18]] = [[0.0026, 0.0150, 0.0], [0.0024, -0.0048, 0.0], [-0.0005, 0.0182, 0.0],
+                                     [-0.0013, -0.0014, 0.0], [-0.0008, -0.0022, 0.0]]
+WAKE_GRACE_S = 10.0  # speech wakes the face this long, in case Holly answers it
 POSE_KEYS = ("pitch", "yaw", "roll", "t")  # t: the head's position in the frame
 HEADER = struct.Struct("<cI")  # message type, payload length; see app/face_player.py
 
@@ -129,6 +138,7 @@ class Timeline:
         self.voiced = {}  # frame -> speech in it?
         self.lips = 0.0  # 0 resting, 1 following the audio
         self.pose = idle_head  # 0 still, 1 moving as Ditto drives it
+        self.doze = 0.0  # 0 as Ditto draws it, 1 the photo with eyes closed (asleep)
 
     # -- from Holly ---------------------------------------------------------
 
@@ -139,8 +149,12 @@ class Timeline:
             self.last_active = time.perf_counter()
 
     def wake(self):
-        """Someone is speaking: be awake (and stay so for sleep_after) in case Holly answers."""
-        self.last_active = time.perf_counter()
+        """Someone started speaking: wake for WAKE_GRACE_S in case Holly answers; his reply
+        then keeps him awake. Never shortens the time already left, and doesn't add a full
+        sleep_after either: speech that isn't for Holly shouldn't keep his face awake when
+        his app has stopped listening without the wake word."""
+        now = time.perf_counter()
+        self.last_active = max(self.last_active, now - self.sleep_after + WAKE_GRACE_S)
 
     def held(self, k):
         """Is timeline frame k one Ditto skipped, so the window should hold its last frame?
@@ -278,12 +292,15 @@ class Timeline:
         for k in range(start, stop):
             target = 1.0 if speaking(k, LIPS_HANG, LIPS_AHEAD) else 0.0
             self.lips += max(-LIPS_STEP, min(LIPS_STEP, target - self.lips))
-            # Dozing off: the head settles to the photo's pose before Ditto pauses, so he
-            # sleeps at rest rather than mid-sway.
+            # Dozing off: the head returns to the photo's pose and the face to the photo's
+            # expression with the eyes shut ("doze", see face_controls), so he sleeps as the
+            # still, eyes closed. With the pose alone, he froze on whatever expression the
+            # animation had reached. The eyes close slowly and open quickly on waking.
             dozing = self.sleep_after > 0 and self._quiet_for() > self.sleep_after - DOZE_S
             target = 1.0 if speaking(k, POSE_HANG, POSE_AHEAD) else 0.0 if dozing else self.idle_head
             self.pose += max(-POSE_STEP, min(POSE_STEP, target - self.pose))
-            ctrl[k - offset] = {"vad_alpha": self.lips, "pose_alpha": self.pose}
+            self.doze = min(1.0, self.doze + DOZE_STEP) if dozing else max(0.0, self.doze - WAKE_STEP)
+            ctrl[k - offset] = {"vad_alpha": self.lips, "pose_alpha": self.pose, "doze": self.doze}
         for old in [i for i in self.voiced if i < start - max(LIPS_HANG, POSE_HANG)]:
             del self.voiced[old]
         for old in [i for i in ctrl if isinstance(i, int) and i < start - offset - 250]:
@@ -452,11 +469,15 @@ def lips_only_vad(x_d_info, dst, alpha):
     return x_d_info
 
 
-def hold_pose_when_told(motion_stitch):
-    """Ditto sways the head while Holly is silent, too. This adds a per-frame "pose_alpha"
-    control: 1 leaves the head as Ditto drives it, 0 holds it at the source photo's pose.
+def face_controls(motion_stitch):
+    """Two per-frame controls added to Ditto's motion step:
+    - "pose_alpha": Ditto sways the head while Holly is silent, too. 1 leaves the head as
+      Ditto drives it, 0 holds it at the source photo's pose.
+    - "doze": 0 leaves the expression as Ditto drives it, 1 is the photo's own expression
+      with the eyes closed (EYES_CLOSED): he falls asleep as the still.
     ctrl_motion gets the frame's controls but not the source, so __call__ notes it first
     (one motion-stitch thread, so a plain dict is safe)."""
+    eyes_closed = EYES_CLOSED.reshape(1, -1)
     call, ctrl_motion = motion_stitch.MotionStitch.__call__, motion_stitch.ctrl_motion
     source = {}
 
@@ -470,6 +491,10 @@ def hold_pose_when_told(motion_stitch):
             src = source["info"]
             for k in POSE_KEYS:
                 x_d_info[k] = src[k] + (x_d_info[k] - src[k]) * alpha
+        doze = kwargs.get("doze", 0.0)
+        if doze > 0 and "info" in source:
+            asleep = source["info"]["exp"] + eyes_closed.reshape(source["info"]["exp"].shape)
+            x_d_info["exp"] = x_d_info["exp"] * (1 - doze) + asleep * doze
         return ctrl_motion(x_d_info, **kwargs)
 
     motion_stitch.MotionStitch.__call__ = noting_call
@@ -504,7 +529,7 @@ def build_ditto(image, height, overlap):
     from stream_pipeline_online import StreamSDK
 
     motion_stitch.ctrl_vad = lips_only_vad
-    hold_pose_when_told(motion_stitch)
+    face_controls(motion_stitch)
     quiet_onnxruntime()
 
     sdk = StreamSDK(str(CHECKPOINTS / "ditto_cfg" / "v0.4_hubert_cfg_pytorch.pkl"), str(CHECKPOINTS / "ditto_pytorch"))
@@ -551,7 +576,7 @@ def main():
     p.add_argument("--idle-head", type=float, default=0.2,
                    help="head movement kept while Holly is silent: 0 still, 1 as Ditto drives it")
     p.add_argument("--sleep-after", type=float, default=30.0,
-                   help="seconds with nothing said before Ditto pauses to spare the GPU (0: never)")
+                   help="seconds after Holly last spoke before Ditto pauses to spare the GPU (0: never)")
     p.add_argument("--host-api", default="Windows WASAPI")
     p.add_argument("--device", default="", help="output device name (or part of it)")
     args = p.parse_args()

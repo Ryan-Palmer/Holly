@@ -73,7 +73,7 @@ class ListenConfig:
     whisper_hotwords: str = "Holly"
     wake_words: tuple[str, ...] = ("holly", "hollie", "holley")
     wake_edge_words: int = 3
-    follow_up_s: float = 8.0
+    awake_s: float = 30.0  # after he last spoke: no wake word needed, and his face stays awake
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,6 @@ class FaceConfig:
     lead_ms: int = 600
     height: int = 720
     idle_head: float = 0.2
-    sleep_after_s: float = 30.0
 
 
 @dataclass(frozen=True)
