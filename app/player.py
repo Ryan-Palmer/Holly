@@ -10,7 +10,7 @@ import time
 import numpy as np
 import sounddevice as sd
 
-# -40 dBFS: well above the silence Orpheus pads with, well below speech.
+# -40 dBFS: well above the silence a voice pads with, well below speech.
 VOICE_LEVEL = 0.01
 
 
@@ -57,8 +57,8 @@ class Player:
         self._done: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self.first_played: float | None = None
-        # When the first sample above VOICE_LEVEL left the speakers. Orpheus
-        # opens every utterance with ~170 ms of silence, so this is later.
+        # When the first sample above VOICE_LEVEL left the speakers: later
+        # than first_played when a sentence opens with silence.
         self.first_voice: float | None = None
         # When the reply's last sample leaves the speakers.
         self.last_played: float | None = None

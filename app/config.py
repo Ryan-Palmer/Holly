@@ -23,18 +23,6 @@ class LlmConfig:
 
 
 @dataclass(frozen=True)
-class OrpheusConfig:
-    model: str
-    context_length: int
-    voice: str
-    temperature: float
-    top_p: float
-    repeat_penalty: float
-    snac_model: str
-    device: str
-
-
-@dataclass(frozen=True)
 class VoxCpmConfig:
     model: str
     reference_wav: Path
@@ -46,9 +34,7 @@ class VoxCpmConfig:
 
 @dataclass(frozen=True)
 class TtsConfig:
-    engine: str  # "voxcpm" or "orpheus"
     voxcpm: VoxCpmConfig
-    orpheus: OrpheusConfig
 
 
 @dataclass(frozen=True)
@@ -109,7 +95,7 @@ class SearchConfig:
     region: str = "uk-en"
     max_results: int = 6
     timeout_s: float = 5.0
-    max_searches: int = 2
+    max_searches: int = 3  # lookups per reply; the clock doesn't count
     summary_max_tokens: int = 160
     max_rounds: int = 3  # searches and page reads one lookup may make
     max_lookup_s: float = 5.0  # no new search or read is started after this long
@@ -140,7 +126,6 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
     t = raw["tts"]
     v = t["voxcpm"]
     tts = TtsConfig(
-        engine=t["engine"],
         voxcpm=VoxCpmConfig(
             model=v["model"],
             reference_wav=base / v["reference_wav"],
@@ -149,7 +134,6 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
             wait_for_reply=v.get("wait_for_reply", False),
             inference_timesteps=v.get("inference_timesteps", 10),
         ),
-        orpheus=OrpheusConfig(**t["orpheus"]),
     )
     return Config(
         llm=LlmConfig(**raw["llm"]),

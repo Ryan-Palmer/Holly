@@ -1,6 +1,6 @@
 """Milestone 2: type to Holly, and he answers out loud in a stock voice.
 
-    python -m app.speak [--model MODEL] [--engine voxcpm|orpheus] [--voice VOICE] [--no-search]
+    python -m app.speak [--model MODEL] [--no-search] [--face] [--forget]
 
 The reply streams: the LLM's tokens are cut into sentences, each sentence
 goes to TTS as soon as it's complete, and audio plays as it's decoded. So
@@ -29,7 +29,7 @@ import torch
 
 from .config import load_config
 from .lmstudio import LmStudio, ReplyTiming
-from .persona import Conversation, when
+from .persona import Conversation, set_aside, when
 from .face_player import FacePlayer, start_server
 from .player import Player
 from . import clock, memory, weather
@@ -37,7 +37,10 @@ from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
 
-DIM, RESET, CYAN = "\033[2m", "\033[0m", "\033[36m"
+DIM, RESET, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
+COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
+# Said when a reply fails part-way (LM Studio restarted, a request timed out).
+LOST_THREAD = "Sorry. I seem to have lost my train of thought."
 
 
 @dataclasses.dataclass
@@ -95,19 +98,13 @@ def quiet_connection_resets(loop: asyncio.AbstractEventLoop) -> None:
 class Holly:
     HINT =" /reset to start over, /quit to leave."
 
-    def __init__(self, model: str | None, engine: str | None = None, voice: str | None = None,
-                 face: bool | None = None, search: bool | None = None, forget: bool = False):
+    def __init__(self, model: str | None, face: bool | None = None, search: bool | None = None,
+                 forget: bool = False):
         cfg = load_config()
         if face is not None:
             cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
         if search is not None:
             cfg = dataclasses.replace(cfg, search=dataclasses.replace(cfg.search, enabled=search))
-        tts = cfg.tts
-        if engine:
-            tts = dataclasses.replace(tts, engine=engine)
-        if voice:
-            tts = dataclasses.replace(tts, orpheus=dataclasses.replace(tts.orpheus, voice=voice))
-        cfg = dataclasses.replace(cfg, tts=tts)
         if not torch.cuda.is_available():
             sys.exit("PyTorch can't see the GPU. Install a CUDA 12.8+ build (see README).")
         self.cfg = cfg
@@ -120,40 +117,37 @@ class Holly:
         search_prompt = cfg.search.prompt.read_text(encoding="utf-8") if self.searcher else ""
         memory_file = cfg.persona.memory_file
         if forget and memory_file and memory_file.exists():
-            # Set aside, not deleted, in case it was a mistake.
-            memory_file.replace(memory_file.with_name(memory_file.stem + ".forgotten.json"))
-            print(f"{DIM}Holly's memory of earlier sessions is set aside "
-                  f"({memory_file.stem}.forgotten.json); he starts afresh.{RESET}")
+            # Set aside, not deleted, in case it was a mistake; each with its own
+            # time, so a second --forget doesn't overwrite the first.
+            aside = set_aside(memory_file, "forgotten")
+            print(f"{DIM}Holly's memory of earlier sessions is set aside ({aside.name}); "
+                  f"he starts afresh.{RESET}")
         self.convo = Conversation(cfg.persona, search_prompt, memory_file)
         self.fillers: list[np.ndarray] = []
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
         self.writing_notes = False
+        self.resuming: asyncio.Task | None = None  # at startup: the last session into his notes
+        self.compaction: asyncio.Task | None = None  # later: older history into his notes
+        self.compact_retry_at = 0.0  # after a failed try, not before this
 
     def voice_name(self) -> str:
-        t = self.cfg.tts
-        return "Holly (VoxCPM2 clone)" if t.engine == "voxcpm" else f"Orpheus {t.orpheus.voice}"
+        return "Holly (VoxCPM2 clone)"
 
     async def start(self) -> None:
-        tts = self.cfg.tts
         audio = self.cfg.audio
         quiet_connection_resets(asyncio.get_running_loop())
         print(f"{DIM}Loading {self.model} and the {self.voice_name()} voice...{RESET}", flush=True)
         # Holly needs nearly all of the GPU. Anything else left loaded in LM
-        # Studio (another chat model, or Orpheus when the clone is in use)
-        # pushes VRAM into system RAM and slows every reply.
-        keep = {self.model} | ({tts.orpheus.model} if tts.engine == "orpheus" else set())
-        for other in self.lm.loaded_models() - keep:
+        # Studio pushes VRAM into system RAM and slows every reply.
+        for other in self.lm.loaded_models() - {self.model}:
             print(f"{DIM}Unloading {other} from LM Studio to free VRAM.{RESET}", flush=True)
             self.lm.unload(other)
         # Always a fresh load, now the GPU is clear: an instance loaded while
         # other models held VRAM may be part-way on the CPU, invisibly.
         self.lm.ensure_loaded(self.model, fresh=True)
-        if tts.engine == "orpheus":
-            self.lm.ensure_loaded(tts.orpheus.model, tts.orpheus.context_length)
         # Last session's history goes into his notes while the voice loads.
-        self.resuming = None
         if self.convo.previous_end:
             print(f"{DIM}He remembers talking until {when(self.convo.previous_end)}"
                   f"{', and has notes' if self.convo.memory else ''}.{RESET}", flush=True)
@@ -172,13 +166,15 @@ class Holly:
         except BaseException:
             if face_server:  # don't leave it holding the GPU
                 face_server.terminate()
+            if self.resuming:  # nor the notes half-written
+                self.resuming.cancel()
             raise
 
     async def _start_voice(self, face_server) -> None:
         tts = self.cfg.tts
         audio = self.cfg.audio
         self.tts = await asyncio.to_thread(make_tts, self.cfg)
-        if tts.engine == "voxcpm" and tts.voxcpm.compile:
+        if tts.voxcpm.compile:
             print(f"{DIM}Warming up the voice (the first start after an install compiles for a few "
                   f"minutes)...{RESET}", flush=True)
         await self.tts.warm_up()
@@ -216,10 +212,26 @@ class Holly:
         steps: list[dict] = []  # his searches and their results, for the history
         last_said: list[str] = []
         thought = asyncio.Event()
-        wait_for_reply = self.cfg.tts.engine == "voxcpm" and self.cfg.tts.voxcpm.wait_for_reply
+        wait_for_reply = self.cfg.tts.voxcpm.wait_for_reply
         self.player.begin_turn()
 
+        failed: list[Exception] = []
+
         async def think() -> None:
+            """The reply, from LM Studio and his tools. If either fails (LM Studio
+            restarted, a request timed out), he says so in his own way and the
+            turn ends there, rather than the whole program."""
+            try:
+                await think_through()
+            except Exception as e:
+                failed.append(e)
+                print(f"\n{YELLOW}  (the reply failed: {e!r}){RESET}", flush=True)
+                await sentences.put(LOST_THREAD)
+            finally:
+                await sentences.put(None)
+                thought.set()
+
+        async def think_through() -> None:
             chunker = SentenceChunker()
             timing = ReplyTiming()
             print(f"{CYAN}Holly:{RESET} ", end="", flush=True)
@@ -256,7 +268,8 @@ class Holly:
                                    for c in calls],
                 }]
                 for call in calls:
-                    searches += 1
+                    if call["name"] != "clock":  # the clock is instant and local: no limit
+                        searches += 1
                     result = await self._run_tool(call, user, searches, times)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                 print(f"{CYAN}Holly:{RESET} ", end="", flush=True)
@@ -266,29 +279,32 @@ class Holly:
             for sentence in chunker.flush():
                 times.first_sentence = times.first_sentence or time.perf_counter()
                 await sentences.put(sentence)
-            await sentences.put(None)
-            thought.set()
             print()
 
         async def speak() -> None:
-            if wait_for_reply:
-                # Sharing the GPU with the LLM slows VoxCPM ~8x; take turns.
-                await thought.wait()
-            first = True
-            while (sentence := await sentences.get()) is not None:
-                # The first sentence's opening silence is pure latency; later
-                # sentences keep theirs as the pause between sentences.
-                async for audio in self.tts.stream(sentence, trim_lead=first):
-                    first = False
-                    times.first_audio = times.first_audio or time.perf_counter()
-                    self.player.put(audio)
-            self.player.end_turn()
+            try:
+                if wait_for_reply:
+                    # Sharing the GPU with the LLM slows VoxCPM ~8x; take turns.
+                    await thought.wait()
+                first = True
+                while (sentence := await sentences.get()) is not None:
+                    # The first sentence's opening silence is pure latency; later
+                    # sentences keep theirs as the pause between sentences.
+                    async for audio in self.tts.stream(sentence, trim_lead=first):
+                        first = False
+                        times.first_audio = times.first_audio or time.perf_counter()
+                        self.player.put(audio)
+            finally:
+                self.player.end_turn()
 
         await asyncio.gather(think(), speak())
         await self.player.wait_done()
         times.first_played = self.player.first_played
         times.first_voice = self.player.first_voice
         times.underruns = self.player.underruns
+        if failed:  # not kept: half a turn would confuse the next one
+            print()
+            return times
         dropped = self.convo.record(user, "".join(last_said).strip(), steps)
         print(f"{DIM}  {times.report()}{RESET}")
         if dropped:
@@ -377,18 +393,49 @@ class Holly:
         else:
             return f"There is no tool called {call['name']}."
         print(f"{DIM}  ({label}){RESET}", flush=True)
-        found = await asyncio.to_thread(job)
+        try:
+            found = await asyncio.to_thread(job)
+        except Exception as e:  # LM Studio, a provider or the weather service broke: he says he couldn't
+            print(f"{YELLOW}  ({call['name']} failed: {e!r}){RESET}", flush=True)
+            return (f"The {call['name']} tool broke ({type(e).__name__}). Tell the crew you couldn't find "
+                    "out, in your own words, and give no time, number, date or name for it.")
         times.search_ms += found.search_ms + found.summary_ms
         again = f"; searched again: {'; '.join(found.queries[1:])}" if len(found.queries) > 1 else ""
         print(f"{DIM}  ({found.results} results{again}, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
               f"{found.answer}){RESET}", flush=True)
         return self.searcher.for_holly(found)
 
+    def start_compaction(self) -> None:
+        """Fold older history into his notes in the background, if it's due
+        (see compact). Cancel `self.compaction` while `self.writing_notes`
+        to leave the history as it was."""
+        if (self.compaction or time.perf_counter() < self.compact_retry_at
+                or not self.convo.needs_compacting()):
+            return
+        self.compaction = asyncio.create_task(self.compact())
+        self.compaction.add_done_callback(self._compacted)
+
+    def _compacted(self, task: asyncio.Task) -> None:
+        self.compaction = None
+        if task.cancelled():
+            return  # someone spoke: tried again later, no wait
+        if (e := task.exception()) or not task.result():
+            # LM Studio refused, or the notes came back empty: not again for a
+            # while, rather than once per mic block.
+            self.compact_retry_at = time.perf_counter() + COMPACT_RETRY_S
+            print(f"{DIM}  (couldn't write his notes{f': {e!r}' if e else ''}; trying again in "
+                  f"{COMPACT_RETRY_S:.0f} s){RESET}", flush=True)
+
     async def run(self) -> None:
         await self.start()
         try:
             while True:
+                # Typed, there's no sleep to wait for: his notes are written while
+                # you type, and dropped if you send before they're done.
+                self.start_compaction()
                 user = (await asyncio.to_thread(input, "You: ")).strip()
+                if self.compaction and self.writing_notes:
+                    self.compaction.cancel()
                 if not user:
                     continue
                 if user in ("/quit", "/exit"):
@@ -397,7 +444,10 @@ class Holly:
                     self.convo.reset()
                     print(f"{DIM}Conversation and notes cleared, on disk too.{RESET}\n")
                     continue
-                await self.respond(user)
+                try:
+                    await self.respond(user)
+                except Exception as e:  # the voice or the speakers failed: report it and carry on
+                    print(f"{YELLOW}  (that reply failed: {e!r}){RESET}\n", flush=True)
         except (EOFError, KeyboardInterrupt):
             print()
         finally:
@@ -408,8 +458,6 @@ class Holly:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Talk to Holly; he answers out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
-    parser.add_argument("--engine", choices=["voxcpm", "orpheus"], help="TTS engine (default: holly.toml)")
-    parser.add_argument("--voice", help="Orpheus preset voice, with --engine orpheus")
     parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
     parser.add_argument("--search", action=argparse.BooleanOptionalAction,
                         help="let Holly search the web (default: holly.toml)")
@@ -419,7 +467,7 @@ def main() -> None:
     # The Windows console defaults to cp1252, which can't print emoji.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(Holly(args.model, args.engine, args.voice, args.face, args.search, args.forget).run())
+        asyncio.run(Holly(args.model, args.face, args.search, args.forget).run())
     except KeyboardInterrupt:
         pass
 

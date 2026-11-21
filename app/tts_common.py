@@ -1,4 +1,4 @@
-"""What every TTS engine shares, and picking the one holly.toml names."""
+"""What a TTS engine provides, and making Holly's (VoxCPM2)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class Tts(Protocol):
 async def trim_leading_silence(chunks: AsyncIterator[np.ndarray], sample_rate: int) -> AsyncIterator[np.ndarray]:
     """Drop the silence a TTS model opens with, down to a short lead-in, so
     the first chunk out is voice. Worth doing for a reply's first sentence,
-    where that silence is pure latency (Orpheus: ~170 ms)."""
+    where that silence is pure latency."""
     lead_in = int(LEAD_IN_S * sample_rate)
     held = np.zeros(0, dtype=np.float32)
     voiced = False
@@ -47,12 +47,6 @@ async def trim_leading_silence(chunks: AsyncIterator[np.ndarray], sample_rate: i
 
 
 def make_tts(cfg: Config) -> Tts:
-    if cfg.tts.engine == "voxcpm":
-        from .tts_voxcpm import VoxCpmTts
+    from .tts_voxcpm import VoxCpmTts
 
-        return VoxCpmTts(cfg.tts.voxcpm)
-    if cfg.tts.engine == "orpheus":
-        from .tts_orpheus import OrpheusTts
-
-        return OrpheusTts(cfg.tts.orpheus, cfg.llm.base_url)
-    raise ValueError(f"Unknown tts.engine {cfg.tts.engine!r}: use 'voxcpm' or 'orpheus'")
+    return VoxCpmTts(cfg.tts.voxcpm)

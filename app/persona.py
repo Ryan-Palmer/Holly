@@ -32,14 +32,25 @@ def when(t: datetime.datetime) -> str:
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 _DAY_WORDS = re.compile(
     r"\b(the day after tomorrow|day after tomorrow|tomorrow|tonight|today|yesterday|"
-    r"(?:(?:next|this|on|by|until|till|coming)\s+)?(?:" + "|".join(WEEKDAYS) + r"))\b",
+    r"(?:(?:next|this|on|by|until|till|coming|last)\s+)?(?:" + "|".join(WEEKDAYS) + r"))\b",
+    re.IGNORECASE)
+# Whether a sentence is about the past or the future, for a bare weekday in it ("I went
+# to the dentist on Monday", "Jo's coming on Saturday"). A future word wins: "I said
+# I'd ring on Monday" is ahead. Regular "-ed" verbs aren't all listed: "excited about
+# Saturday" and "booked for Tuesday" are ahead.
+_FUTURE = re.compile(r"\b(will|shall|going to|gonna|plan(?:ning|s)?|booked|due)\b|'ll\b|'d\b", re.IGNORECASE)
+_PAST = re.compile(
+    r"\b(was|were|went|did|had|saw|met|got|came|left|said|told|bought|made|took|ate|gave|found|"
+    r"heard|spent|paid|sent|won|lost|ran|drove|flew|slept|been|ago|visited|played|watched|"
+    r"finished|started|called|cooked|walked|talked|moved|stayed|arrived|happened|celebrated)\b",
     re.IGNORECASE)
 
 
-def resolve_day(words: str, said: datetime.date) -> datetime.date:
+def resolve_day(words: str, said: datetime.date, past: bool = False) -> datetime.date:
     """The date that day words ("tomorrow", "next Tuesday", "on Saturday")
     mean, said on `said`. A weekday is the next one after the day it was
-    said, as "next Tuesday" usually means in speech."""
+    said, as "next Tuesday" usually means in speech; or with `past` (or
+    "last Tuesday"), the one before it."""
     w = words.lower()
     if w in ("today", "tonight"):
         return said
@@ -49,8 +60,11 @@ def resolve_day(words: str, said: datetime.date) -> datetime.date:
         return said + datetime.timedelta(days=1)
     if "after tomorrow" in w:
         return said + datetime.timedelta(days=2)
-    ahead = (WEEKDAYS.index(w.split()[-1]) - said.weekday()) % 7 or 7
-    return said + datetime.timedelta(days=ahead)
+    target = WEEKDAYS.index(w.split()[-1])
+    first = w.split()[0]
+    if first == "last" or (past and first not in ("next", "this", "coming")):
+        return said - datetime.timedelta(days=(said.weekday() - target) % 7 or 7)
+    return said + datetime.timedelta(days=(target - said.weekday()) % 7 or 7)
 
 
 def date_days(text: str, said: datetime.date) -> str:
@@ -59,8 +73,25 @@ def date_days(text: str, said: datetime.date) -> str:
     Gemma's own sums were off: given "next Tuesday" said on Wednesday 18
     November, it wrote the 25th, even with a calendar to hand. And with the
     dates in brackets at the end of the line, it put a visit "tomorrow" on
-    the day it was said, and gave the next line's note the visit's date."""
-    return _DAY_WORDS.sub(lambda m: f"{m.group(1)} [{day(resolve_day(m.group(1), said))}]", text)
+    the day it was said, and gave the next line's note the visit's date.
+    A weekday in a sentence about the past is the one before (see _PAST)."""
+
+    def dated(m: re.Match) -> str:
+        start = max(text.rfind(c, 0, m.start()) for c in ".!?") + 1
+        ends = [i for i in (text.find(c, m.end()) for c in ".!?") if i >= 0]
+        sentence = text[start:min(ends) if ends else len(text)]
+        past = not _FUTURE.search(sentence) and bool(_PAST.search(sentence))
+        return f"{m.group(1)} [{day(resolve_day(m.group(1), said, past))}]"
+
+    return _DAY_WORDS.sub(dated, text)
+
+
+def set_aside(path: Path, why: str) -> Path:
+    """Rename `path` out of the way, with the time, so nothing earlier set
+    aside is overwritten: memory.json -> memory.forgotten-20261121-184002.json."""
+    aside = path.with_name(f"{path.stem}.{why}-{datetime.datetime.now():%Y%m%d-%H%M%S}{path.suffix}")
+    path.replace(aside)
+    return aside
 
 
 # The keys LM Studio is sent; others (a message's time, "at") stay here.
@@ -238,13 +269,27 @@ class Conversation:
     # On disk -------------------------------------------------------------------
 
     def load(self) -> None:
+        """Pick up where the last session left off. A file that won't read (a
+        slip while editing it by hand) is set aside, and he starts afresh,
+        rather than not starting at all."""
         if not self.memory_file or not self.memory_file.exists():
             return
-        saved = json.loads(self.memory_file.read_text(encoding="utf-8"))
-        self.history = saved.get("history", [])
-        self.memory = saved.get("memory", "")
-        if at := saved.get("last_spoke"):
-            self.last_spoke = self.previous_end = datetime.datetime.fromisoformat(at)
+        try:
+            saved = json.loads(self.memory_file.read_text(encoding="utf-8"))
+            history = saved.get("history", [])
+            memory = saved.get("memory", "") or ""
+            at = saved.get("last_spoke")
+            last = datetime.datetime.fromisoformat(at) if at else None
+            if not isinstance(memory, str) or not all(
+                    isinstance(m, dict) and m.get("role") in ("user", "assistant", "tool") for m in history):
+                raise ValueError("unexpected contents")
+        except (ValueError, TypeError, AttributeError, UnicodeDecodeError) as e:
+            aside = set_aside(self.memory_file, "unreadable")
+            print(f"Holly's memory file couldn't be read ({e}); it's set aside as {aside.name}, "
+                  "and he starts afresh.", flush=True)
+            return
+        self.history, self.memory = history, memory
+        self.last_spoke = self.previous_end = last
 
     def save(self) -> None:
         """Write the history and notes out, whole: to a temporary file first,
