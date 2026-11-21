@@ -227,12 +227,29 @@ jokes don't trigger either.
   couldn't find out; told only that it failed, he guessed, wrongly.
 - **He knows the date.** It goes at the end of his system prompt. Without
   it he searched for the 2024 championship.
-- **Search engines.** `ddgs` (free, no key) asks Yahoo, Brave and
-  DuckDuckGo, then every engine it has if those fail. The engines answer
-  bots with CAPTCHAs now and then, and always while a VPN was on, so turn
-  any VPN off. For something dependable, use the Brave Search API
-  (`provider = "brave"`, key in `BRAVE_API_KEY`; about 1,000 searches a
-  month free, then metered).
+- **Search engines.** `provider` is a list, tried in order:
+  `"brave_context,ddgs"` (not `brave` between them: one service and one
+  key, so if one fails so will the other). The Brave ones need a key in
+  `BRAVE_API_KEY` (read from your saved Windows user variables too, so no
+  restart after setting it); Brave's $5 monthly credit covers ~1,000
+  searches. `brave_context` is Brave's LLM Context API: passages from each
+  result's page instead of a snippet (2,048 tokens in all,
+  `context_tokens`). `brave` is its web search. `ddgs` is free, with no key:
+  it asks Yahoo, Brave and DuckDuckGo, which answer bots with CAPTCHAs now
+  and then, and always while a VPN was on.
+
+  | 16 varied questions | Answered | Median | Slowest |
+  |---|---|---|---|
+  | `brave_context` | 16 | 1.66 s | 2.0 s |
+  | `brave` | 15 | 1.60 s | 2.7 s |
+
+  Context found this week's cinema listings, which web search couldn't,
+  and never needed a second search. It said the only cricket results it had
+  were from August and September, where web search passed an August Test
+  off as live. On 8 other questions the free engines answered 5 (median
+  3.6 s) and Brave 8. Brave's Answers service, which writes the answer
+  itself, was ruled out: ~4.5 s, paid per answer, and no "no answer"
+  signal.
 - **Weather.** Search can't do it: the results are links to weather sites,
   not forecasts. So a `weather` tool (`app/weather.py`) gets the place and
   the week's forecast from Open-Meteo, which is free with no key (~0.7 s).
@@ -253,11 +270,10 @@ jokes don't trigger either.
   hedged it ("11:42 AM. Or 11:42 PM"), so the result says it's exact. The
   time can't go in the system prompt, which would change every minute and
   break LM Studio's cache.
-- **Limits.** Prices are still hard: they're rarely in snippets or on the
-  pages the free engines return. Those engines also fail outright on some
-  searches; the Brave API is the fix. When nothing is found he's told not
-  to give any time, number or name: told only "don't guess", he once made
-  up a sunset time.
+- **Limits.** More page text gives the judge more to misread: once,
+  context took a BBC2 repeat for a new series of Red Dwarf. When nothing is
+  found he's told not to give any time, number or name: told only "don't
+  guess", he once made up a sunset time.
 - **Searches stay in his history.** With only his replies kept, his history
   showed questions answered straight off, and after a few exchanges he
   stopped searching and said "I've searched the internet" instead, even when
