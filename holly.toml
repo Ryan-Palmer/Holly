@@ -88,11 +88,9 @@ height = 720
 # while Holly is silent: 0 holds his head still, 1 lets it sway as Ditto
 # drives it. While he speaks it moves fully.
 idle_head = 0.2
-# Drawing his face costs as much GPU idle as talking (~50% of the 5090,
-# ~250 W). After this many seconds with nothing said, by him or anyone, the
-# face holds still and Ditto pauses; it wakes as soon as someone speaks.
-# 0 keeps it always running.
-sleep_after_s = 30.0
+# The face sleeps awake_s (under [listen]) after Holly last spoke: he nods off
+# into the still, eyes closed, and Ditto pauses, sparing the GPU (~40% of the 5090 and ~200 W
+# awake, ~0% and ~50 W asleep). It wakes as soon as anyone starts speaking.
 
 [listen]
 # Microphone, within audio.host_api: a name (or part of one), or empty for
@@ -120,11 +118,12 @@ whisper_compute_type = "int8_float16"
 whisper_hotwords = "Holly"
 # Holly answers only when one of these is among the first or last
 # wake_edge_words words you say ("Holly, what's...", "...tomorrow, Holly?"),
-# or when you carry on within follow_up_s of his last reply. Empty, or
-# --no-wake, and he answers everything.
+# or while he's awake. Empty, or --no-wake, and he answers everything.
 wake_words = ["holly", "hollie", "holley"]
 wake_edge_words = 3
-follow_up_s = 8.0
+# He stays awake this long after he last spoke: no wake word needed, and
+# his face keeps moving. Then his face sleeps, and you need "Holly" again.
+awake_s = 30.0
 
 [persona]
 system_prompt = "persona/system_prompt.md"

@@ -23,14 +23,14 @@ from .config import ROOT, FaceConfig
 HEADER = struct.Struct("<cI")  # message type, payload length; see face/server.py
 
 
-def start_server(cfg: FaceConfig, host_api: str, device: str) -> subprocess.Popen:
+def start_server(cfg: FaceConfig, host_api: str, device: str, awake_s: float = 30.0) -> subprocess.Popen:
     """Start the face server; it warms up for about a minute before it listens."""
     (ROOT / "face" / "data").mkdir(parents=True, exist_ok=True)
     log = open(ROOT / "face" / "data" / "server.log", "w", encoding="utf-8")
     return subprocess.Popen(
         [str(ROOT / cfg.python), "-u", str(ROOT / "face" / "server.py"), "--image", str(ROOT / cfg.image),
          "--port", str(cfg.port), "--lead", str(cfg.lead_ms / 1000), "--height", str(cfg.height),
-         "--idle-head", str(cfg.idle_head), "--sleep-after", str(cfg.sleep_after_s),
+         "--idle-head", str(cfg.idle_head), "--sleep-after", str(awake_s),
          "--host-api", host_api, "--device", device],
         cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
     )

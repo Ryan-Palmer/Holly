@@ -64,12 +64,20 @@ screen face, 1820x1024.
   `idle_head` under `[face]` in `holly.toml` (0.2) while he's silent. The head keeps
   moving for 1 s after speech, so it doesn't stop between sentences, and
   eases in and out over about 0.5 s.
-- sleeps after 30 s with nothing said (`sleep_after_s` under `[face]`).
-  Drawing 25 frames a second costs as much GPU idle as talking: ~40% of the
-  5090 and ~200 W, against ~0% and ~50 W asleep. Ditto pauses and the window
-  holds its last frame, with the head first settled at the photo's pose.
-  Holly's app wakes it the moment its VAD hears anyone start speaking, a
-  second or more before he could answer; Ditto needs ~0.6 s. Ditto numbers
+- sleeps 30 s after Holly last spoke (`awake_s` under `[listen]`, the same
+  span in which he needs no wake word). Drawing 25 frames a second costs as
+  much GPU idle as talking: ~40% of the 5090 and ~200 W, against ~0% and
+  ~50 W asleep. First he nods off over ~1 s: the head returns to the
+  photo's pose, and a per-frame "doze" control (`face_controls`) blends his
+  expression to the photo's with the eyes shut. With the pose alone he froze
+  on whatever expression the animation had reached. The eyes-shut offsets
+  (`EYES_CLOSED`) are Ditto's own deepest blink: run on silence, the frame
+  whose eye keypoints (11, 13, 15, 16, 18) moved furthest from the photo's
+  showed the eyes fully closed. Then Ditto pauses and the window holds that
+  frame. Holly's app wakes it the moment its VAD hears anyone start
+  speaking, a second or more before he could answer; Ditto needs ~0.6 s,
+  and his eyes open over ~0.4 s. Speech wakes it for 10 s only, so talk
+  that isn't for Holly doesn't keep it awake; his reply does. Ditto numbers
   frames, and looks up their controls, by its own count, which falls behind
   the timeline while it sleeps, so each chunk sent is tagged with the frames
   skipped before it. Frames drawn before sleeping still play out: the feeder

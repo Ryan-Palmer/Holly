@@ -80,8 +80,8 @@ milestone 2 pipeline answers. Timings count from when you stopped speaking.
 
 He answers only when you say his name among your first or last three
 words ("Holly, what's...", "Hey Holly", "...tomorrow, Holly?"), or carry on
-within 8 s of his last reply; anything else shows as "(not for Holly)" and
-is ignored. The name is found in Whisper's transcript, which is made
+while he's awake, within 30 s of his last reply (`awake_s`, also when his
+face sleeps); anything else shows as "(not for Holly)" and is ignored. The name is found in Whisper's transcript, which is made
 anyway, so it costs nothing, and Whisper is told to expect it (it heard
 "You alright, Holly?" as "You alright, ho?"). The hint doesn't make Whisper
 hear "Holly" in silence or noise. `--no-wake` (or an empty `wake_words`
@@ -169,8 +169,10 @@ window. Setup, its own venv and the speed-ups are in `face/README.md`.
 `--face` (or `enabled = true` under `[face]` in `holly.toml`) starts
 `face/server.py` in `face/.venv`. The face window also plays Holly's voice,
 so the two come from one timeline and can't drift apart; between replies
-the face blinks and his head barely moves. After 30 s with nothing said, the
-face holds still to spare the GPU, and wakes when anyone speaks. Its log is `face/data/server.log`.
+the face blinks and his head barely moves. 30 s after he last spoke, the
+same moment he stops listening without his name, he nods off: his face
+settles into the still with his eyes closed, and pauses to spare the GPU.
+He opens his eyes when anyone speaks. Its log is `face/data/server.log`.
 
 First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the

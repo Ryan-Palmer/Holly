@@ -88,8 +88,8 @@ class ListeningHolly(Holly):
             )
         elif free_gb is not None:
             print(f"{DIM}VRAM free: {free_gb:.1f} GB.{RESET}")
-        how = (f"Say \"Holly\" to talk to him; after he answers, you have {listen.follow_up_s:.0f} s "
-               "to carry on without it." if self.wake_words else "Speak to Holly.")
+        how = (f"Say \"Holly\" to talk to him; for {listen.awake_s:.0f} s after he answers, he's awake "
+               "and you don't need to." if self.wake_words else "Speak to Holly.")
         print(f"{DIM}Listening on {self.mic.device_name}. {how} Ctrl-C to quit.{RESET}\n")
 
     async def next_utterance(self):
@@ -130,7 +130,9 @@ class ListeningHolly(Holly):
                 # left the speakers, plus the echo tail.
                 spoke_until = max(time.perf_counter(), self.player.last_played or 0.0)
                 self.deaf_until = spoke_until + ECHO_TAIL_S
-                self.awake_until = spoke_until + self.cfg.listen.follow_up_s
+                # The same span his face stays awake for (the face server's --sleep-after):
+                # awake, no wake word needed; asleep, it is.
+                self.awake_until = spoke_until + self.cfg.listen.awake_s
                 self.detector.reset()
         except KeyboardInterrupt:
             print()

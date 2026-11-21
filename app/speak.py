@@ -127,7 +127,8 @@ class Holly:
             # now, after the chat model: Ditto's VRAM, taken during that load,
             # would push part of the model onto the CPU (see ensure_loaded).
             print(f"{DIM}Starting Holly's face (log: face/data/server.log)...{RESET}", flush=True)
-            face_server = start_server(self.cfg.face, audio.host_api, audio.output_device)
+            face_server = start_server(self.cfg.face, audio.host_api, audio.output_device,
+                                       self.cfg.listen.awake_s)
         try:
             await self._start_voice(face_server)
         except BaseException:
