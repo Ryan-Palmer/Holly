@@ -8,7 +8,11 @@ was said, and he can look things up with the `recall` tool, the way he searches
 the web: the matching exchanges go to the same Gemma, which answers in two or
 three sentences, out of his sight, so his context stays small.
 
-Matching is three ways, merged:
+Matching is four ways, merged:
+- by name: a page of the ship's records that the search or the question names
+  ("Better Than Life", "Kryten"), its opening and the parts that fit, first.
+  Without it, "when I met Kryten" found Nova 5 and the Series 4000s, every
+  page saying "met" and "Kryten", and not the episode where they met;
 - by keyword (SQLite's FTS5, with stemming: "cookies" finds "cookie");
 - by meaning: each entry's vector from a small embedding model in LM Studio
   (nomic-embed, ~0.3 GB), so "her mother" finds "Jo's mum" and "what did we
@@ -44,11 +48,17 @@ TOOL = {
                        "what has happened on board, places, creatures and technology.",
         "parameters": {
             "type": "object",
-            "properties": {"query": {"type": "string", "description":
-                "Key words for what to remember: names, things, places, and the day if it was "
-                "asked about ('lasagne Jo','boiler service', 'what we talked about yesterday', "
-                "'Rimmer hologram death', 'polymorph')."}},
-            "required": ["query"],
+            "properties": {
+                "query": {"type": "string", "description":
+                    "Key words for what to remember: names as they're spelt, things, places, and the "
+                    "day if it was asked about ('lasagne Jo','boiler service', 'what we talked "
+                    "about yesterday', 'Rimmer hologram death', 'Kryten first meeting', 'Better Than "
+                    "Life')."},
+                "question": {"type": "string", "description":
+                    "The question to answer from what's found, in full: 'When did the crew first "
+                    "meet Kryten?', 'What happened in Better Than Life?'"},
+            },
+            "required": ["query", "question"],
         },
     },
 }
@@ -62,8 +72,17 @@ in exactly one of these forms:
 
 ANSWER: two or three short, plain sentences that answer the question from the
 entries, for someone to read aloud: no lists, no markdown. Say when it was, if
-that helps. Names, numbers and dates exactly as the entries give them.
-NOTHING: if the entries don't answer the question."""
+that helps. Names, numbers and dates exactly as the entries give them. For a
+broad question ("tell me about your adventures with Lister"), give two or three
+of the main things the entries say. If they answer only part of it, answer
+that part.
+The ship's records describe Red Dwarf from outside, as a television series
+with novels and other versions; Holly lived it. Tell it as what happened, and
+never mention episodes, series, the show, novels, books, actors or versions.
+Where the entries differ, go with the television account, without saying so.
+A question about an episode is about what happened then; a name can be the
+one someone went by there (in a game, a disguise, another reality).
+NOTHING: only if none of the entries is about the question at all."""
 
 # Words that match everything, so they're left out of the keyword search.
 STOPWORDS = set("""
@@ -83,6 +102,13 @@ EMBED_BATCH = 32
 # nomic-embed wants to be told which side of a search a text is on.
 DOC_PREFIX, QUERY_PREFIX = "search_document: ", "search_query: "
 DAY_ENTRIES = 20  # at most, for a day asked about
+NAMED_PAGES = 3  # pages of the ship's records found by name, at most
+PAGE_OPENING = 3  # entries from the start of each: what it is, the episode's overview
+PAGE_MATCHES = 3  # and its entries that best fit the other words asked
+RECORD = "(Ship's records: "
+THE_EPISODE = re.compile(r"\s*\bthe episode\b", re.IGNORECASE)
+# How speech recognition has spelt names, should one get past Whisper's hints (holly.toml).
+MISHEARD = re.compile(r"\b(?:Crichton|Critton|Crittan|Kryton|Kriten|Krighton)\b", re.IGNORECASE)
 EMBED_RETRY_S = 60.0  # after the embedding model failed (LM Studio restarting, a timeout), try again then
 
 
@@ -110,6 +136,7 @@ class Archive:
                             "(id INTEGER, model TEXT, vec BLOB, PRIMARY KEY (id, model))")
             self.db.commit()
         self._matrix: tuple[int, np.ndarray, np.ndarray] | None = None  # (count, ids, unit vectors)
+        self._pages: list[tuple[str, re.Pattern, list[str]]] | None = None  # (name, its pattern, its pages)
         self._embed_retry_at = 0.0  # after a failure, recall by meaning is off until then
 
     # Keeping --------------------------------------------------------------
@@ -186,6 +213,78 @@ class Archive:
         best = np.argsort(-sims)[: self.cfg.meaning_entries]
         return [int(ids[i]) for i in best if sims[i] >= self.cfg.min_similarity]
 
+    def _page_index(self) -> list[tuple[str, re.Pattern, list[str]]]:
+        """The ship's records' pages by name, longest first: ("better than life",
+        its pattern, ["Better Than Life (episode)", "Better Than Life", ...]), the
+        episode first. A surname is a name too, for the biggest page of that name
+        ("rimmer": Arnold Rimmer, not Ace or Howard). Names under 3 letters ("Up",
+        "Io") and disambiguation pages are left out. Empty for his conversations'
+        archive."""
+        if self._pages is None:
+            with self.lock:
+                rows = self.db.execute("SELECT substr(text, 1, 300) FROM entries WHERE text LIKE ? ORDER BY rowid",
+                                       (RECORD + "%",)).fetchall()
+            pages: dict[str, list[str]] = {}
+            size: dict[str, int] = {}  # entries per page
+            for (head,) in rows:
+                title = head.removeprefix(RECORD).split(") ", 1)[0].split(", ")[0]
+                name = re.sub(r"\s*\([^)]*\)", "", title).strip().lower()
+                size[title] = size.get(title, 0) + 1
+                if len(name) >= 3 and "disambiguation" not in title.lower() and title not in pages.get(name, []):
+                    pages.setdefault(name, []).append(title)
+            # "Lister", "Rimmer", "Kochanski": the biggest page of a person's name ending so.
+            people: dict[str, str] = {}
+            for title in size:
+                words = re.sub(r"\s*\([^)]*\)", "", title).split()
+                if len(words) > 1 and all(w[:1].isupper() for w in words) and len(words[-1]) >= 4:
+                    last = words[-1].lower()
+                    if last not in pages and size[title] > size.get(people.get(last, ""), 0):
+                        people[last] = title
+            for last, title in people.items():
+                pages[last] = [title]
+            self._pages = sorted(
+                ((name, re.compile(r"(?<!\w)" + re.escape(name) + r"(?!\w)", re.IGNORECASE),
+                  sorted(titles, key=lambda t: (not t.endswith("(episode)"), "(" in t)))
+                 for name, titles in pages.items()), key=lambda x: -len(x[0]))
+        return self._pages
+
+    def _named(self, texts: list[str]) -> list[str]:
+        """Pages of the records named in `texts`, longest name first. A one-word name
+        counts only with a capital ("Kryten", "Polymorph"), so "the death of" isn't
+        the page Death, and a three-letter one only mid-sentence too ("the Cat", not
+        "Out of interest"); a name inside a longer one found ("Life" in "Better
+        Than Life") doesn't count."""
+        names: list[str] = []
+        titles: list[str] = []
+        for name, pattern, pages in self._page_index():
+            if any(name in n for n in names):
+                continue
+            if not any((m := pattern.search(t)) and (" " in name or m.group(0)[0].isupper())
+                       and (len(name) > 3 or m.start() > 0) for t in texts):
+                continue
+            names.append(name)
+            titles += pages[:2]
+            if len(titles) >= NAMED_PAGES:
+                break
+        return titles[:NAMED_PAGES]
+
+    def _page_entries(self, title: str, words: list[str]) -> list[tuple[int, str | None, str]]:
+        """A page's opening entries, then those fitting `words` best."""
+        def like(x: str) -> str:
+            return x.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+        on_page = "(text LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\')"
+        args = (like(RECORD + title) + ") %", like(RECORD + title) + ", %")
+        with self.lock:
+            rows = self.db.execute(f"SELECT rowid, at, text FROM entries WHERE {on_page} ORDER BY rowid LIMIT ?",
+                                   (*args, PAGE_OPENING)).fetchall()
+            if words:
+                rows += self.db.execute(
+                    f"SELECT rowid, at, text FROM entries WHERE entries MATCH ? AND {on_page} "
+                    "ORDER BY bm25(entries) LIMIT ?", (" OR ".join(f'"{w}"' for w in words), *args,
+                                                       PAGE_MATCHES)).fetchall()
+        return rows
+
     def close(self) -> None:
         with self.lock:
             self.db.close()
@@ -198,11 +297,16 @@ class Archive:
         meaning to it or to `question` (what was asked). `on` is today, for working
         out the days."""
         on = on or datetime.date.today()
-        words = []
-        for w in re.findall(r"[a-z0-9']+", query.lower()):
-            w = w.removesuffix("'s").strip("'")
-            if len(w) > 1 and w not in STOPWORDS and w not in MONTHS and w not in words:
-                words.append(w)
+
+        def key_words(text: str) -> list[str]:
+            out = []
+            for w in re.findall(r"[a-z0-9']+", text.lower()):
+                w = w.removesuffix("'s").strip("'")
+                if len(w) > 1 and w not in STOPWORDS and w not in MONTHS and w not in out:
+                    out.append(w)
+            return out
+
+        words = key_words(query)
         found: dict[int, tuple[str | None, str]] = {}
         with self.lock:
             for d in sorted(days_in(query, on)):
@@ -213,6 +317,15 @@ class Archive:
                 # A day was asked about, and he talked then: that day is the answer. Close
                 # matches from other days made the judge answer "yesterday" with Thursday.
                 return list(found.values())
+        texts = [t for t in (query, question) if t]
+        if titles := self._named(texts):
+            # The pages named, first: their opening, and their parts that fit the rest.
+            named = {w for t in titles for w in key_words(re.sub(r"\([^)]*\)", "", t))}
+            rest = [w for w in key_words(" ".join(texts)) if w not in named]
+            for title in titles:
+                for r in self._page_entries(title, rest):
+                    found.setdefault(r[0], (r[1], r[2]))
+        with self.lock:
             if words:
                 # Each word, and for longer ones any word starting the same, less its last
                 # letter: "lasagna" finds "lasagne", "colour" finds "colours".
@@ -221,7 +334,7 @@ class Archive:
                                        "ORDER BY bm25(entries) LIMIT ?", (match, self.cfg.max_entries)).fetchall()
                 for r in rows:
                     found.setdefault(r[0], (r[1], r[2]))
-        if close := [i for i in self._by_meaning([t for t in (query, question) if t]) if i not in found]:
+        if close := [i for i in self._by_meaning(texts) if i not in found]:
             with self.lock:
                 marks = ",".join("?" * len(close))
                 rows = self.db.execute(f"SELECT rowid, at, text FROM entries WHERE rowid IN ({marks})",
@@ -230,8 +343,14 @@ class Archive:
         return list(found.values())
 
     def recall(self, query: str, question: str) -> Lookup:
-        """Look `query` up, and answer `question` (what was asked) from what's found."""
+        """Look `query` up, and answer `question` (what Holly asks, or failing that
+        what the crew said) from what's found."""
         t0 = time.perf_counter()
+        query, question = MISHEARD.sub("Kryten", query), MISHEARD.sub("Kryten", question)
+        # "The Cat's name in the episode Gunmen of the Apocalypse?" got NOTHING from the
+        # judge, taking it as the Cat's own name ("no name other than The Cat"); without
+        # "the episode", "The Riviera Kid".
+        question = THE_EPISODE.sub(" ", question).replace("  ", " ")
         hits = self.search(query, question=question)
         days = sorted(days_in(f"{query} {question}", datetime.date.today()))
         if self.records and not days:  # a day asked about is about a conversation
@@ -244,7 +363,8 @@ class Archive:
         reply = self.lm.openai.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": JUDGE_PROMPT.format(today=today())},
-                      {"role": "user", "content": f"{entries}\n\nQuestion: {question}{about}"}],
+                      {"role": "user", "content": f"{entries}\n\nQuestion: {question}\n(Searched for: "
+                                                  f"{query}){about}"}],
             temperature=0.2,
             max_tokens=self.cfg.summary_max_tokens,
             reasoning_effort="none",

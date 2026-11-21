@@ -42,13 +42,19 @@ PAUSE_S = 0.3  # between requests: the wiki is a shared, free service
 SKIP_CATEGORIES = {"Real People", "Actors", "Behind the Scenes", "Fan Media", "Videos", "Games",
                    "Candidates for deletion", "Fair use files", "Public domain files", "Browse",
                    "Music", "Merchandise", "Books", "DVDs", "Crew", "Writers", "Directors"}
+# Pages from the novels, comics and books only, with no series or episode: Holly is the
+# television Holly, and the novels' versions differ (told "go with the television
+# account", the judge still answered Better Than Life from the novel's page).
+OTHER_MEDIA = {"Novels", "Comics", "Books", "Red Dwarf Smegazine", "Smegazine"}
+ON_TV = re.compile(r"^(?:Series [IVX]+|.*Episodes|Back to Earth|The Promised Land|Main Characters|The Tank)$")
 # Sections about production, other media or the wiki itself.
 SKIP_SECTIONS = re.compile(r"trivia|behind the scenes|production|cast|crew|references|external links|"
                            r"see also|gallery|notes|appearances|novels?|comics?|smegazine|games?|"
                            r"ratings|reception|dvd|remaster|bloopers|deleted scenes|merchandise|"
                            r"background|credits|quotes? from|video|audio|audiobook|book|real.?life|"
                            r"speculation|fan theor|career|filmography|television series|written by|"
-                           r"artwork|mentions|continuity|errors|goofs|inconsistenc",
+                           r"artwork|mentions|continuity|errors|goofs|inconsistenc|guest stars|"
+                           r"contemporary|statement|filming|actress|actors?\b|filmed|rpg",
                            re.IGNORECASE)
 # Pages that are the real world's, though not filed under a skipped category: days of the
 # year (cast birthdays), years, and people (a career or filmography section).
@@ -135,6 +141,10 @@ def page_entries(title: str, page_html: str) -> list[str]:
             continue
         if para.startswith("This article is about"):
             continue
+        if not sec and title.startswith("RD: "):
+            # An episode's opening is the real world's ("the third episode in Series
+            # VI... first broadcast on BBC2"); its Overview and Summary tell the story.
+            continue
         if sec != section or len(current) + len(para) > CHUNK_CHARS:
             if current:
                 entries.append(current)
@@ -204,6 +214,8 @@ def build() -> None:
         page = json.loads(f.read_text(encoding="utf-8"))
         cats = {c.replace("_", " ") for c in page["categories"]}
         if cats & SKIP_CATEGORIES or SKIP_TITLES.match(page["title"]) or REAL_PERSON.search(page["html"]):
+            continue
+        if cats & OTHER_MEDIA and not any(ON_TV.match(c) for c in cats):
             continue
         got = page_entries(page["title"], page["html"])
         pages += bool(got)

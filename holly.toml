@@ -102,8 +102,11 @@ whisper_device = "cuda"
 # int8 weights: same transcripts and speed as float16 in half the VRAM
 # (2.2 GB against 4.3, counting CTranslate2's memory cache).
 whisper_compute_type = "int8_float16"
-# Whisper is told to expect this name, which it sometimes cut short.
-whisper_hotwords = "Holly"
+# Whisper is told to expect these names. Without them it cut "Holly" short, and
+# wrote "Critton" for Kryten, "Ruma" for Rimmer and "Kalkinski" for Kochanski, so
+# recall found nothing. With them, tested: all right, and "Christian", "listen"
+# and "the cat next door" still come out as said.
+whisper_hotwords = "Holly, Kryten, Lister, Rimmer, Kochanski, Cat, Red Dwarf, Starbug"
 # Holly answers only when one of these is among the first or last
 # wake_edge_words words you say ("Holly, what's...", "...tomorrow, Holly?"),
 # or while he's awake. Empty, or --no-wake, and he answers everything.

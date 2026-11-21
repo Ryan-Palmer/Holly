@@ -56,6 +56,14 @@ COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long b
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
 # A time of day in a reply: "10:14", "10 pm", "ten o'clock". Not "12.50": that's money.
+# A claim to have looked in his memory: "I've used the recall tool, but...", "I've
+# checked my records", "not in my files". Said without calling recall, it stuck: copied
+# from his history, he said it a dozen times in a row and recalled only when told to.
+CLAIMED_RECALL = re.compile(
+    r"\brecall tool\b|\b(?:used|checked|searched|looked (?:through|in)|consulted|scanned|gone through) "
+    r"(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|memory)\b|"
+    r"\bnot in my (?:records|archives?|files|memory)\b|\b(?:no|any) records? (?:of|about|on)\b",
+    re.IGNORECASE)
 CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
                         r"\bo'clock\b", re.IGNORECASE)
 
@@ -305,17 +313,56 @@ class Holly:
             messages = self.convo.messages_for(user)
             asked = len(messages)
             searches = 0
+            recalled = False  # he called recall this turn
+            retried = False  # a reply was dropped part-way and asked again (once a turn)
+            choice = None  # "required": the retry must call a tool
+
+            async def say(sentence: str) -> None:
+                times.first_sentence = times.first_sentence or time.perf_counter()
+                await sentences.put(sentence)
+
+            def dropped(sentence: str) -> str | None:
+                """Why this sentence mustn't be said, if it mustn't."""
+                if retried:
+                    return None
+                if sentence.strip().strip(".!").lower() == "thought":  # a stray word from Gemma
+                    return "a stray 'thought'"
+                if not recalled and self.archive and CLAIMED_RECALL.search(sentence):
+                    return "he said he'd looked in his memory without calling recall"
+                return None
+
             while True:
                 calls: list[dict] = []
                 said: list[str] = []
-                async for delta in self.lm.astream_reply(messages, timing, self.model, self.tools, calls):
+                redo = None
+                async for delta in self.lm.astream_reply(messages, timing, self.model, self.tools, calls, choice):
+                    if redo:
+                        # Let it run out, unsaid: closing LM Studio's stream part-way left
+                        # httpx complaining ("async generator already executing").
+                        continue
                     times.first_token = times.first_token or time.perf_counter()
                     parts.append(delta)
                     said.append(delta)
                     print(delta, end="", flush=True)
                     for sentence in chunker.feed(delta):
-                        times.first_sentence = times.first_sentence or time.perf_counter()
-                        await sentences.put(sentence)
+                        if redo := dropped(sentence):
+                            break
+                        await say(sentence)
+                if redo:
+                    calls.clear()  # whatever it went on to ask for, it's asked again
+                if not redo and not calls:  # the end of the reply: its last words
+                    for sentence in chunker.flush():
+                        if redo := dropped(sentence):
+                            break
+                        await say(sentence)
+                if redo:
+                    # Not said: asked again, with a tool required if he claimed one.
+                    print(f"\n{DIM}  ({redo}: not said; asking again){RESET}", flush=True)
+                    retried, chunker = True, SentenceChunker()
+                    choice = "required" if "recall" in redo else None
+                    print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
+                    continue
+                choice = None
                 last_said[:] = said
                 if not calls or searches > self.cfg.search.max_searches:
                     break  # (past the limit, he was told to stop; stop asking him)
@@ -338,6 +385,7 @@ class Holly:
                 for call in calls:
                     if call["name"] not in LOCAL_TOOLS:  # instant and local: no limit
                         searches += 1
+                    recalled = recalled or call["name"] == "recall"
                     result = await self._run_tool(call, user, searches, times)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                 print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
@@ -494,7 +542,10 @@ class Holly:
         elif call["name"] == "recall" and self.archive:
             if not (query := str(args.get("query", "")).strip()):
                 return "Recall needs a query."
-            label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, user)
+            # His question, not the crew's last words: after "you need to use the recall
+            # tool", the judge was asked that, and found nothing.
+            question = str(args.get("question") or "").strip() or user
+            label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, question)
         else:
             return f"There is no tool called {call['name']}."
         print(f"{DIM}  ({label}){RESET}", flush=True)
@@ -508,6 +559,10 @@ class Holly:
         again = f"; searched again: {'; '.join(found.queries[1:])}" if len(found.queries) > 1 else ""
         print(f"{DIM}  ({found.results} results{again}, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
               f"{found.answer}){RESET}", flush=True)
+        if call["name"] == "recall" and found.results:
+            # Told to "state them plainly", he recited the judge's sentences word for word.
+            return (f"{found.answer}\n(This is your memory of it, and it's right. Tell it in your own "
+                    "words, as something you remember, keeping the facts as they are.)")
         return Searcher.for_holly(found)
 
     def start_compaction(self) -> None:

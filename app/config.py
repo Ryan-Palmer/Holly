@@ -56,7 +56,7 @@ class ListenConfig:
     whisper_model: str
     whisper_device: str
     whisper_compute_type: str
-    whisper_hotwords: str = "Holly"
+    whisper_hotwords: str = "Holly"  # names Whisper is told to expect
     wake_words: tuple[str, ...] = ("holly", "hollie", "holley")
     wake_edge_words: int = 3
     awake_s: float = 30.0  # after he last spoke: no wake word needed, and his face stays awake

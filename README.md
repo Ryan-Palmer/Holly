@@ -241,6 +241,40 @@ the choice of chat model:
   back to him, to mention now and then in passing (`reminders`). They
   change only while he sleeps, and LM Studio rereads the prompt then.
 
+  Asked about episodes, he first knew almost nothing, though every episode
+  was there (36 entries for Better Than Life). Four things were wrong. He
+  often didn't call recall, answering from his "senile memory". Keywords
+  alone found side pages: "when I met Kryten" found Nova 5 and the Series
+  4000s, every page saying "met" and "Kryten", but not the episode. The
+  judge was asked the crew's last words, so after "you need to use the
+  recall tool" it found nothing. And Whisper wrote "Critton", "Ruma" and
+  "Kalkinski". Now recall finds pages by name first ("Better Than Life",
+  "Kryten", and surnames for a person's main page: "Rimmer" is Arnold
+  Rimmer), their opening and the parts fitting the rest of the question;
+  Holly passes the judge his own `question`; the judge answers broad
+  questions from what's there; his rules say to recall about anything on
+  the ship, every time; and Whisper is given the crew's names
+  (`whisper_hotwords`). Asked six of the questions he'd failed, he
+  recalled every time and answered all six, each in about 0.6 s: Bedford
+  Falls, Rimmer Corp, the Cat's moat of milk, "Gazpacho soup".
+
+  Two more things, found by voice. His history held a dozen "I've used the
+  recall tool, but..." from before that fix, and he kept saying it without
+  recalling. Now a sentence claiming he looked in his memory (the recall
+  tool, his records, archives or files), said with no recall this turn, is
+  not spoken: the reply is let run out unsaid and asked again with a tool
+  required (`CLAIMED_RECALL` in `app/speak.py`); in a test on a copy of his
+  real history every such claim was caught and he recalled instead. And
+  the records are written from outside the show ("In the TV series...",
+  "the third episode in Series VI"), which he repeated. So the judge tells
+  it as what happened, the records leave out episode openings, sections on
+  broadcasts, guest stars and filming, and pages only from the novels and
+  comics (asked about Better Than Life, the judge took the novel's
+  version), and "the episode" is dropped from his question (the judge read
+  "the Cat's name in the episode Gunmen of the Apocalypse" as the Cat's own
+  name, and gave up; without it: "The Riviera Kid"). 4,269 entries from
+  914 pages.
+
   ```
   .venv\Scripts\python -m app.records fetch    # ~25 min, once; pages cached in data/records_raw
   .venv\Scripts\python -m app.records build    # data/records.db, with vectors

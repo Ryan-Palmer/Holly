@@ -88,7 +88,8 @@ class LmStudio:
 
     # Chat ------------------------------------------------------------
 
-    def _chat_args(self, messages: list[dict], model: str | None, tools: list[dict] | None = None) -> dict:
+    def _chat_args(self, messages: list[dict], model: str | None, tools: list[dict] | None = None,
+                   tool_choice: str | None = None) -> dict:
         args = dict(
             model=model or self.cfg.model,
             messages=messages,
@@ -100,6 +101,8 @@ class LmStudio:
         )
         if tools:
             args["tools"] = tools
+            if tool_choice:  # "required": he must call one (the prompt is the same, so the cache holds)
+                args["tool_choice"] = tool_choice
         return args
 
     @staticmethod
@@ -173,14 +176,15 @@ class LmStudio:
 
     async def astream_reply(
         self, messages: list[dict], timing: ReplyTiming, model: str | None = None,
-        tools: list[dict] | None = None, calls: list[dict] | None = None,
+        tools: list[dict] | None = None, calls: list[dict] | None = None, tool_choice: str | None = None,
     ) -> AsyncIterator[str]:
         """The async version of `stream_reply`. With `tools`, any tool calls the
         model makes are added to `calls` as {"id", "name", "arguments"}."""
         t0 = time.perf_counter()
         try:
             for _ in range(self.EMPTY_REPLY_ATTEMPTS):
-                stream = await self.aopenai.chat.completions.create(**self._chat_args(messages, model, tools))
+                stream = await self.aopenai.chat.completions.create(
+                    **self._chat_args(messages, model, tools, tool_choice))
                 got_text = False
                 gathered: dict[int, dict] = {}
                 try:
