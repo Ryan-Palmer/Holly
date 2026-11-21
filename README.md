@@ -367,7 +367,10 @@ jokes don't trigger either.
   he was off is mentioned when he's next up. Like the clock it's local and
   instant: no stock line, and it doesn't count towards `max_searches`. In a
   test, every step took ~0.5 s, and the pasta timer came with "The pasta is
-  ready. Or it's ruined. It's hard to tell from up here."
+  ready. Or it's ruined. It's hard to tell from up here." A timer can be for
+  something he does himself: "play me some Metallica in 10 seconds" sets one
+  labelled "play Metallica", and when it's due he calls Spotify. Told, when
+  it came due, only to "tell the crew", he announced it and played nothing.
 - **Music.** A `spotify` tool (`app/spotify.py`, spotipy): "play some
   Talking Heads", "play Once in a Lifetime", "put on my liked songs", "what's
   this song?", "skip this", "turn it down", "pause", shuffle and queue.

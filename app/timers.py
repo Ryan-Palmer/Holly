@@ -203,5 +203,8 @@ def announcement(items: list[dict], now: datetime.datetime | None = None) -> str
         when = (f"it came due at {due:%H:%M}" + (f" on {day(due.date())}" if due.date() != now.date() else "")
                 + ", while you were switched off") if late > datetime.timedelta(minutes=2) else "it's due now"
         lines.append(f"The {i['kind']} '{i['label']}': {when}.")
-    return ("[" + " ".join(lines) + " Tell the crew, in a sentence or two, in your own words. "
+    # Told only to tell the crew, a timer for "play some Metallica in 10 seconds"
+    # came due with "Time for Metallica" and no music: he announced it, as told.
+    return ("[" + " ".join(lines) + " If it's for something you do with a tool (playing music, say), "
+            "call the tool now and do it; otherwise tell the crew, in a sentence or two, in your own words. "
             "Nobody has spoken: you're speaking up by yourself.]")
