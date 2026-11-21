@@ -154,6 +154,7 @@ class ListeningHolly(Holly):
                 # The same span his face stays awake for (the face server's --sleep-after):
                 # awake, no wake word needed; asleep, it is.
                 self.awake_until = spoke_until + self.cfg.listen.awake_s
+                self.reminded = False  # new talk: fresh reminders from the records when he sleeps
                 self.detector.reset()
         except KeyboardInterrupt:
             print()

@@ -199,3 +199,36 @@ fillers = [
     "One moment. I'm checking.",
     "Give us a second. I'll find out.",
 ]
+
+[recall]
+# Holly's archive (app/archive.py): every exchange that leaves his history,
+# folded into notes or dropped, is kept in SQLite with when it was said. His
+# recall tool searches it by keyword (stemmed: "pasties" finds "pasty") and by
+# day ("yesterday", "on Tuesday", "21 November"), and the same Gemma answers
+# from what it finds in two or three sentences, out of his sight.
+enabled = true
+file = "data/archive.db"
+# The ship's records: Holly's memory of Red Dwarf itself, from the Red Dwarf
+# fandom wiki (app/records.py: `python -m app.records fetch`, then `build`).
+# Recall searches them too, and while he sleeps a few close to what's been
+# said (and one at random) go into his prompt, to bring up now and then.
+records_file = "data/records.db"
+reminders = 5
+# Matches by meaning, from this embedding model in LM Studio (~0.3 GB), loaded
+# at startup; "" for keywords and days only. Its similarities bunch between
+# 0.4 and 0.65, related or not, so the closest few above a loose floor go to
+# the judge, which drops the misses.
+embed_model = "text-embedding-nomic-embed-text-v1.5"
+meaning_entries = 8
+min_similarity = 0.5
+# Keyword matches the judge reads, best first (plus all of a day asked about).
+max_entries = 12
+summary_max_tokens = 200
+# Rules for when to recall, added to his system prompt.
+prompt = "persona/recall_prompt.md"
+# Said while he recalls, when his reply starts with it.
+fillers = [
+    "Hang on. It's in here somewhere.",
+    "Let me think. It rings a bell.",
+    "One moment. I'm having a rummage.",
+]

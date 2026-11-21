@@ -99,11 +99,13 @@ API_KEYS = ("role", "content", "tool_calls", "tool_call_id")
 
 
 class Conversation:
-    def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None):
+    def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None,
+                 archive=None):
         """`extra_prompt` is added to the system prompt, before the examples:
         the rules for looking things up, when Holly can search. With
         `memory_file`, the history and notes are loaded from it, and saved to
-        it after every change."""
+        it after every change. With `archive` (app/archive.py), every exchange
+        that leaves the history is stored there."""
         self.system_prompt = cfg.system_prompt.read_text(encoding="utf-8").strip()
         if extra_prompt:
             self.system_prompt += "\n\n" + extra_prompt.strip()
@@ -124,6 +126,8 @@ class Conversation:
         self.history: list[dict] = []
         self.memory = ""  # his notes on the older history, written while he sleeps
         self.memory_file = memory_file
+        self.archive = archive
+        self.reminders: list[str] = []  # from the ship's records (app/records.py), refreshed as he sleeps
         self.last_spoke: datetime.datetime | None = None  # the last exchange, this session or before
         self.previous_end: datetime.datetime | None = None  # when the last session's talk ended
         self._save_failed = False
@@ -134,10 +138,13 @@ class Conversation:
 
     def _build_preamble(self) -> None:
         """Holly knows the date (without it he searched for last year's
-        results), and has his notes on anything older than the history. Both
-        go at the end of the system prompt, which changes only when one of
-        them does, so LM Studio's cache survives until then."""
-        if self._made_for != (key := (today(), self.memory, self.previous_end)):
+        results), and has his notes on anything older than the history, and a
+        few things from the ship's records to bring up now and then. All go at
+        the end of the system prompt, which changes only when one of them does
+        (the notes and reminders only while he sleeps), so LM Studio's cache
+        survives until then."""
+        key = (today(), self.memory, self.previous_end, tuple(self.reminders))
+        if self._made_for != key:
             self._made_for = key
             content = f"{self.system_prompt}\n\nToday is {key[0]}."
             if self.previous_end:
@@ -146,6 +153,11 @@ class Conversation:
             if self.memory:
                 content += ("\n\nYour notes on your earlier conversations, which you no longer "
                             f"remember word for word:\n{self.memory}")
+            if self.reminders:
+                content += ("\n\nThings from the ship's records that have come back to you lately. Now "
+                            "and then, when one fits what's being said, mention it in passing as your own "
+                            "memory, in your own words. At most one in a reply, and most replies none; "
+                            "never force one in.\n" + "\n".join(f"- {r}" for r in self.reminders))
             self.preamble = [{"role": "system", "content": content}]
 
     def messages_for(self, user_text: str | None = None) -> list[dict]:
@@ -184,6 +196,7 @@ class Conversation:
             while self._chars(keep) > self.hard_chars * 2 // 3 and keep != starts[-1]:
                 keep = next(i for i in starts if i > keep)
             dropped = sum(m["role"] == "user" for m in self.history[:keep])
+            self._archive(keep)
             del self.history[:keep]
         self.save()
         return dropped
@@ -223,9 +236,17 @@ class Conversation:
     def transcript(self, end: int) -> str:
         """history[:end] as plain text, for writing notes on, with the day
         and time each exchange began."""
-        lines = []
+        return "\n".join(text for _, text in self.exchanges(end))
+
+    def exchanges(self, end: int) -> list[tuple[str | None, str]]:
+        """history[:end] as one plain-text entry per exchange, each with when
+        it was said (ISO, or None for history from before that was kept)."""
+        out: list[tuple[str | None, list[str]]] = []
         for m in self.history[:end]:
             text = (m.get("content") or "").strip()
+            if m["role"] == "user" or not out:
+                out.append((m.get("at"), []))
+            lines = out[-1][1]
             if m["role"] == "user":
                 if at := m.get("at"):
                     said = datetime.datetime.fromisoformat(at)
@@ -240,13 +261,30 @@ class Conversation:
                     lines.append(f"Holly: {text}")
             elif m["role"] == "tool":
                 lines.append(f"(It told him: {' '.join(text.split())[:TOOL_RESULT_CHARS]})")
-        return "\n".join(lines)
+        return [(at, "\n".join(lines)) for at, lines in out]
+
+    def recent_topics(self, n: int = 4) -> list[str]:
+        """The crew's last `n` lines, newest first, for picking reminders that fit."""
+        said = [m["content"] for m in self.history if m["role"] == "user" and m.get("content")]
+        return said[::-1][:n]
+
+    def _archive(self, end: int) -> None:
+        """Keep history[:end] in the archive, as it leaves the history. A
+        failure is reported, not raised: losing the archive's copy is better
+        than losing the turn."""
+        if not self.archive or not end:
+            return
+        try:
+            self.archive.add(self.exchanges(end))
+        except Exception as e:  # a locked or broken database file
+            print(f"Couldn't add to Holly's archive: {e!r}", flush=True)
 
     def apply_compaction(self, end: int, dropped: list[dict], notes: str) -> bool:
         """Replace history[:end] with `notes`, if the history still starts
         with the messages that were summarised (`dropped`)."""
         if len(self.history) < end or any(a is not b for a, b in zip(self.history[:end], dropped)):
             return False
+        self._archive(end)
         del self.history[:end]
         self.memory = notes.strip()
         self.save()
@@ -260,9 +298,11 @@ class Conversation:
                    for m in self.history[start:])
 
     def reset(self) -> None:
-        """Forget everything, on disk too."""
+        """Forget everything, on disk too, the archive included."""
         self.history.clear()
         self.memory = ""
+        if self.archive:
+            self.archive.clear()
         self.last_spoke = self.previous_end = None
         self.save()
 

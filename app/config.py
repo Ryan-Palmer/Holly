@@ -108,6 +108,22 @@ class SearchConfig:
 
 
 @dataclass(frozen=True)
+class RecallConfig:
+    enabled: bool = True
+    file: Path = ROOT / "data/archive.db"  # every exchange that leaves his history
+    records_file: Path = ROOT / "data/records.db"  # the ship's records (app/records.py), if built
+    reminders: int = 5  # entries from the records in his prompt, refreshed while he sleeps
+    max_entries: int = 12  # keyword matches the judge reads, best first
+    # Matches by meaning, from an embedding model in LM Studio ("" for keywords only).
+    embed_model: str = "text-embedding-nomic-embed-text-v1.5"
+    meaning_entries: int = 8  # the closest in meaning the judge reads, at least min_similarity
+    min_similarity: float = 0.5
+    summary_max_tokens: int = 200
+    prompt: Path = ROOT / "persona/recall_prompt.md"
+    fillers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
@@ -116,6 +132,7 @@ class Config:
     persona: PersonaConfig
     face: FaceConfig
     search: SearchConfig
+    recall: RecallConfig = RecallConfig()
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -149,6 +166,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         ),
         face=FaceConfig(**raw.get("face", {})),
         search=_search_config(raw.get("search", {}), base),
+        recall=_recall_config(raw.get("recall", {}), base),
     )
 
 
@@ -159,3 +177,13 @@ def _search_config(s: dict, base: Path) -> SearchConfig:
     if "fillers" in s:
         s["fillers"] = tuple(s["fillers"])
     return SearchConfig(**s)
+
+
+def _recall_config(r: dict, base: Path) -> RecallConfig:
+    r = dict(r)
+    for key in ("file", "records_file", "prompt"):
+        if key in r:
+            r[key] = base / r[key]
+    if "fillers" in r:
+        r["fillers"] = tuple(r["fillers"])
+    return RecallConfig(**r)
