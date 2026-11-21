@@ -64,6 +64,13 @@ screen face, 1820x1024.
   `idle_head` under `[face]` in `holly.toml` (0.2) while he's silent. The head keeps
   moving for 1 s after speech, so it doesn't stop between sentences, and
   eases in and out over about 0.5 s.
+- keeps HuBERT, Ditto's audio-feature model, on the CPU with 4 threads
+  that sleep between chunks (`quiet_onnxruntime`). Ditto asks onnxruntime
+  for the GPU, but onnxruntime-gpu 1.32 is built for CUDA 13 and this
+  venv's CUDA is torch's 12.8, so it fell back to the CPU with a thread per
+  physical core, all spinning between chunks: 80% of a 32-thread CPU, even
+  while Holly was silent. Now ~6% for the whole face server, with no late
+  frames. On the CPU it costs no VRAM or GPU time.
 
 Every 10 s the server logs frames shown, late and how far ahead Ditto is.
 
