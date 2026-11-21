@@ -93,6 +93,7 @@ class FaceConfig:
     lead_ms: int = 600
     height: int = 720
     idle_head: float = 0.2
+    sleep_after_s: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,9 @@ class SearchConfig:
     timeout_s: float = 5.0
     max_searches: int = 2
     summary_max_tokens: int = 160
+    max_rounds: int = 3  # searches and page reads one lookup may make
+    max_lookup_s: float = 5.0  # no new search or read is started after this long
+    summary_reasoning: str = "none"  # Gemma's thinking when judging results: "none", "low"...
     prompt: Path = ROOT / "persona/search_prompt.md"
     weather: bool = True  # the weather tool (Open-Meteo), with search
     home_country: str = "GB"  # places here come first in weather lookups

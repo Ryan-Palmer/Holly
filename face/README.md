@@ -64,6 +64,16 @@ screen face, 1820x1024.
   `idle_head` under `[face]` in `holly.toml` (0.2) while he's silent. The head keeps
   moving for 1 s after speech, so it doesn't stop between sentences, and
   eases in and out over about 0.5 s.
+- sleeps after 30 s with nothing said (`sleep_after_s` under `[face]`).
+  Drawing 25 frames a second costs as much GPU idle as talking: ~40% of the
+  5090 and ~200 W, against ~0% and ~50 W asleep. Ditto pauses and the window
+  holds its last frame, with the head first settled at the photo's pose.
+  Holly's app wakes it the moment its VAD hears anyone start speaking, a
+  second or more before he could answer; Ditto needs ~0.6 s. Ditto numbers
+  frames, and looks up their controls, by its own count, which falls behind
+  the timeline while it sleeps, so each chunk sent is tagged with the frames
+  skipped before it. Frames drawn before sleeping still play out: the feeder
+  runs the lead ahead of the speakers.
 - keeps HuBERT, Ditto's audio-feature model, on the CPU with 4 threads
   that sleep between chunks (`quiet_onnxruntime`). Ditto asks onnxruntime
   for the GPU, but onnxruntime-gpu 1.32 is built for CUDA 13 and this

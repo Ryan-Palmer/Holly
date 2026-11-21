@@ -15,6 +15,9 @@ and can't drift apart:
   a face.
 - The window shows whichever frame matches the audio leaving the speakers
   now, from the output stream's own clock.
+- After --sleep-after seconds with nothing to say or hear, Ditto stops and the
+  window holds its last frame: drawing 25 frames a second costs as much GPU
+  idle as talking. Holly's app wakes it the moment anyone starts speaking.
 
     face\.venv\Scripts\python face\server.py --image face/data/holly_colour.jpg
 """
@@ -58,6 +61,7 @@ LIPS_STEP = 1 / 3  # how fast they ease between resting and moving, per frame
 POSE_HANG = 25  # frames the head keeps moving after speech (1 s)
 POSE_AHEAD = 5  # frames it starts moving before it (as far ahead as is known)
 POSE_STEP = 1 / 12  # ~0.5 s from still to moving
+DOZE_S = 1.5  # before sleeping, the head settles at the photo's pose for this long
 POSE_KEYS = ("pitch", "yaw", "roll", "t")  # t: the head's position in the frame
 HEADER = struct.Struct("<cI")  # message type, payload length; see app/face_player.py
 
@@ -96,8 +100,18 @@ class Turn:
 class Timeline:
     """The continuous audio stream: fed to Ditto and the speakers, in step."""
 
-    def __init__(self, sdk, lead, send, idle_head=0.2):
+    def __init__(self, sdk, lead, send, idle_head=0.2, sleep_after=30.0):
         self.sdk = sdk
+        # Asleep: Ditto is skipped and the window holds its last frame. Ditto numbers its
+        # frames (and looks up their controls) by its own count, which falls behind the
+        # timeline while it sleeps; chunk_offset[c] is how far, for each chunk sent.
+        self.sleep_after = sleep_after
+        self.last_active = time.perf_counter()
+        self.asleep = False
+        # Timeline frames from held_from up to held_until were skipped (held_until is None
+        # while still asleep): the window shows the last frame Ditto drew before them.
+        self.held_from = self.held_until = None
+        self.chunk_offset: dict[int, int] = {}
         self.idle_head = idle_head  # how much of Ditto's head movement is kept in silence
         self.lead = lead
         self.send = send
@@ -122,6 +136,27 @@ class Timeline:
         with self.lock:
             self._end_current()
             self.turn = Turn(number)
+            self.last_active = time.perf_counter()
+
+    def wake(self):
+        """Someone is speaking: be awake (and stay so for sleep_after) in case Holly answers."""
+        self.last_active = time.perf_counter()
+
+    def held(self, k):
+        """Is timeline frame k one Ditto skipped, so the window should hold its last frame?
+        Only those: the frames drawn before sleeping still play out (the feeder runs a lead
+        ahead of the speakers), or he froze mid-word, 0.6 s before his reply ended."""
+        return self.held_from is not None and k >= self.held_from and (
+            self.held_until is None or k < self.held_until)
+
+    def _quiet_for(self):
+        """Seconds since anything was said or played; 0 while a reply is under way."""
+        if self.turn is not None or self.finishing:
+            return 0.0
+        return time.perf_counter() - self.last_active
+
+    def _sleepy(self):
+        return self.sleep_after > 0 and self._quiet_for() > self.sleep_after
 
     def audio(self, samples, rate):
         if rate != SR:
@@ -214,13 +249,27 @@ class Timeline:
             self.voiced[k] = float(np.sqrt(np.mean(seg * seg))) > SPEECH_RMS
         if pos == 0:
             return
-        self._set_lips(first - BLOCK // FRAME, first)
+        chunk_first = first - BLOCK // FRAME  # timeline frame of this chunk's first frame
+        if self._sleepy():
+            if not self.asleep:
+                log("Asleep: Ditto paused")
+                self.asleep = True
+                self.held_from, self.held_until = chunk_first, None
+            return
+        offset = chunk_first - self.chunks * (BLOCK // FRAME)
+        if self.asleep:
+            log(f"Awake after {chunk_first - self.held_from} skipped frames")
+            self.asleep = False
+            self.held_until = chunk_first
+        self.chunk_offset[self.chunks] = offset
+        self._set_lips(chunk_first, first, offset)
         window = np.concatenate(self.hist16)[1280:1280 + 6480]
         self.sdk.run_chunk(window, CHUNK)
         self.chunks += 1
 
-    def _set_lips(self, start, stop):
-        """Tell Ditto how much the lips and head follow the audio for frames start..stop-1."""
+    def _set_lips(self, start, stop, offset=0):
+        """Tell Ditto how much the lips and head follow the audio for timeline frames
+        start..stop-1, which are Ditto's frames start-offset..stop-1-offset."""
         ctrl = self.sdk.ctrl_info
 
         def speaking(k, hang, ahead):
@@ -229,13 +278,18 @@ class Timeline:
         for k in range(start, stop):
             target = 1.0 if speaking(k, LIPS_HANG, LIPS_AHEAD) else 0.0
             self.lips += max(-LIPS_STEP, min(LIPS_STEP, target - self.lips))
-            target = 1.0 if speaking(k, POSE_HANG, POSE_AHEAD) else self.idle_head
+            # Dozing off: the head settles to the photo's pose before Ditto pauses, so he
+            # sleeps at rest rather than mid-sway.
+            dozing = self.sleep_after > 0 and self._quiet_for() > self.sleep_after - DOZE_S
+            target = 1.0 if speaking(k, POSE_HANG, POSE_AHEAD) else 0.0 if dozing else self.idle_head
             self.pose += max(-POSE_STEP, min(POSE_STEP, target - self.pose))
-            ctrl[k] = {"vad_alpha": self.lips, "pose_alpha": self.pose}
+            ctrl[k - offset] = {"vad_alpha": self.lips, "pose_alpha": self.pose}
         for old in [i for i in self.voiced if i < start - max(LIPS_HANG, POSE_HANG)]:
             del self.voiced[old]
-        for old in [i for i in ctrl if isinstance(i, int) and i < start - 250]:
+        for old in [i for i in ctrl if isinstance(i, int) and i < start - offset - 250]:
             del ctrl[old]
+        for old in [c for c in self.chunk_offset if c < self.chunks - 100]:
+            del self.chunk_offset[old]
 
     # -- the speakers -------------------------------------------------------
 
@@ -269,6 +323,8 @@ class Timeline:
             # as the last audio was queued, up to the 0.6 s lead early, and the mic,
             # listening again 0.3 s after, heard Holly's last words and answered them.
             done = [t for t in self.finishing if t.pending_len == 0 and (t.last is None or t.last <= end)]
+            if done:
+                self.last_active = time.perf_counter()  # the quiet spell starts when he stops
             for turn in done:
                 if turn.last is not None:
                     turn.times["end"] = dac + max(turn.last - start, 0) / SR
@@ -291,14 +347,18 @@ class Timeline:
 class Frames:
     """Ditto's finished frames, numbered from the start of the timeline."""
 
-    def __init__(self):
+    def __init__(self, chunk_offset=None):
         self.lock = threading.Lock()
         self.frames = {}
-        self.count = 0
+        self.count = 0  # frames Ditto has made
+        self.latest = -1  # timeline frame of the newest
+        self.chunk_offset = {} if chunk_offset is None else chunk_offset  # Ditto chunk -> frames skipped before it
 
     def __call__(self, img, fmt="rgb"):
         with self.lock:
-            self.frames[self.count] = img
+            k = self.count + self.chunk_offset.get(self.count // (BLOCK // FRAME), 0)
+            self.frames[k] = img
+            self.latest = k
             self.count += 1
 
     close = staticmethod(lambda: None)
@@ -377,6 +437,8 @@ class Link:
                 timeline.clear()
             elif kind == b"G":
                 timeline.expect_gap()
+            elif kind == b"W":
+                timeline.wake()
 
 
 def lips_only_vad(x_d_info, dst, alpha):
@@ -488,6 +550,8 @@ def main():
     p.add_argument("--height", type=int, default=720, help="window height in pixels")
     p.add_argument("--idle-head", type=float, default=0.2,
                    help="head movement kept while Holly is silent: 0 still, 1 as Ditto drives it")
+    p.add_argument("--sleep-after", type=float, default=30.0,
+                   help="seconds with nothing said before Ditto pauses to spare the GPU (0: never)")
     p.add_argument("--host-api", default="Windows WASAPI")
     p.add_argument("--device", default="", help="output device name (or part of it)")
     args = p.parse_args()
@@ -498,7 +562,8 @@ def main():
 
     timeline = None
     link = Link(args.port, lambda: timeline)
-    timeline = Timeline(sdk, args.lead, link.send, args.idle_head)
+    timeline = Timeline(sdk, args.lead, link.send, args.idle_head, args.sleep_after)
+    frames.chunk_offset = timeline.chunk_offset  # before the feeder sends Ditto anything
 
     sys.path.insert(0, str(FACE.parent))
     from app.player import find_device  # same device choice as Holly's own player
@@ -525,7 +590,11 @@ def main():
         k = int(timeline.now() // FRAME)
         if k != shown["k"]:
             shown["skipped"] += max(k - shown["k"] - 1, 0) if shown["k"] >= 0 else 0
-            shown["ahead"].append(frames.count - 1 - k)  # frames Ditto has ready beyond this one
+            if timeline.held(k):  # asleep: keep showing the last frame
+                shown["k"] = k
+                root.after(5, tick)
+                return
+            shown["ahead"].append(frames.latest - k)  # frames Ditto has ready beyond this one
             img, on_time = frames.at(k)
             if img is not None:
                 t = time.perf_counter()

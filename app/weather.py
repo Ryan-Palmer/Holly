@@ -20,7 +20,8 @@ TOOL = {
     "type": "function",
     "function": {
         "name": "weather",
-        "description": "The weather now and the forecast for the next week, for one place.",
+        "description": "For one place: the local time, the weather now, sunrise and sunset, "
+                       "and the forecast for the next week. Use it for the time somewhere else.",
         "parameters": {
             "type": "object",
             "properties": {"place": {"type": "string", "description":
@@ -50,7 +51,10 @@ CONDITIONS = {
 }
 
 # Ways of naming the UK that don't appear in the geocoder's place details.
-COUNTRY_NAMES = {"uk": "GB", "united kingdom": "GB", "britain": "GB", "great britain": "GB"}
+# ("New York, USA" found New York, Lincolnshire, until "usa" was here.)
+COUNTRY_NAMES = {"uk": "GB", "united kingdom": "GB", "britain": "GB", "great britain": "GB",
+                 "usa": "US", "us": "US", "u.s.": "US", "u.s.a.": "US", "america": "US",
+                 "united states of america": "US", "uae": "AE"}
 
 
 def find_place(place: str, cfg: SearchConfig) -> dict | None:
@@ -70,7 +74,7 @@ def find_place(place: str, cfg: SearchConfig) -> dict | None:
         resp.raise_for_status()
         hits = resp.json().get("results") or []
         if hint:
-            code = COUNTRY_NAMES.get(hint)
+            code = COUNTRY_NAMES.get(hint) or (hint.upper() if len(hint) == 2 else None)  # "fr", "de"
             matching = [h for h in hits if (code and h.get("country_code") == code) or any(
                 hint in (h.get(k) or "").lower() for k in ("admin1", "admin2", "admin3", "admin4", "country"))]
             hits = matching or [h for h in hits if h.get("country_code") == cfg.home_country]
@@ -107,7 +111,7 @@ def forecast(place: str, cfg: SearchConfig) -> Lookup:
             "forecast_days": DAYS, "wind_speed_unit": "mph",
             "current": "temperature_2m,weather_code,wind_speed_10m",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,"
-                     "precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max",
+                     "precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset",
         })
         resp.raise_for_status()
         data = resp.json()
@@ -121,7 +125,10 @@ def forecast(place: str, cfg: SearchConfig) -> Lookup:
             parts.append(x)
     label = ", ".join(parts)
     now, daily = data["current"], data["daily"]
+    # Asked the time in New York, he worked it out himself, half an hour out.
+    local = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=data["utc_offset_seconds"])
     lines = [f"Weather for {label}. Temperatures in degrees Celsius, wind in miles an hour.",
+             f"Local time there: {local:%H:%M} on {local:%A}, UTC{data['utc_offset_seconds'] / 3600:+g}.",
              f"Right now: {CONDITIONS.get(now['weather_code'], 'unknown')}, "
              f"{now['temperature_2m']:.0f} degrees, wind {now['wind_speed_10m']:.0f}."]
     today = datetime.date.fromisoformat(daily["time"][0])
@@ -132,5 +139,6 @@ def forecast(place: str, cfg: SearchConfig) -> Lookup:
             f"{CONDITIONS.get(daily['weather_code'][i], 'unknown')}, "
             f"{daily['temperature_2m_min'][i]:.0f} to {daily['temperature_2m_max'][i]:.0f} degrees, "
             + (f"{rain:.0f} per cent chance of rain, " if rain is not None else "")
-            + f"wind up to {daily['wind_speed_10m_max'][i]:.0f}, gusts {daily['wind_gusts_10m_max'][i]:.0f}.")
+            + f"wind up to {daily['wind_speed_10m_max'][i]:.0f}, gusts {daily['wind_gusts_10m_max'][i]:.0f}, "
+            f"sunrise {daily['sunrise'][i][-5:]}, sunset {daily['sunset'][i][-5:]}.")
     return done("\n".join(lines), True)
