@@ -83,6 +83,7 @@ EMBED_BATCH = 32
 # nomic-embed wants to be told which side of a search a text is on.
 DOC_PREFIX, QUERY_PREFIX = "search_document: ", "search_query: "
 DAY_ENTRIES = 20  # at most, for a day asked about
+EMBED_RETRY_S = 60.0  # after the embedding model failed (LM Studio restarting, a timeout), try again then
 
 
 class Archive:
@@ -109,7 +110,7 @@ class Archive:
                             "(id INTEGER, model TEXT, vec BLOB, PRIMARY KEY (id, model))")
             self.db.commit()
         self._matrix: tuple[int, np.ndarray, np.ndarray] | None = None  # (count, ids, unit vectors)
-        self._embed_failed = False
+        self._embed_retry_at = 0.0  # after a failure, recall by meaning is off until then
 
     # Keeping --------------------------------------------------------------
 
@@ -160,14 +161,14 @@ class Archive:
     def _by_meaning(self, texts: list[str]) -> list[int]:
         """Rowids of the entries closest in meaning to any of `texts`, best first."""
         model = self.cfg.embed_model
-        if not model or self._embed_failed:
+        if not model or time.monotonic() < self._embed_retry_at:
             return []
         try:
             self.embed_missing()
             queries = np.stack([_unit(v) for v in self.lm.embed([QUERY_PREFIX + t for t in texts], model)])
-        except Exception as e:  # the model isn't in LM Studio: keywords and days still work
-            self._embed_failed = True
-            print(f"  (recall by meaning is off: {e!r})", flush=True)
+        except Exception as e:  # keywords and days still work; a passing failure shouldn't end it for good
+            self._embed_retry_at = time.monotonic() + EMBED_RETRY_S
+            print(f"  (recall by meaning is off for {EMBED_RETRY_S:.0f} s: {e!r})", flush=True)
             return []
         with self.lock:
             count = self.db.execute("SELECT count(*) FROM vectors WHERE model = ?", (model,)).fetchone()[0]

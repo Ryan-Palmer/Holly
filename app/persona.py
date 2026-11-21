@@ -265,7 +265,9 @@ class Conversation:
 
     def recent_topics(self, n: int = 4) -> list[str]:
         """The crew's last `n` lines, newest first, for picking reminders that fit."""
-        said = [m["content"] for m in self.history if m["role"] == "user" and m.get("content")]
+        # Not the notes he's handed when a timer comes due ("[The timer 'pasta'...]").
+        said = [m["content"] for m in self.history if m["role"] == "user" and m.get("content")
+                and not m["content"].startswith("[")]
         return said[::-1][:n]
 
     def _archive(self, end: int) -> None:

@@ -52,7 +52,6 @@ def stamp() -> str:
 # Tools that answer at once (Spotify in well under a second): no stock line, and they
 # don't count towards the lookups allowed per reply.
 LOCAL_TOOLS = ("clock", "timer", "spotify")
-TIME_TOOLS = ("clock", "timer")  # a time of day in his reply from one of these isn't a guess
 COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
@@ -144,7 +143,7 @@ class Holly:
             # not the ship's records. Set aside, not deleted, in case it was a mistake; each
             # with its own time, so a second --forget doesn't overwrite the first.
             yours = [memory_file, cfg.recall.file, cfg.timers.file]
-            asides = [set_aside(f, "forgotten") for f in yours if f and f.exists()]
+            asides = [set_aside_with_sidecars(f, "forgotten") for f in yours if f and f.exists()]
             if asides:
                 print(f"{DIM}Holly's memory of earlier sessions is set aside "
                       f"({', '.join(a.name for a in asides)}); he starts afresh.{RESET}")
@@ -176,7 +175,7 @@ class Holly:
         self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)
         # Stock lines in his voice for while a tool works, by kind: "search" (web
         # search and weather) and "recall" (his archive).
-        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": []}
+        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": []}
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
@@ -252,7 +251,8 @@ class Holly:
                                              self.tools):
             pass
         lines = {"search": self.cfg.search.fillers if self.searcher else (),
-                 "recall": self.cfg.recall.fillers if self.archive else ()}
+                 "recall": self.cfg.recall.fillers if self.archive else (),
+                 "spotify": self.cfg.spotify.fillers if self.spotify else ()}
         for kind, said in lines.items():
             for line in said:
                 chunks = [a async for a in self.tts.stream(line, trim_lead=True)]
@@ -374,11 +374,12 @@ class Holly:
             print()
             return times
         said = "".join(last_said).strip()
-        if CLOCK_TIME.search(said) and not any(c["function"]["name"] in TIME_TOOLS for m in steps
-                                                for c in (m.get("tool_calls") or [])):
-            # He gave a time without the clock: a guess. Kept as fact in his history, it
-            # stuck: greeted, he said "10:14 PM" at 7:56, and repeated it four times,
-            # asked to use the clock or not. (The brackets are never spoken.)
+        told = [user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
+        if CLOCK_TIME.search(said) and not any(CLOCK_TIME.search(t) for t in told):
+            # He gave a time that nobody gave him (the clock, the weather's sunset, a
+            # search, the crew, a timer coming due): a guess. Kept as fact in his
+            # history, it stuck: greeted, he said "10:14 PM" at 7:56, and repeated it
+            # four times, asked to use the clock or not. (The brackets are never spoken.)
             said += " [That time was a guess, not from the clock: it's probably wrong.]"
         dropped = self.convo.record(user, said, steps)
         print(f"{DIM}  {times.report()}{RESET}")
@@ -467,8 +468,13 @@ class Holly:
             return result
         if call["name"] == "spotify" and self.spotify:
             t0 = time.perf_counter()
+            loop = asyncio.get_running_loop()
+
+            def starting() -> None:  # Spotify's app is being opened: up to ~10 s, so say so
+                loop.call_soon_threadsafe(self._say_filler, times, "spotify")
+
             try:
-                result = await asyncio.to_thread(self.spotify.handle, args)
+                result = await asyncio.to_thread(self.spotify.handle, args, starting)
             except Exception as e:  # the network, or Spotify itself
                 print(f"{YELLOW}  (spotify failed: {e!r}){RESET}", flush=True)
                 return "Spotify didn't answer. Tell the crew, in a few words."
@@ -521,7 +527,11 @@ class Holly:
         if self.convo.needs_compacting():
             ok = await self.compact()
         if self.records and not self.reminded:
-            await self.refresh_reminders()
+            try:
+                await self.refresh_reminders()
+            except Exception as e:  # the notes may be fine: not their failure, nor their retry
+                self.reminded = True  # try again after the next talk, not straight away
+                print(f"{DIM}  (couldn't pick reminders from the ship's records: {e!r}){RESET}", flush=True)
         return ok
 
     async def refresh_reminders(self, prewarm: bool = True) -> None:
@@ -587,9 +597,10 @@ class Holly:
                 if user in ("/quit", "/exit"):
                     return
                 if user == "/reset":
-                    self.convo.reset()
-                    if self.timers:
-                        self.timers.clear()
+                    async with self.turn_lock:  # not mid-way through a timer's announcement
+                        self.convo.reset()
+                        if self.timers:
+                            self.timers.clear()
                     print(f"{DIM}History, notes, archive, timers and reminders cleared, on disk "
                           f"too.{RESET}\n")
                     continue
@@ -612,18 +623,32 @@ RESET_HELP = ("start afresh, deleting his history, notes, archive, timers and re
               "anything --forget set aside; the ship's records stay")
 
 
+def sidecars(f: Path) -> list[Path]:
+    """SQLite's files beside a database ("archive.db-journal"). They belong to it: a
+    journal left by a crash would be rolled back into a new database of the same name."""
+    return [s for s in (f.with_name(f.name + x) for x in ("-journal", "-wal", "-shm")) if s.exists()]
+
+
+def set_aside_with_sidecars(f: Path, why: str) -> Path:
+    aside = set_aside(f, why)
+    for s in sidecars(f):
+        s.replace(aside.with_name(aside.name + s.name[len(f.name):]))
+    return aside
+
+
 def wipe_yours(files: list[Path | None]) -> list[Path]:
     """Delete these files and any copies set aside from them (".forgotten-<time>",
-    ".unreadable-<time>"), and their half-written ".tmp" files. Returns what went."""
+    ".unreadable-<time>"), their half-written ".tmp" files, and SQLite's files
+    beside them. Returns what went."""
     gone = []
     for f in files:
         if not f:
             continue
         for p in [f, f.with_suffix(".tmp"), *f.parent.glob(f"{f.stem}.forgotten-*{f.suffix}"),
                   *f.parent.glob(f"{f.stem}.unreadable-*{f.suffix}")]:
-            if p.exists():
-                p.unlink()
-                gone.append(p)
+            for q in [p, *sidecars(p)] if p.exists() else sidecars(p):
+                q.unlink()
+                gone.append(q)
     return gone
 
 

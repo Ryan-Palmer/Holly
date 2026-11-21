@@ -361,7 +361,9 @@ jokes don't trigger either.
   for 20 minutes for the pasta", "remind me at half seven tomorrow to ring
   Mum", "what have I got set?", "cancel the pasta". Gemma passes a duration,
   or a 24-hour time and a day word, and the code works out the moment (its
-  own date sums were off). They're kept in `data/timers.json`. When one is
+  own date sums were off). Cancelling matches whole words ("the steak timer"
+  is "steak"; a substring match once cancelled "tea" with it). They're kept
+  in `data/timers.json`. When one is
   due he speaks up by himself, at the next pause in the room (or between
   your turns, typed), and stays awake for a reply; one that came due while
   he was off is mentioned when he's next up. Like the clock it's local and
@@ -376,7 +378,8 @@ jokes don't trigger either.
   this song?", "skip this", "turn it down", "pause", shuffle and queue.
   Spotify does the playing, on whichever device is open (the desktop app
   here, a phone, a speaker); with none open, the desktop app on this PC is
-  started. It needs Spotify Premium. To set it up, create an app at
+  started, with a stock line to cover the ~5-10 s wait. It needs Spotify
+  Premium. To set it up, create an app at
   developer.spotify.com/dashboard (redirect URI
   `http://127.0.0.1:8888/callback`, Web API), save its client ID as the
   Windows user variable `SPOTIFY_CLIENT_ID`, and sign in once:

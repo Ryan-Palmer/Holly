@@ -44,8 +44,12 @@ TOOL = {
 }
 
 _UNITS = {"h": 3600, "hr": 3600, "hour": 3600, "m": 60, "min": 60, "minute": 60, "s": 1, "sec": 1, "second": 1}
-_PART = re.compile(r"(\d+(?:\.\d+)?|an?|half an?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
+_PART = re.compile(r"\b(\d+(?:\.\d+)?|an?|half an?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
                    re.IGNORECASE)
+_HALF = re.compile(r"\band a half\b", re.IGNORECASE)  # "an hour and a half": half the unit before it
+_H_MM = re.compile(r"\b(\d+)\s*h\s*(\d{1,2})\b(?!\s*[a-z])", re.IGNORECASE)  # "1h30"
+# Words in a label that don't tell timers apart, for cancelling: "the pasta timer" is "pasta".
+_LABEL_NOISE = {"the", "a", "an", "my", "timer", "timers", "reminder", "reminders", "for", "to", "about"}
 _AT = re.compile(r"^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.IGNORECASE)
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
           "october", "november", "december"]
@@ -54,11 +58,17 @@ _DATE = re.compile(r"(\d{1,2})(?:st|nd|rd|th)?\s+(" + "|".join(MONTHS) + r")", r
 
 def parse_duration(text: str) -> datetime.timedelta | None:
     """'20 minutes', '1 hour 30 minutes', '1.5 hours', 'half an hour', '90 seconds'."""
+    text = _H_MM.sub(r"\1 hours \2 minutes", text or "")
     total = 0.0
-    for amount, unit in _PART.findall(text or ""):
+    for m in _PART.finditer(text):
+        amount, unit = m.groups()
         n = 0.5 if amount.lower().startswith("half") else 1.0 if amount.lower() in ("a", "an") else float(amount)
         u = unit.lower()
-        total += n * _UNITS[u if u in _UNITS else u.rstrip("s")]
+        seconds = _UNITS[u if u in _UNITS else u.rstrip("s")]
+        total += n * seconds
+        # "an hour and a half" read as an hour: the half goes with this unit.
+        if _HALF.match(text[m.end():].lstrip()):
+            total += seconds / 2
     if not total and (bare := re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", text or "")):
         total = float(bare.group(1)) * 60  # a bare number: minutes
     return datetime.timedelta(seconds=total) if total > 0 else None
@@ -152,8 +162,7 @@ class Timers:
                 f"{i['label']} ({i['kind']}), due {say_when(datetime.datetime.fromisoformat(i['due']), now)}"
                 for i in sorted(self.items, key=lambda i: i["due"])) + "."
         if action == "cancel":
-            gone = [i for i in self.items if label.lower() == "all" or label.lower() in i["label"].lower()
-                    or i["label"].lower() in label.lower()]
+            gone = self._matching(label)
             if not gone:
                 return f"There's nothing set called {label!r}. " + self.handle({"action": "list"}, now)
             self.items = [i for i in self.items if i not in gone]
@@ -175,6 +184,25 @@ class Timers:
         self._save()
         return (f"Set: {label}, due {say_when(due, now)}. Tell the crew when it's due, exactly as given here, "
                 "in your own words.")
+
+    def _matching(self, label: str) -> list[dict]:
+        """What a cancel for `label` means: 'all'; the one called exactly that; else
+        those whose words hold all its words, or all of whose words it holds ("pasta"
+        cancels "pasta timer", "the pasta timer" cancels "pasta"). Whole words: a
+        substring match had "steak" cancel "tea". No words to go on ("cancel the
+        timer"): the only one set, if there's just one."""
+        if label.lower() == "all":
+            return list(self.items)
+        if exact := [i for i in self.items if i["label"].lower() == label.lower()]:
+            return exact
+
+        def words(text: str) -> set[str]:
+            return set(re.findall(r"\w+", text.lower())) - _LABEL_NOISE
+
+        asked = words(label)
+        if not asked:
+            return list(self.items) if len(self.items) == 1 else []
+        return [i for i in self.items if (have := words(i["label"])) and (asked <= have or have <= asked)]
 
     def due(self, now: datetime.datetime | None = None) -> list[dict]:
         """Timers and reminders whose time has come, oldest first; taken off the list."""

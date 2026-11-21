@@ -142,6 +142,7 @@ class SpotifyConfig:
     market: str = "GB"  # the country whose catalogue to search (Spotify's own "from_token" needs more access)
     timeout_s: float = 5.0
     prompt: Path = ROOT / "persona/spotify_prompt.md"
+    fillers: tuple[str, ...] = ()  # said while the desktop app is being opened
 
 
 @dataclass(frozen=True)
@@ -192,7 +193,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         recall=_recall_config(raw.get("recall", {}), base),
         timers=TimersConfig(**{k: (base / v if k in ("file", "prompt") else v)
                                for k, v in raw.get("timers", {}).items()}),
-        spotify=SpotifyConfig(**{k: (base / v if k in ("token_file", "prompt") else v)
+        spotify=SpotifyConfig(**{k: (base / v if k in ("token_file", "prompt") else
+                                     tuple(v) if k == "fillers" else v)
                                  for k, v in raw.get("spotify", {}).items()}),
     )
 

@@ -68,6 +68,11 @@ TOOL = {
 }
 
 
+# Words that don't tell music apart, left out when checking a result fits the query.
+_COMMON = {"the", "a", "an", "by", "of", "and", "my", "some", "me", "to", "in", "on", "for", "from", "play",
+           "song", "songs", "music", "track", "album", "playlist", "s"}
+
+
 class NotReady(Exception):
     """Something the crew has to sort out (sign in, open Spotify); the message says what."""
 
@@ -130,8 +135,10 @@ def _describe(item: dict) -> str:
 
 
 def _mmss(ms: int | None) -> str:
+    # Not "1:14": that reads as a time of day, and would pass a time he made up as one
+    # he was given (speak.py's guess check).
     s = (ms or 0) // 1000
-    return f"{s // 60}:{s % 60:02d}"
+    return f"{s // 60} min {s % 60} s"
 
 
 class Spotify:
@@ -139,6 +146,7 @@ class Spotify:
         self.cfg = cfg
         self._sp: spotipy.Spotify | None = None
         self._me: str | None = None
+        self._starting = None  # called when the desktop app has to be opened (a slow wait)
 
     @property
     def sp(self) -> spotipy.Spotify:
@@ -168,6 +176,8 @@ class Spotify:
             if not launched and self.cfg.launch and sys.platform == "win32":
                 print("  (opening Spotify)", flush=True)
                 os.startfile("spotify:")  # the desktop app's own link
+                if self._starting:
+                    self._starting()
                 launched = True
             if time.monotonic() > deadline:
                 raise NotReady("Spotify isn't open anywhere: not on this PC, a phone or a speaker. "
@@ -180,7 +190,8 @@ class Spotify:
         found = self.sp.search(q=query, type=kind, limit=5, market=self.cfg.market or None)
         # Spotify always finds something: "zzqxv nonsense" found the Gummy Bear song.
         # Only results sharing a word with what was asked.
-        asked = set(re.findall(r"\w+", query.lower()))
+        # Not words most names share: "The Zzqxv" matched everything with "the" in it.
+        asked = set(re.findall(r"\w+", query.lower())) - _COMMON or set(re.findall(r"\w+", query.lower()))
         items = [i for i in found.get(kind + "s", {}).get("items", []) if i
                  and asked & set(re.findall(r"\w+", " ".join(
                      [i.get("name", ""), _artists(i), i.get("album", {}).get("name", ""),
@@ -226,8 +237,10 @@ class Spotify:
 
     # Actions ------------------------------------------------------------------
 
-    def handle(self, args: dict) -> str:
-        """Run one tool call; returns what Holly is told."""
+    def handle(self, args: dict, starting=None) -> str:
+        """Run one tool call; returns what Holly is told. `starting` is called if
+        Spotify's desktop app has to be opened first, which takes a few seconds."""
+        self._starting = starting
         action = str(args.get("action") or "").strip().lower()
         try:
             run = getattr(self, "_" + action, None) if action in TOOL["function"]["parameters"][
