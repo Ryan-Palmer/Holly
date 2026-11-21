@@ -14,7 +14,7 @@ git clone --depth 1 https://github.com/antgroup/ditto-talkinghead face/ditto-src
 git -C face/ditto-src apply ../ditto-windows.patch
 py -3.12 -m venv face/.venv
 face\.venv\Scripts\python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-face\.venv\Scripts\python -m pip install onnxruntime-gpu librosa tqdm filetype imageio imageio-ffmpeg opencv-python-headless scikit-image mediapipe colored "numpy>=2" einops huggingface_hub soundfile av
+face\.venv\Scripts\python -m pip install onnxruntime-gpu librosa tqdm filetype imageio imageio-ffmpeg opencv-python-headless scikit-image mediapipe colored "numpy>=2" einops huggingface_hub soundfile av pygame-ce
 face\.venv\Scripts\python -c "from huggingface_hub import snapshot_download as d; d('digital-avatar/ditto-talkinghead', local_dir='face/checkpoints', allow_patterns=['ditto_pytorch/**', 'ditto_cfg/*'])"
 ```
 
@@ -46,12 +46,15 @@ screen face, 1820x1024.
   is leaving the speakers;
 - keeps the speakers' queue `--lead` seconds ahead (0.6 s), giving Ditto
   time to draw each frame;
-- shows the frames in an OpenCV window that scales them to its size: frames
-  stay at the still's own 1820x1024 (`height = 0`; it was 720p for a fixed
-  window), padded with black to the window's shape, and Windows stretches
-  them, in ~5-6 ms a frame at any size up to full screen (F11 or a
-  double-click; Escape leaves). Tk's window, scaling in Python, took 47 ms a
-  frame at 2560x1440 and 97 ms at 4K, past the 40 ms there is;
+- shows the frames in an SDL2 window (through pygame): each frame goes to a
+  GPU texture that the renderer scales to the largest size that fits,
+  centred on black. Frames stay at the still's own 1820x1024 (`height = 0`;
+  it was 720p for a fixed window); ~8 ms a frame at any size up to full
+  screen (F11 or a double-click; Escape leaves). Tk's window, scaling in
+  Python, took 47 ms a frame at 2560x1440 and 97 ms at 4K, past the 40 ms
+  there is. OpenCV's scaled well but had a crosshair cursor and left a gap
+  when snapped to a screen edge. pygame's SCALED mode scales only by whole
+  numbers: smaller than a frame went black;
 - runs Ditto's motion model 5 frames at a time (`--overlap 75`) rather than
   the 10 of Ditto's own streaming config (70). With 10, the motion trailed
   the audio by about 0.7 s and frames came out barely in time even with a
@@ -68,8 +71,9 @@ screen face, 1820x1024.
   to Ditto's motion step (`hold_pose_when_told`) blends pitch, yaw, roll and
   position from the photo's (0) to Ditto's (1): 1 while he speaks,
   `idle_head` under `[face]` in `holly.toml` (0.2) while he's silent. The head keeps
-  moving for 1 s after speech, so it doesn't stop between sentences, and
-  eases in and out over about 0.5 s.
+  moving for 1 s after speech, so it doesn't stop between sentences. It
+  eases in over about 0.5 s and back to the idle sway over 1.5 s
+  (`POSE_OUT_S`): at 0.5 s both ways, he snapped back to idle.
 - sleeps 30 s after Holly last spoke (`awake_s` under `[listen]`, the same
   span in which he needs no wake word). Drawing 25 frames a second costs as
   much GPU idle as talking: ~40% of the 5090 and ~200 W, against ~0% and

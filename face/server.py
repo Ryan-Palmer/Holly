@@ -26,6 +26,7 @@ import argparse
 import ctypes
 import collections
 import json
+import os
 import socket
 import struct
 import sys
@@ -33,7 +34,6 @@ import threading
 import time
 from pathlib import Path
 
-import cv2
 import numpy as np
 import sounddevice as sd
 from PIL import Image
@@ -62,6 +62,7 @@ LIPS_STEP = 1 / 3  # how fast they ease between resting and moving, per frame
 POSE_HANG = 25  # frames the head keeps moving after speech (1 s)
 POSE_AHEAD = 5  # frames it starts moving before it (as far ahead as is known)
 POSE_STEP = 1 / 12  # ~0.5 s from still to moving
+POSE_OUT_S = 1.5  # back to the idle sway after speaking: slower, or he snapped back to idle
 WINDOW_HEIGHT = 720  # the window opens this tall; it can then be any size
 DOZE_S = 1.5  # before sleeping, the face settles to the photo itself for this long
 DOZE_STEP = 1 / 25  # ~1 s to settle into the photo, eyes closing, when dozing off
@@ -124,6 +125,7 @@ class Timeline:
         self.held_from = self.held_until = None
         self.chunk_offset: dict[int, int] = {}
         self.idle_head = idle_head  # how much of Ditto's head movement is kept in silence
+        self.pose_out_step = max(1 - idle_head, 0.05) / (POSE_OUT_S * 25)  # per frame
         self.lead = lead
         self.send = send
         self.lock = threading.Lock()
@@ -300,7 +302,8 @@ class Timeline:
             # animation had reached. The eyes close slowly and open quickly on waking.
             dozing = self.sleep_after > 0 and self._quiet_for() > self.sleep_after - DOZE_S
             target = 1.0 if speaking(k, POSE_HANG, POSE_AHEAD) else 0.0 if dozing else self.idle_head
-            self.pose += max(-POSE_STEP, min(POSE_STEP, target - self.pose))
+            step = POSE_STEP if target > self.pose else self.pose_out_step
+            self.pose += max(-step, min(step, target - self.pose))
             self.doze = min(1.0, self.doze + DOZE_STEP) if dozing else max(0.0, self.doze - WAKE_STEP)
             ctrl[k - offset] = {"vad_alpha": self.lips, "pose_alpha": self.pose, "doze": self.doze}
         for old in [i for i in self.voiced if i < start - max(LIPS_HANG, POSE_HANG)]:
@@ -606,55 +609,84 @@ def main():
     log(f"Ready on port {args.port}, playing through {sd.query_devices(index)['name']} ({api}), "
         f"lead {args.lead:.2f} s")
 
-    # The window: OpenCV's, which Windows stretches to any size for free (~15 ms a frame at
-    # 5120x1440 or 3840x2160, as at 720p). Tk's took 47 ms at 2560x1440 and 97 ms at 4K,
-    # past the 40 ms a frame. Frames stay at Ditto's resolution, padded with black to the
-    # window's shape, so the face keeps its own.
-    title = "Holly"
-    cv2.namedWindow(title, cv2.WINDOW_NORMAL | cv2.WINDOW_FREERATIO)
-    w, h = Image.open(args.image).size
-    cv2.resizeWindow(title, round(WINDOW_HEIGHT * w / h), WINDOW_HEIGHT)  # to start with
+    # The window: SDL2's, through pygame. Each frame goes to a GPU texture that the renderer
+    # scales to the largest size that fits the window, centred on black: ~8 ms a frame at
+    # any size, full screen included. Tk's window, scaling in Python, took 47 ms a frame at
+    # 2560x1440 and 97 ms at 4K (past the 40 ms there is). OpenCV's scaled well but showed a
+    # crosshair cursor and left gaps when snapped to a screen edge in Windows 11. pygame's
+    # own SCALED mode only scales by whole numbers (it's made for pixel art): a window
+    # smaller than a frame went black, and one up to twice its size showed it at 1x.
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+    os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")  # smooth (linear) scaling
+    import pygame
+    from pygame._sdl2.video import Renderer, Texture, Window
+
+    still = Image.open(args.image).convert("RGB")
+    w, h = still.size
+    fw, fh = (round(args.height * w / h), args.height) if args.height else (w, h)  # Ditto's frames
+    pygame.init()
+    window = Window("Holly", size=(round(WINDOW_HEIGHT * w / h), WINDOW_HEIGHT), resizable=True)
+    face = still.crop(((w - h) // 2, 0, (w + h) // 2, h)).resize((64, 64))
+    window.set_icon(pygame.image.frombuffer(face.tobytes(), face.size, "RGB"))
+    renderer = Renderer(window, vsync=False)
+    texture = Texture(renderer, (fw, fh), streaming=True)
     winmm = ctypes.windll.winmm if sys.platform == "win32" else None
     if winmm:
-        winmm.timeBeginPeriod(1)  # 1 ms waits, not Windows' default 15.6 ms ticks
-    shown = {"k": -1, "img": None, "rect": None, "late": 0, "frames": 0, "skipped": 0,
-             "draw": 0.0, "ahead": [], "made": 0, "report": time.perf_counter()}
+        winmm.timeBeginPeriod(1)  # 1 ms sleeps, not Windows' default 15.6 ms ticks
+    shown = {"k": -1, "late": 0, "frames": 0, "skipped": 0, "draw": 0.0, "ahead": [], "made": 0,
+             "report": time.perf_counter(), "click": 0.0, "full": False}
+
+    def show(surface=None):
+        """Draw the texture (updated from `surface` if given), as large as fits, centred."""
+        if surface is not None:
+            texture.update(surface)
+        renderer.draw_color = (0, 0, 0, 255)
+        renderer.clear()
+        box_w, box_h = window.size
+        scale = min(box_w / fw, box_h / fh)
+        dw, dh = max(round(fw * scale), 1), max(round(fh * scale), 1)
+        renderer.blit(texture, pygame.Rect((box_w - dw) // 2, (box_h - dh) // 2, dw, dh))
+        renderer.present()
 
     def draw(img):
-        """Show a frame, padded with black to the window's shape; Windows stretches it."""
-        rect = cv2.getWindowImageRect(title)
-        box_w, box_h = max(rect[2], 1), max(rect[3], 1)
-        ih, iw = img.shape[:2]
-        if box_w * ih > box_h * iw:  # window wider than the frame: black at the sides
-            pad_w, pad_h = round(ih * box_w / box_h), ih
-        else:  # taller: black above and below
-            pad_w, pad_h = iw, round(iw * box_h / box_w)
-        canvas = np.zeros((pad_h, pad_w, 3), np.uint8)
-        y, x = (pad_h - ih) // 2, (pad_w - iw) // 2
-        canvas[y:y + ih, x:x + iw] = img[..., ::-1]  # Ditto's RGB to OpenCV's BGR
-        cv2.imshow(title, canvas)
-        shown["img"], shown["rect"] = img, rect
+        img = np.ascontiguousarray(img)  # Ditto's frames aren't always laid out in one block
+        show(pygame.image.frombuffer(img, (img.shape[1], img.shape[0]), "RGB"))
 
     def full_screen(on=None):
-        now_on = cv2.getWindowProperty(title, cv2.WND_PROP_FULLSCREEN) == cv2.WINDOW_FULLSCREEN
-        on = not now_on if on is None else on
-        cv2.setWindowProperty(title, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if on else cv2.WINDOW_NORMAL)
+        on = not shown["full"] if on is None else on
+        if on:
+            window.set_fullscreen(desktop=True)  # on whichever screen the window is on
+        else:
+            window.set_windowed()
+        shown["full"] = on
 
-    def on_mouse(event, *_):
-        if event == cv2.EVENT_LBUTTONDBLCLK:
-            full_screen()
+    show(pygame.image.frombuffer(still.resize((fw, fh)).tobytes(), (fw, fh), "RGB"))  # until Ditto's first frame
 
-    cv2.setMouseCallback(title, on_mouse)
-    F11, ESCAPE = 0x7A0000, 27  # waitKeyEx codes on Windows
+    def handle_events():
+        """Returns False once the window is closed."""
+        for event in pygame.event.get():
+            if event.type in (pygame.QUIT, pygame.WINDOWCLOSE):
+                return False
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                full_screen()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                full_screen(False)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                now = time.perf_counter()
+                if now - shown["click"] < 0.4:  # a double-click
+                    full_screen()
+                    now = 0.0
+                shown["click"] = now
+            elif event.type in (pygame.WINDOWRESIZED, pygame.WINDOWSIZECHANGED, pygame.WINDOWEXPOSED):
+                show()  # refit; asleep, nothing else redraws the held frame
+        return True
 
     def tick():
         k = int(timeline.now() // FRAME)
         if k != shown["k"]:
             shown["skipped"] += max(k - shown["k"] - 1, 0) if shown["k"] >= 0 else 0
-            if timeline.held(k):  # asleep: keep showing the last frame, refitted if the window changed
+            if timeline.held(k):  # asleep: keep showing the last frame
                 shown["k"] = k
-                if shown["img"] is not None and shown["rect"] != cv2.getWindowImageRect(title):
-                    draw(shown["img"])
                 return
             shown["ahead"].append(frames.latest - k)  # frames Ditto has ready beyond this one
             img, on_time = frames.at(k)
@@ -676,19 +708,13 @@ def main():
             shown.update(late=0, frames=0, skipped=0, draw=0.0, ahead=[], made=frames.count, report=now)
 
     try:
-        while True:
+        while handle_events():
             tick()
-            key = cv2.waitKeyEx(2)
-            if key == F11:
-                full_screen()
-            elif key == ESCAPE:
-                full_screen(False)
-            if cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) < 1:  # closed
-                break
+            time.sleep(0.002)
     finally:
         if winmm:
             winmm.timeEndPeriod(1)
-        cv2.destroyAllWindows()
+        pygame.quit()
     stream.stop()
 
 
