@@ -80,8 +80,14 @@ class ListenConfig:
 class PersonaConfig:
     system_prompt: Path
     examples: Path
-    history_turns: int
-    history_trim_to: int
+    # Token budgets (~4 characters a token). Past soft, the older history is folded
+    # into his notes while he sleeps; past hard, the oldest is dropped at once.
+    history_soft_tokens: int = 20_000
+    history_hard_tokens: int = 26_000
+    history_keep_tokens: int = 8_000  # kept word for word when compacting
+    history_resume_tokens: int = 1_500  # of the last session's history, kept word for word at startup
+    memory_tokens: int = 1_500  # his notes' length, at most
+    memory_file: Path | None = None  # where history and notes are kept between sessions
 
 
 @dataclass(frozen=True)
@@ -153,8 +159,9 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         persona=PersonaConfig(
             system_prompt=base / p["system_prompt"],
             examples=base / p["examples"],
-            history_turns=p["history_turns"],
-            history_trim_to=p.get("history_trim_to", p["history_turns"] * 2 // 3),
+            memory_file=base / p["memory_file"] if p.get("memory_file") else None,
+            **{k: p[k] for k in ("history_soft_tokens", "history_hard_tokens", "history_keep_tokens",
+                                 "history_resume_tokens", "memory_tokens") if k in p},
         ),
         face=FaceConfig(**raw.get("face", {})),
         search=_search_config(raw.get("search", {}), base),

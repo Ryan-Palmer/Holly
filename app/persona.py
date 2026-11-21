@@ -1,23 +1,78 @@
-"""Holly's persona: the system prompt, example exchanges and rolling history."""
+"""Holly's persona: the system prompt, example exchanges and rolling history,
+with his notes on older conversation, kept on disk between sessions."""
 
 from __future__ import annotations
 
 import datetime
+import json
+import os
+import re
 import tomllib
+from pathlib import Path
 
 from .config import PersonaConfig
 
+CHARS_PER_TOKEN = 4  # roughly, for English
+TOOL_RESULT_CHARS = 600  # of each tool result, in the transcript the notes are written from
+
 
 def today() -> str:
-    return datetime.date.today().strftime("%A %d %B %Y").replace(" 0", " ")
+    return day(datetime.date.today())
+
+
+def day(d: datetime.date) -> str:
+    return d.strftime("%A %d %B %Y").replace(" 0", " ")
+
+
+def when(t: datetime.datetime) -> str:
+    """Like "Friday 21 November 2026 at 9:40 pm"."""
+    return f"{day(t.date())} at {t.strftime('%I:%M %p').lstrip('0').lower()}"
+
+
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_DAY_WORDS = re.compile(
+    r"\b(the day after tomorrow|day after tomorrow|tomorrow|tonight|today|yesterday|"
+    r"(?:(?:next|this|on|by|until|till|coming)\s+)?(?:" + "|".join(WEEKDAYS) + r"))\b",
+    re.IGNORECASE)
+
+
+def resolve_day(words: str, said: datetime.date) -> datetime.date:
+    """The date that day words ("tomorrow", "next Tuesday", "on Saturday")
+    mean, said on `said`. A weekday is the next one after the day it was
+    said, as "next Tuesday" usually means in speech."""
+    w = words.lower()
+    if w in ("today", "tonight"):
+        return said
+    if w == "yesterday":
+        return said - datetime.timedelta(days=1)
+    if w == "tomorrow":
+        return said + datetime.timedelta(days=1)
+    if "after tomorrow" in w:
+        return said + datetime.timedelta(days=2)
+    ahead = (WEEKDAYS.index(w.split()[-1]) - said.weekday()) % 7 or 7
+    return said + datetime.timedelta(days=ahead)
+
+
+def date_days(text: str, said: datetime.date) -> str:
+    """`text` with the date after each day word: "coming over tomorrow
+    [Sunday 22 November 2026]". For the notes written from a transcript.
+    Gemma's own sums were off: given "next Tuesday" said on Wednesday 18
+    November, it wrote the 25th, even with a calendar to hand. And with the
+    dates in brackets at the end of the line, it put a visit "tomorrow" on
+    the day it was said, and gave the next line's note the visit's date."""
+    return _DAY_WORDS.sub(lambda m: f"{m.group(1)} [{day(resolve_day(m.group(1), said))}]", text)
+
+
+# The keys LM Studio is sent; others (a message's time, "at") stay here.
+API_KEYS = ("role", "content", "tool_calls", "tool_call_id")
 
 
 class Conversation:
-    def __init__(self, cfg: PersonaConfig, extra_prompt: str = ""):
+    def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None):
         """`extra_prompt` is added to the system prompt, before the examples:
-        the rules for looking things up, when Holly can search."""
-        self.max_turns = cfg.history_turns
-        self.trim_to = min(cfg.history_trim_to, cfg.history_turns)
+        the rules for looking things up, when Holly can search. With
+        `memory_file`, the history and notes are loaded from it, and saved to
+        it after every change."""
         self.system_prompt = cfg.system_prompt.read_text(encoding="utf-8").strip()
         if extra_prompt:
             self.system_prompt += "\n\n" + extra_prompt.strip()
@@ -29,31 +84,49 @@ class Conversation:
         if examples:
             lines = [f'Crew: "{ex["user"]}"\nHolly: "{ex["holly"]}"' for ex in examples]
             self.system_prompt += "\n\nExamples of how you talk:\n\n" + "\n\n".join(lines)
+        # History budgets, in characters (~4 a token).
+        self.soft_chars = cfg.history_soft_tokens * CHARS_PER_TOKEN
+        self.hard_chars = cfg.history_hard_tokens * CHARS_PER_TOKEN
+        self.keep_chars = cfg.history_keep_tokens * CHARS_PER_TOKEN
+        self.resume_chars = cfg.history_resume_tokens * CHARS_PER_TOKEN
+        self.memory_tokens = cfg.memory_tokens
         self.history: list[dict] = []
-        self._date = ""
+        self.memory = ""  # his notes on the older history, written while he sleeps
+        self.memory_file = memory_file
+        self.last_spoke: datetime.datetime | None = None  # the last exchange, this session or before
+        self.previous_end: datetime.datetime | None = None  # when the last session's talk ended
+        self._save_failed = False
+        self._made_for: tuple = ()
         self.preamble: list[dict] = []
-        self._date_preamble()
+        self.load()
+        self._build_preamble()
 
-    def _date_preamble(self) -> None:
+    def _build_preamble(self) -> None:
         """Holly knows the date (without it he searched for last year's
-        results). It goes at the end of the system prompt, which changes only
-        when the date does, so LM Studio's cache survives all day."""
-        if self._date != (d := today()):
-            self._date = d
-            self.preamble = [{"role": "system", "content": f"{self.system_prompt}\n\nToday is {d}."}]
+        results), and has his notes on anything older than the history. Both
+        go at the end of the system prompt, which changes only when one of
+        them does, so LM Studio's cache survives until then."""
+        if self._made_for != (key := (today(), self.memory, self.previous_end)):
+            self._made_for = key
+            content = f"{self.system_prompt}\n\nToday is {key[0]}."
+            if self.previous_end:
+                content += (f" You last talked with the crew on {when(self.previous_end)}, "
+                            "before you were last switched off.")
+            if self.memory:
+                content += ("\n\nYour notes on your earlier conversations, which you no longer "
+                            f"remember word for word:\n{self.memory}")
+            self.preamble = [{"role": "system", "content": content}]
 
-    def messages_for(self, user_text: str) -> list[dict]:
+    def messages_for(self, user_text: str | None = None) -> list[dict]:
         """The full message list to send for a new user line. The time isn't
-        here: he asks the clock tool for it (app/clock.py)."""
-        self._date_preamble()
-        return [*self.preamble, *self.history, {"role": "user", "content": user_text}]
+        here: he asks the clock tool for it (app/clock.py). Without
+        `user_text`, just the preamble and history."""
+        self._build_preamble()
+        tail = [{"role": "user", "content": user_text}] if user_text is not None else []
+        history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
+        return [*self.preamble, *history, *tail]
 
-    # History budget, in characters (~4 a token): ~5K tokens of the 8K
-    # context, leaving room for the persona (~1K) and the reply. Searches make
-    # exchanges longer, so the count of exchanges alone no longer bounds it.
-    MAX_HISTORY_CHARS = 20_000
-
-    def record(self, user_text: str, holly_text: str, steps: list[dict] | None = None) -> None:
+    def record(self, user_text: str, holly_text: str, steps: list[dict] | None = None) -> int:
         """Add an exchange: what was said, plus any `steps` between (his
         searches and their results, as sent to the model).
 
@@ -61,25 +134,132 @@ class Conversation:
         factual questions answered straight off, and after a few exchanges he
         stopped searching and said "I've searched the internet" instead.
 
-        Past `history_turns` exchanges or MAX_HISTORY_CHARS, the oldest are
-        dropped in one chunk, down to `history_trim_to` and two thirds of the
-        budget, not one at a time: LM Studio reuses its cache only while the
-        start of the prompt is unchanged, and dropping one exchange per turn
-        changed it every turn, so the whole history was reread every time."""
-        self.history.append({"role": "user", "content": user_text})
+        The history is normally kept in bounds by compacting it while he
+        sleeps (see compaction_split). If he's kept talking past
+        `history_hard_tokens`, the oldest exchanges are dropped at once, in
+        one chunk, down to two thirds of that: LM Studio reuses its cache only
+        while the start of the prompt is unchanged, so dropping one exchange
+        per turn would make it reread the whole history every time. Only size
+        counts, not the number of exchanges: it's size that fills the context.
+        Returns how many exchanges were dropped."""
+        self.last_spoke = datetime.datetime.now().replace(second=0, microsecond=0)
+        self.history.append({"role": "user", "content": user_text, "at": self.last_spoke.isoformat()})
         self.history.extend(steps or [])
         self.history.append({"role": "assistant", "content": holly_text})
-        starts = [i for i, m in enumerate(self.history) if m["role"] == "user"]
-        if len(starts) <= self.max_turns and self._chars(0) <= self.MAX_HISTORY_CHARS:
-            return
-        keep = starts[max(0, len(starts) - self.trim_to)]
-        while self._chars(keep) > self.MAX_HISTORY_CHARS * 2 // 3 and keep != starts[-1]:
-            keep = next(i for i in starts if i > keep)
-        del self.history[:keep]
+        dropped = 0
+        if self._chars(0) > self.hard_chars:
+            starts = self._starts()
+            keep = starts[0]
+            while self._chars(keep) > self.hard_chars * 2 // 3 and keep != starts[-1]:
+                keep = next(i for i in starts if i > keep)
+            dropped = sum(m["role"] == "user" for m in self.history[:keep])
+            del self.history[:keep]
+        self.save()
+        return dropped
+
+    # Compacting ------------------------------------------------------------
+
+    def tokens(self) -> int:
+        """The history's rough size in tokens."""
+        return self._chars(0) // CHARS_PER_TOKEN
+
+    def needs_compacting(self) -> bool:
+        return self._chars(0) > self.soft_chars and len(self._starts()) > 1
+
+    def compaction_split(self, keep_chars: int | None = None) -> int:
+        """Where to split the history for compacting: everything before the
+        index is summarised into his notes, the rest (the newest exchanges,
+        up to `keep_chars`, `history_keep_tokens` by default, and always the
+        last one) is kept word for word. 0 if there's nothing to compact."""
+        keep_chars = self.keep_chars if keep_chars is None else keep_chars
+        starts = self._starts()
+        if len(starts) < 2:
+            return 0
+        keep = starts[-1]
+        for i in reversed(starts[1:-1]):
+            if self._chars(i) > keep_chars:
+                break
+            keep = i
+        return keep
+
+    def resume_split(self) -> int:
+        """At startup, where to split the last session's history: all but its
+        newest `history_resume_tokens` goes into his notes. 0 if it all fits."""
+        if self._chars(0) <= self.resume_chars:
+            return 0
+        return self.compaction_split(self.resume_chars)
+
+    def transcript(self, end: int) -> str:
+        """history[:end] as plain text, for writing notes on, with the day
+        and time each exchange began."""
+        lines = []
+        for m in self.history[:end]:
+            text = (m.get("content") or "").strip()
+            if m["role"] == "user":
+                if at := m.get("at"):
+                    said = datetime.datetime.fromisoformat(at)
+                    lines.append(f"(said on {when(said)})")
+                    text = date_days(text, said.date())
+                lines.append(f"Crew: {text}")
+            elif m["role"] == "assistant":
+                for call in m.get("tool_calls") or []:
+                    f = call["function"]
+                    lines.append(f"(Holly used the {f['name']} tool: {f['arguments']})")
+                if text:
+                    lines.append(f"Holly: {text}")
+            elif m["role"] == "tool":
+                lines.append(f"(It told him: {' '.join(text.split())[:TOOL_RESULT_CHARS]})")
+        return "\n".join(lines)
+
+    def apply_compaction(self, end: int, dropped: list[dict], notes: str) -> bool:
+        """Replace history[:end] with `notes`, if the history still starts
+        with the messages that were summarised (`dropped`)."""
+        if len(self.history) < end or any(a is not b for a, b in zip(self.history[:end], dropped)):
+            return False
+        del self.history[:end]
+        self.memory = notes.strip()
+        self.save()
+        return True
+
+    def _starts(self) -> list[int]:
+        return [i for i, m in enumerate(self.history) if m["role"] == "user"]
 
     def _chars(self, start: int) -> int:
         return sum(len(m.get("content") or "") + len(str(m.get("tool_calls", "")))
                    for m in self.history[start:])
 
     def reset(self) -> None:
+        """Forget everything, on disk too."""
         self.history.clear()
+        self.memory = ""
+        self.last_spoke = self.previous_end = None
+        self.save()
+
+    # On disk -------------------------------------------------------------------
+
+    def load(self) -> None:
+        if not self.memory_file or not self.memory_file.exists():
+            return
+        saved = json.loads(self.memory_file.read_text(encoding="utf-8"))
+        self.history = saved.get("history", [])
+        self.memory = saved.get("memory", "")
+        if at := saved.get("last_spoke"):
+            self.last_spoke = self.previous_end = datetime.datetime.fromisoformat(at)
+
+    def save(self) -> None:
+        """Write the history and notes out, whole: to a temporary file first,
+        then renamed over the old one, so a crash can't leave half a file."""
+        if not self.memory_file:
+            return
+        state = {"memory": self.memory, "history": self.history,
+                 "last_spoke": self.last_spoke.isoformat() if self.last_spoke else None}
+        tmp = self.memory_file.with_suffix(".tmp")
+        try:
+            self.memory_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, self.memory_file)
+            self._save_failed = False
+        except OSError as e:
+            if not self._save_failed:  # once, not every turn
+                print(f"Couldn't save Holly's memory to {self.memory_file}: {e}", flush=True)
+            self._save_failed = True

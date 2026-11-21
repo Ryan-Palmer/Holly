@@ -69,6 +69,8 @@ class ListeningHolly(Holly):
             self.cfg = dataclasses.replace(self.cfg, listen=dataclasses.replace(self.cfg.listen, wake_words=()))
         self.wake_words = set(self.cfg.listen.wake_words)
         self.awake_until = 0.0  # the follow-up window: no name needed until then
+        self.compaction: asyncio.Task | None = None
+        self.compacted_for = 0.0  # the awake_until compaction last ran after: once per sleep
 
     async def start(self) -> None:
         await super().start()
@@ -97,17 +99,38 @@ class ListeningHolly(Holly):
         hearing = False
         while True:
             block, captured = await self.mic.queue.get()
+            if not hearing:
+                self._maybe_compact()
             if captured < self.deaf_until:
                 continue
             utterance = self.detector.feed(block, captured)
             if self.detector.in_speech and not hearing:
                 hearing = True
                 self.player.wake()  # the face may be asleep; it needs ~0.6 s to come round
+                if self.compaction and self.writing_notes:
+                    # Not finished: leave the history as it was. The reread
+                    # after the notes can't be stopped, and costs nothing extra:
+                    # the reply would have to reread the prompt anyway.
+                    self.compaction.cancel()
                 print(f"{DIM}(listening){RESET}", end="\r", flush=True)
             if utterance:
                 return utterance
             if not self.detector.in_speech:
                 hearing = False
+
+    def _maybe_compact(self) -> None:
+        """Once he's asleep, compact a long history (Holly.compact)."""
+        if (self.compaction or self.compacted_for == self.awake_until
+                or time.perf_counter() < self.awake_until or not self.convo.needs_compacting()):
+            return
+        self.compacted_for = self.awake_until
+        self.compaction = asyncio.create_task(self.compact())
+        self.compaction.add_done_callback(self._compacted)
+
+    def _compacted(self, task: asyncio.Task) -> None:
+        self.compaction = None
+        if not task.cancelled() and (e := task.exception()):
+            print(f"{DIM}  (couldn't write his notes: {e!r}){RESET}", flush=True)
 
     async def run(self) -> None:
         await self.start()
@@ -151,10 +174,13 @@ def main() -> None:
                         help="let Holly search the web (default: holly.toml)")
     parser.add_argument("--wake", action=argparse.BooleanOptionalAction,
                         help="answer only when you say his name (default: on, unless wake_words is empty)")
+    parser.add_argument("--forget", action="store_true",
+                        help="start afresh, setting aside his memory of earlier sessions")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(ListeningHolly(args.model, args.engine, args.voice, args.face, args.search, wake=args.wake).run())
+        asyncio.run(ListeningHolly(args.model, args.engine, args.voice, args.face, args.search, args.forget,
+                                   wake=args.wake).run())
     except KeyboardInterrupt:
         pass
 

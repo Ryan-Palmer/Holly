@@ -19,6 +19,9 @@ class ReplyTiming:
     first_token_ms: float | None = None
     total_ms: float | None = None
     reasoning_chars: int = 0
+    # From LM Studio, for the last request: the prompt, and what it wrote.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 class LmStudio:
@@ -93,6 +96,7 @@ class LmStudio:
             temperature=self.cfg.temperature,
             max_tokens=self.cfg.max_tokens,
             reasoning_effort=self.cfg.reasoning_effort,
+            stream_options={"include_usage": True},  # token counts, in a last chunk
         )
         if tools:
             args["tools"] = tools
@@ -112,6 +116,8 @@ class LmStudio:
 
     @staticmethod
     def _content(chunk, timing: ReplyTiming, t0: float) -> str | None:
+        if usage := getattr(chunk, "usage", None):
+            timing.prompt_tokens, timing.completion_tokens = usage.prompt_tokens, usage.completion_tokens
         if not chunk.choices:
             return None
         delta = chunk.choices[0].delta
@@ -148,6 +154,17 @@ class LmStudio:
                     return
         finally:
             timing.total_ms = (time.perf_counter() - t0) * 1000
+
+    async def prewarm(self, messages: list[dict], model: str | None = None,
+                      tools: list[dict] | None = None) -> int | None:
+        """Have LM Studio read `messages` into its cache now, so the next reply
+        that starts with them doesn't wait for the read. Writes one token.
+        Returns the prompt's length in tokens."""
+        args = self._chat_args([*messages, {"role": "user", "content": "..."}], model, tools)
+        args |= {"stream": False, "max_tokens": 1}
+        del args["stream_options"]
+        reply = await self.aopenai.chat.completions.create(**args)
+        return reply.usage.prompt_tokens if reply.usage else None
 
     async def astream_reply(
         self, messages: list[dict], timing: ReplyTiming, model: str | None = None,

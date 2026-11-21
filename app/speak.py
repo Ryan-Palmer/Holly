@@ -29,10 +29,10 @@ import torch
 
 from .config import load_config
 from .lmstudio import LmStudio, ReplyTiming
-from .persona import Conversation
+from .persona import Conversation, when
 from .face_player import FacePlayer, start_server
 from .player import Player
-from . import clock, weather
+from . import clock, memory, weather
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
@@ -54,6 +54,7 @@ class TurnTimes:
     first_voice: float | None = None
     underruns: int = 0
     search_ms: float = 0.0  # searching and summarising, all searches
+    context_tokens: int | None = None  # the last request's prompt and reply, from LM Studio
 
     def report(self) -> str:
         def ms(t: float | None) -> str:
@@ -95,7 +96,7 @@ class Holly:
     HINT =" /reset to start over, /quit to leave."
 
     def __init__(self, model: str | None, engine: str | None = None, voice: str | None = None,
-                 face: bool | None = None, search: bool | None = None):
+                 face: bool | None = None, search: bool | None = None, forget: bool = False):
         cfg = load_config()
         if face is not None:
             cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
@@ -117,11 +118,18 @@ class Holly:
         self.searcher = Searcher(cfg.search, self.lm, self.model) if cfg.search.enabled else None
         self.tools = ([TOOL, clock.TOOL] + ([weather.TOOL] if cfg.search.weather else [])) if self.searcher else None
         search_prompt = cfg.search.prompt.read_text(encoding="utf-8") if self.searcher else ""
-        self.convo = Conversation(cfg.persona, search_prompt)
+        memory_file = cfg.persona.memory_file
+        if forget and memory_file and memory_file.exists():
+            # Set aside, not deleted, in case it was a mistake.
+            memory_file.replace(memory_file.with_name(memory_file.stem + ".forgotten.json"))
+            print(f"{DIM}Holly's memory of earlier sessions is set aside "
+                  f"({memory_file.stem}.forgotten.json); he starts afresh.{RESET}")
+        self.convo = Conversation(cfg.persona, search_prompt, memory_file)
         self.fillers: list[np.ndarray] = []
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
+        self.writing_notes = False
 
     def voice_name(self) -> str:
         t = self.cfg.tts
@@ -144,6 +152,13 @@ class Holly:
         self.lm.ensure_loaded(self.model, fresh=True)
         if tts.engine == "orpheus":
             self.lm.ensure_loaded(tts.orpheus.model, tts.orpheus.context_length)
+        # Last session's history goes into his notes while the voice loads.
+        self.resuming = None
+        if self.convo.previous_end:
+            print(f"{DIM}He remembers talking until {when(self.convo.previous_end)}"
+                  f"{', and has notes' if self.convo.memory else ''}.{RESET}", flush=True)
+            if end := self.convo.resume_split():
+                self.resuming = asyncio.create_task(self.compact(end, "from last time"))
         face_server = None
         if self.cfg.face.enabled:
             # Its own process and venv; it warms up while the voice loads. Only
@@ -167,6 +182,11 @@ class Holly:
             print(f"{DIM}Warming up the voice (the first start after an install compiles for a few "
                   f"minutes)...{RESET}", flush=True)
         await self.tts.warm_up()
+        if self.resuming:
+            try:
+                await self.resuming
+            except Exception as e:  # he starts with the history as it was
+                print(f"{DIM}  (couldn't write his notes: {e!r}){RESET}", flush=True)
         async for _ in self.lm.astream_reply(self.convo.messages_for("Hello."), ReplyTiming(), self.model,
                                              self.tools):
             pass
@@ -241,6 +261,8 @@ class Holly:
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                 print(f"{CYAN}Holly:{RESET} ", end="", flush=True)
             steps.extend(messages[asked:])
+            if timing.prompt_tokens is not None:
+                times.context_tokens = timing.prompt_tokens + (timing.completion_tokens or 0)
             for sentence in chunker.flush():
                 times.first_sentence = times.first_sentence or time.perf_counter()
                 await sentences.put(sentence)
@@ -267,9 +289,55 @@ class Holly:
         times.first_played = self.player.first_played
         times.first_voice = self.player.first_voice
         times.underruns = self.player.underruns
-        self.convo.record(user, "".join(last_said).strip(), steps)
-        print(f"{DIM}  {times.report()}{RESET}\n")
+        dropped = self.convo.record(user, "".join(last_said).strip(), steps)
+        print(f"{DIM}  {times.report()}{RESET}")
+        if dropped:
+            print(f"{DIM}  (history past {self.cfg.persona.history_hard_tokens:,} tokens: dropped the "
+                  f"oldest {dropped} exchanges, without notes){RESET}")
+        print(f"{DIM}  {self.context_report(times.context_tokens)}{RESET}\n")
         return times
+
+    def context_report(self, used: int | None) -> str:
+        """How full his context is, and how far his history is from being
+        folded into notes (see compact)."""
+        size = self.cfg.llm.context_length
+        soft = self.cfg.persona.history_soft_tokens
+        history = self.convo.tokens()
+        # `used` is LM Studio's count; the history's is characters / 4, which runs ~10% high.
+        report = f"context {used:,} of {size:,} tokens" if used else f"context ? of {size:,} tokens"
+        if history > soft:
+            return report + "; older history goes into his notes when he next sleeps"
+        return report + f"; ~{soft - history:,} more before older history goes into his notes"
+
+    async def compact(self, end: int | None = None, label: str = "asleep") -> bool:
+        """Fold the older history, history[:end], into his notes
+        (app/memory.py), then have LM Studio read the new, shorter prompt, so
+        his next reply doesn't wait for it. Meant for while he sleeps, and
+        for startup; `self.writing_notes` is True while the notes are being
+        written, the part that's safe to cancel. Returns True if the history
+        was compacted."""
+        convo = self.convo
+        if not (end := end or convo.compaction_split()):
+            return False
+        dropped = convo.history[:end]
+        exchanges = sum(m["role"] == "user" for m in dropped)
+        before = convo.tokens()
+        t0 = time.perf_counter()
+        self.writing_notes = True
+        try:
+            notes = await memory.write_notes(self.lm, self.model, convo.memory, convo.transcript(end),
+                                             self.cfg.persona.memory_tokens)
+        finally:
+            self.writing_notes = False
+        if not notes or not convo.apply_compaction(end, dropped, notes):
+            return False
+        t1 = time.perf_counter()
+        prompt = await self.lm.prewarm(convo.messages_for(), self.model, self.tools)
+        print(f"{DIM}  ({label}: folded {exchanges} exchanges into his notes, ~{len(notes) // 4} tokens; "
+              f"history ~{before:,} -> ~{convo.tokens():,} tokens; {t1 - t0:.1f} s to write, "
+              f"{time.perf_counter() - t1:.1f} s to reread)\n  {self.context_report(prompt)}{RESET}",
+              flush=True)
+        return True
 
     def _say_filler(self, times: TurnTimes) -> None:
         """Play a stock line ("Hang on, let me look that up") in his voice."""
@@ -327,7 +395,7 @@ class Holly:
                     return
                 if user == "/reset":
                     self.convo.reset()
-                    print(f"{DIM}Conversation cleared.{RESET}\n")
+                    print(f"{DIM}Conversation and notes cleared, on disk too.{RESET}\n")
                     continue
                 await self.respond(user)
         except (EOFError, KeyboardInterrupt):
@@ -345,11 +413,13 @@ def main() -> None:
     parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
     parser.add_argument("--search", action=argparse.BooleanOptionalAction,
                         help="let Holly search the web (default: holly.toml)")
+    parser.add_argument("--forget", action="store_true",
+                        help="start afresh, setting aside his memory of earlier sessions")
     args = parser.parse_args()
     # The Windows console defaults to cp1252, which can't print emoji.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(Holly(args.model, args.engine, args.voice, args.face, args.search).run())
+        asyncio.run(Holly(args.model, args.engine, args.voice, args.face, args.search, args.forget).run())
     except KeyboardInterrupt:
         pass
 
