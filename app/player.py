@@ -104,6 +104,9 @@ class Player:
                 self._chunks.append(chunk)
                 self._gap = False
 
+    def wake(self) -> None:
+        """No face to wake; FacePlayer's counterpart."""
+
     def expect_gap(self) -> None:
         """A pause follows the audio so far (a search), until more comes: the
         silence isn't counted as stutters."""

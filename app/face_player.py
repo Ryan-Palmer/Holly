@@ -30,7 +30,7 @@ def start_server(cfg: FaceConfig, host_api: str, device: str) -> subprocess.Pope
     return subprocess.Popen(
         [str(ROOT / cfg.python), "-u", str(ROOT / "face" / "server.py"), "--image", str(ROOT / cfg.image),
          "--port", str(cfg.port), "--lead", str(cfg.lead_ms / 1000), "--height", str(cfg.height),
-         "--idle-head", str(cfg.idle_head),
+         "--idle-head", str(cfg.idle_head), "--sleep-after", str(cfg.sleep_after_s),
          "--host-api", host_api, "--device", device],
         cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
     )
@@ -95,6 +95,10 @@ class FacePlayer:
 
     def clear(self) -> None:
         self._send(b"C")
+
+    def wake(self) -> None:
+        """Someone started speaking: wake the face if it's asleep."""
+        self._send(b"W")
 
     def expect_gap(self) -> None:
         """A pause follows the audio so far (a search): not a stutter."""

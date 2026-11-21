@@ -32,7 +32,7 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation
 from .face_player import FacePlayer, start_server
 from .player import Player
-from . import weather
+from . import clock, weather
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
 from .tts_common import Tts, make_tts
@@ -93,7 +93,7 @@ class Holly:
         # Every request sends the same tools: they're part of the start of the
         # prompt, so changing them between requests would break LM Studio's cache.
         self.searcher = Searcher(cfg.search, self.lm, self.model) if cfg.search.enabled else None
-        self.tools = ([TOOL] + ([weather.TOOL] if cfg.search.weather else [])) if self.searcher else None
+        self.tools = ([TOOL, clock.TOOL] + ([weather.TOOL] if cfg.search.weather else [])) if self.searcher else None
         search_prompt = cfg.search.prompt.read_text(encoding="utf-8") if self.searcher else ""
         self.convo = Conversation(cfg.persona, search_prompt)
         self.fillers: list[np.ndarray] = []
@@ -201,7 +201,7 @@ class Holly:
                 for sentence in chunker.flush():
                     times.first_sentence = times.first_sentence or time.perf_counter()
                     await sentences.put(sentence)
-                if not parts:
+                if not parts and any(c["name"] != "clock" for c in calls):  # the clock is instant
                     self._say_filler(times)
                 self.player.expect_gap()
                 messages = [*messages, {
@@ -262,12 +262,18 @@ class Holly:
     async def _run_tool(self, call: dict, user: str, n: int, times: TurnTimes) -> str:
         """Run one tool call; returns what goes back to the model."""
         print()
-        if n > self.cfg.search.max_searches:
-            return "That's enough searching. Answer with what you have."
         try:
             args = json.loads(call["arguments"] or "{}")
         except json.JSONDecodeError:
             args = {}
+        if call["name"] == "clock":
+            zone = str(args.get("timezone") or "").strip() or None
+            result = clock.now(zone)
+            print(f"{DIM}  (clock{': ' + zone if zone else ''}) {result.splitlines()[-1]}{RESET}", flush=True)
+            # Given the right time, he still hedged it ("11:42 AM. Or 11:42 PM").
+            return result + "\n(This is the exact time. Say it plainly, without doubting it.)"
+        if n > self.cfg.search.max_searches:
+            return "That's enough searching. Answer with what you have."
         if call["name"] == "search" and self.searcher:
             if not (query := str(args.get("query", "")).strip()):
                 return "The search needs a query."
@@ -281,7 +287,8 @@ class Holly:
         print(f"{DIM}  ({label}){RESET}", flush=True)
         found = await asyncio.to_thread(job)
         times.search_ms += found.search_ms + found.summary_ms
-        print(f"{DIM}  ({found.results} results, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
+        again = f"; searched again: {'; '.join(found.queries[1:])}" if len(found.queries) > 1 else ""
+        print(f"{DIM}  ({found.results} results{again}, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
               f"{found.answer}){RESET}", flush=True)
         return self.searcher.for_holly(found)
 

@@ -17,6 +17,7 @@ dependencies = [
     # Install torch from PyTorch's CUDA 12.8+ index first; see README.
     "torch>=2.7",
     "ddgs>=9.16",
+    "tzdata; sys_platform == 'win32'",  # time zones for the clock tool
 ]
 
 [build-system]

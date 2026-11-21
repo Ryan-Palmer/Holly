@@ -169,7 +169,8 @@ window. Setup, its own venv and the speed-ups are in `face/README.md`.
 `--face` (or `enabled = true` under `[face]` in `holly.toml`) starts
 `face/server.py` in `face/.venv`. The face window also plays Holly's voice,
 so the two come from one timeline and can't drift apart; between replies
-the face blinks and his head barely moves. Its log is `face/data/server.log`.
+the face blinks and his head barely moves. After 30 s with nothing said, the
+face holds still to spare the GPU, and wakes when anyone speaks. Its log is `face/data/server.log`.
 
 First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the
@@ -200,6 +201,16 @@ jokes don't trigger either.
   conversation. Raw results would fill his 8K context. Using the same model
   saves loading another, and LM Studio restores the conversation's cache
   after the side request (first word in ~150 ms, against ~80 fully cached).
+- **A second look.** That summary step also judges the results, out of
+  Holly's sight: it answers, reads the page of a promising result (ddgs
+  `extract`, menus stripped, 6,000 characters), or runs a better search, up
+  to 3 searches and reads (`max_rounds`), starting none after 5 s
+  (`max_lookup_s`). Offered "no answer" as an equal choice, it always took
+  it, so that's only allowed on the last round. Reading a page got a sunset
+  time the snippets lacked. Pages only load from public addresses, never
+  this machine or network. Gemma's thinking for the judgement took 3-11 s
+  instead of ~0.3 s and answered no better, so it's off
+  (`summary_reasoning`).
 - **The wait.** When his reply starts with a search, he says a stock line
   ("Hang on. I'll look it up.", `fillers` under `[search]`), rendered in his
   voice at startup, so his voice starts ~0.3 s after you stop (~1.2 s with
@@ -226,8 +237,23 @@ jokes don't trigger either.
   Kennack Sands became Helston, Cornwall became Truro, the Lake District
   Keswick. Told he could also just say he couldn't find out, he always did.
   Without a county or country, places in `home_country` (GB) come first.
-- **Limits.** Search snippets rarely hold a price, so for those he usually
-  says he couldn't find out.
+  It includes sunrise and sunset, so those come from it too, and the local
+  time there: asked the time in New York, he otherwise worked it out
+  himself, half an hour out.
+- **The time.** A `clock` tool (`app/clock.py`) reads the PC's clock, which
+  Windows keeps to internet time: the time here, in UTC, or in any IANA
+  time zone. It's instant, so no stock line plays; the tool's round trip
+  adds ~200 ms before his first word. With only the tool's description he
+  used it for Tokyo but guessed the time here, wrongly, so his rules say to
+  call it whenever he's asked the time. Given the right time he still
+  hedged it ("11:42 AM. Or 11:42 PM"), so the result says it's exact. The
+  time can't go in the system prompt, which would change every minute and
+  break LM Studio's cache.
+- **Limits.** Prices are still hard: they're rarely in snippets or on the
+  pages the free engines return. Those engines also fail outright on some
+  searches; the Brave API is the fix. When nothing is found he's told not
+  to give any time, number or name: told only "don't guess", he once made
+  up a sunset time.
 - **Searches stay in his history.** With only his replies kept, his history
   showed questions answered straight off, and after a few exchanges he
   stopped searching and said "I've searched the internet" instead, even when

@@ -102,6 +102,7 @@ class ListeningHolly(Holly):
             utterance = self.detector.feed(block, captured)
             if self.detector.in_speech and not hearing:
                 hearing = True
+                self.player.wake()  # the face may be asleep; it needs ~0.6 s to come round
                 print(f"{DIM}(listening){RESET}", end="\r", flush=True)
             if utterance:
                 return utterance

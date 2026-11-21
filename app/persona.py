@@ -43,7 +43,8 @@ class Conversation:
             self.preamble = [{"role": "system", "content": f"{self.system_prompt}\n\nToday is {d}."}]
 
     def messages_for(self, user_text: str) -> list[dict]:
-        """The full message list to send for a new user line."""
+        """The full message list to send for a new user line. The time isn't
+        here: he asks the clock tool for it (app/clock.py)."""
         self._date_preamble()
         return [*self.preamble, *self.history, {"role": "user", "content": user_text}]
 
