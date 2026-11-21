@@ -284,10 +284,3 @@ def days_in(text: str, on: datetime.date) -> set[datetime.date]:
             continue
         days.add(d if d <= on else d.replace(year=on.year - 1))
     return days
-
-
-def set_aside_archive(path: Path) -> Path | None:
-    """--forget: the archive goes the same way as the memory file."""
-    from .persona import set_aside
-
-    return set_aside(path, "forgotten") if path.exists() else None

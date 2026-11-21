@@ -27,7 +27,7 @@ import subprocess
 import time
 
 from .mic import Mic
-from .speak import DIM, RESET, YELLOW, Holly, TurnTimes
+from .speak import DIM, FORGET_HELP, RESET, RESET_HELP, YELLOW, Holly, TurnTimes
 from .stt import Transcriber
 from .vad import TurnDetector
 
@@ -180,12 +180,12 @@ def main() -> None:
                         help="let Holly search the web (default: holly.toml)")
     parser.add_argument("--wake", action=argparse.BooleanOptionalAction,
                         help="answer only when you say his name (default: on, unless wake_words is empty)")
-    parser.add_argument("--forget", action="store_true",
-                        help="start afresh, setting aside his memory of earlier sessions")
+    parser.add_argument("--forget", action="store_true", help=FORGET_HELP)
+    parser.add_argument("--reset", action="store_true", help=RESET_HELP)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(ListeningHolly(args.model, args.face, args.search, args.forget,
+        asyncio.run(ListeningHolly(args.model, args.face, args.search, args.forget, args.reset,
                                    wake=args.wake).run())
     except KeyboardInterrupt:
         pass
