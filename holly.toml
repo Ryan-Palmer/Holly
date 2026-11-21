@@ -11,9 +11,12 @@ base_url = "http://127.0.0.1:1234"
 # both passed 39/40 persona prompts. 31B: "google/gemma-4-31b-qat".
 model = "google/gemma-4-26b-a4b-qat"
 # Load with a set context, not LM Studio's default of 100k+ tokens, whose KV
-# cache fills VRAM. 8192 holds the persona (~600 tokens) and up to 48
-# exchanges of history (see [persona]), with room for the reply.
-context_length = 8192
+# cache fills VRAM. 30208 (LM Studio rounds 30000 up to it) holds the persona
+# and tools (~1K tokens), up to ~23K of history (see [persona]), a turn's
+# searches and the reply; ~29.8 GB of the 5090 in use with the face up.
+# 26B-A4B rereads a long prompt fast: 16K tokens of history cost ~0.1 s more
+# before the first word than a cached one.
+context_length = 30208
 # One slot: Holly sends one request at a time, so more slots only cost VRAM.
 # 2048-token batches reread a long history faster than 256 (~250 against
 # ~320 ms for 24 exchanges); 256 was only needed to squeeze in Gemma 31B.
@@ -131,13 +134,31 @@ awake_s = 30.0
 [persona]
 system_prompt = "persona/system_prompt.md"
 examples = "persona/examples.toml"
-# Rolling history, in user+Holly exchanges. When it passes history_turns, the
-# oldest are dropped in one go, down to history_trim_to. Dropping one per turn
-# changed the start of the prompt every turn, which broke LM Studio's cache
-# and made it reread the whole history each time (2.6 s per turn, live).
-# Now a full reread (~1 s) comes once every 16 exchanges.
-history_turns = 48
-history_trim_to = 32
+# Rolling history, in tokens (counted as ~4 characters each). Past
+# history_soft_tokens, once he's asleep (awake_s after he last spoke), the
+# older exchanges are folded into his notes (app/memory.py), at most
+# memory_tokens, and the newest history_keep_tokens are kept word for word.
+# LM Studio then rereads the shorter prompt while he's still asleep.
+# The count runs ~10% high (16.8K counted was 15.1K real), so these are safe.
+# Folding 16K into notes took 1.5 s, and the reread after it 0.6 s.
+history_soft_tokens = 20000
+history_keep_tokens = 8000
+# His notes: what lasts about the crew, and what happened lately, with dates.
+# 1,500 tokens (~1,100 words) is ~5% of the context. Notes that long would
+# take ~10 s to write, while he sleeps; three days' worth took 1-3 s.
+memory_tokens = 1500
+# History and notes are saved here after every reply, so he remembers you
+# from one session to the next; at startup the last session goes into his
+# notes, all but its newest history_resume_tokens, while the voice loads.
+# Empty to keep nothing. --forget sets the file aside and starts afresh.
+memory_file = "data/memory.json"
+history_resume_tokens = 1500
+# If he talks on without sleeping, past history_hard_tokens the oldest
+# exchanges are dropped at once, without notes, in one go down to two thirds
+# of it. One at a time would change the start of the prompt every turn, and
+# LM Studio would reread the whole history each time (2.6 s per turn, live).
+# Only size counts, not the number of exchanges.
+history_hard_tokens = 26000
 
 [search]
 # Holly looks things up on the web (app/search.py): his chat model asks for a

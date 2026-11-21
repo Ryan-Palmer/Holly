@@ -18,3 +18,6 @@ face/ditto-src/
 face/.venv/
 face/checkpoints/
 face/data/
+
+# Holly's memory of your conversations (app/persona.py)
+/data/

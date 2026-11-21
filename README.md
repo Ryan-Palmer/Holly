@@ -125,7 +125,7 @@ the choice of chat model:
 
 | Chat model | Speaking | End of speech to Holly's voice | Stutters (5 replies) | VRAM free |
 |---|---|---|---|---|
-| **Gemma 4 26B-A4B** (default: 8K context, 2048-token batches) | **streaming** | **median 1.16 s (0.92-1.30)** | 4 | 5.0 GB |
+| **Gemma 4 26B-A4B** (8K context, 2048-token batches; now 30K) | **streaming** | **median 1.16 s (0.92-1.30)** | 4 | 5.0 GB |
 | Gemma 4 26B-A4B (4K, 256-token batches) | streaming | median 1.74 s (1.22-1.88) | 0 | 10.6 GB |
 | Gemma 4 26B-A4B (4K, 256-token batches) | after the full reply | median 2.03 s (1.31-2.10) | 0 | 10.6 GB |
 | Gemma 4 31B | after the full reply | median 2.7 s (2.0-3.4) | 2 | under 1 GB |
@@ -150,9 +150,54 @@ the choice of chat model:
   the start of the prompt is unchanged. Holly used to drop the oldest
   exchange every turn once his history was full, which changed that start
   every turn, so the whole history was reread each time (2.6 s per turn in a
-  long live session). History now runs to 48 exchanges and is then cut to 32
-  in one go, so a full reread comes once every 16 exchanges. Over a 60-turn
-  test, the first word came in 110-230 ms on every turn.
+  long live session). History is now cut in large pieces, rarely, so the
+  start stays put. Over a 60-turn test at 8K, the first word came in
+  110-230 ms on every turn.
+- **A long memory.** Gemma is loaded with a 30,208-token context (LM Studio
+  rounds 30,000 up to that; ~29.8 GB of VRAM in use with the face up). The
+  persona and tools take ~1K tokens, leaving room for ~23K of history.
+  Past ~20K (`history_soft_tokens`), once Holly is asleep (`awake_s` after
+  he last spoke), the same Gemma folds the older exchanges into a few lines
+  of notes (`app/memory.py`), which go at the end of his system prompt, and
+  keeps the newest ~8K word for word. LM Studio then rereads the shorter
+  prompt, still while he sleeps, so his next reply starts cached. On a
+  16.8K-token test conversation, writing the notes took 1.5-2.7 s and the
+  reread 0.6 s, and afterwards he still knew the crew member's name, the
+  cat, the holiday dates, a reminder and a football score from the start
+  of it. If anyone speaks while the notes are being written, the job is
+  dropped and the history left as it was; the reply doesn't wait for it.
+  Past ~26K (`history_hard_tokens`) without a sleep, the oldest is dropped
+  at once, without notes. After each reply the console shows the context in
+  use (LM Studio's own count) and how far the history is from being folded.
+- **From one session to the next.** History and notes are saved to
+  `data/memory.json` (git-ignored) after every reply, written to a temporary
+  file and renamed over the old one, so a crash can't leave half a file. At
+  startup, all but the newest ~1,500 tokens (`history_resume_tokens`) of the
+  last session go into his notes while the voice loads (~1-3 s), and his
+  system prompt says when he last talked with you. `--forget` sets the file
+  aside as `memory.forgotten.json` and starts afresh; `/reset` (typed) wipes
+  it; `memory_file = ""` keeps nothing. In a test across three days he
+  answered "Tuesday 24 November at 10:00" to a boiler service booked for
+  "next Tuesday" on the Wednesday before, said that Jo, coming "on Saturday",
+  was visiting today, and knew they'd left a chess game unfinished.
+- **What the notes hold.** Up to 1,500 tokens (`memory_tokens`, ~5% of the
+  context) of plain lines in two parts: "About the crew:" (people, pets,
+  work, running jokes) and "Lately:" (visits, appointments, plans and what
+  he found out, each with its real date). Requests for poems and stories are
+  left out: a "topics" line grew to 1,700 tokens and pushed out a visit.
+- **Writing the notes.** Each exchange in the transcript carries its date
+  and time, and day words in your lines ("tomorrow", "next Tuesday", "on
+  Saturday") get their dates worked out in code, in brackets, to be copied:
+  Gemma's own sums put "next Tuesday", said on Wednesday 18 November, on the
+  25th, even with a calendar to hand. His earlier notes go after the
+  transcript, nearest where Gemma writes: before it, the second fold kept
+  only what was in the 8K-token transcript and lost the rest. Temperature 0:
+  at 0.3, one run in two left out the cat. The token count is characters /
+  4, which ran about 10% high (16.8K counted, 15.1K real), so the limits are
+  safe.
+- **Reading is cheap.** 26B-A4B rereads 16K tokens of history in a few
+  hundred ms: a reply's first word came ~100-150 ms later than with the
+  history cached.
 - **Character.** Both Gemmas passed 39 of 40 persona prompts. 26B-A4B is a
   little chattier and more whimsical; 31B is slightly drier. To switch back,
   set `model = "google/gemma-4-31b-qat"` and `wait_for_reply = true`.
@@ -202,7 +247,7 @@ jokes don't trigger either.
   him to use it rather than answer from his senile memory. The same Gemma
   then answers the question from the results in two or three sentences
   (`app/search.py`), and only that answer goes back into Holly's
-  conversation. Raw results would fill his 8K context. Using the same model
+  conversation. Raw results would soon fill his context. Using the same model
   saves loading another, and LM Studio restores the conversation's cache
   after the side request (first word in ~150 ms, against ~80 fully cached).
 - **A second look.** That summary step also judges the results, out of
@@ -278,7 +323,7 @@ jokes don't trigger either.
   showed questions answered straight off, and after a few exchanges he
   stopped searching and said "I've searched the internet" instead, even when
   asked to search. Kept, he searches every time and remembers what he found.
-  History is trimmed by size as well as by exchanges, since searches make
+  History is budgeted in tokens, not exchanges, since searches make
   exchanges longer.
 
 ## Voice dataset
@@ -310,13 +355,13 @@ git-ignored. None of it is to be published.
 - `persona/system_prompt.md` holds the character and the rules for speech.
 - `persona/examples.toml` holds example exchanges. They steer tone more than
   the prompt does, so rewrite them in your own words.
-- `holly.toml` sets the model, sampling and history length.
+- `holly.toml` sets the model, sampling, context and history budgets.
 
 ## LM Studio notes
 
 - Use `127.0.0.1`, not `localhost`. On Windows, `localhost` tries IPv6 first
   and adds about 2 seconds to every request.
-- The app loads its model with an 8K context. LM Studio's default context for
+- The app loads its model with a 30K context. LM Studio's default context for
   these models is over 100K tokens, and the KV cache for that spills out of
   VRAM and slows everything down.
 - Thinking is off (`reasoning_effort = "none"`). With thinking on, a reply
