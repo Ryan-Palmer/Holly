@@ -102,20 +102,21 @@ Use a headset anyway.
 The microphone is the WASAPI default input, with all its channels mixed. Set
 `input_device` and `input_channels` under `[listen]` to choose.
 
-Run one Holly at a time. The full loop with the face uses about 26 GB of
-the 5090's 32 GB (Gemma 15.4, Holly's voice and Whisper 7.4, the face 2.3),
-and Windows takes a couple more for the desktop: about 4 GB free. If VRAM
+Run one Holly at a time. The full loop with the face uses about 27.5 GB of
+the 5090's 32 GB (Gemma 17.0, Holly's voice and Whisper 7.4, the face 2.3),
+and Windows takes a couple more for the desktop: about 2.4 GB free. If VRAM
 runs out, Windows quietly moves GPU memory into system RAM and everything
 crawls, so the app warns at startup when less than 1.5 GB is free.
 
-**Load Gemma text-only.** LM Studio loads Gemma's vision projector with it,
-though Holly never shows it an image: 1.1 GB of VRAM, and ~0.5 GB more of
-buffers. To leave it out, move `mmproj-gemma-4-26B-A4B-it-QAT-BF16.gguf` out
+**Gemma's vision.** LM Studio loads Gemma's vision projector with it: 1.1
+GB of VRAM, and ~0.5 GB more of buffers. Holly shows it no images yet, but
+it's kept for when he might. If VRAM gets tight, Gemma can be loaded
+text-only, 1.6 GB smaller: move `mmproj-gemma-4-26B-A4B-it-QAT-BF16.gguf` out
 of the model's folder in LM Studio's models directory (somewhere outside the
-models directory, so it isn't taken for a model); LM Studio then lists the
-model without vision. Move it back to have vision again. Text-only, a full
-reread of a 23K-token history takes 2.3 s rather than 1.9: LM Studio no
-longer raises its inner batch to `eval_batch_size`. It happens while he
+models directory, so it isn't taken for a model), and LM Studio lists the
+model without vision; move it back to have vision again. Text-only, a full
+reread of a 23K-token history takes 2.3 s rather than 1.9, as LM Studio no
+longer raises its inner batch to `eval_batch_size`; that happens while he
 sleeps, after his notes are written.
 
 Two more savings, in the code: VoxCPM sets aside caches for 8,192 of its
@@ -347,8 +348,8 @@ First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the
 face. Two costs: the audio is queued 0.6 s ahead (`lead_ms`) so Ditto can
 draw each frame in time, and VoxCPM runs about half speed while Ditto shares
-the GPU. VRAM free with everything loaded: about 4 GB (see "Load Gemma
-text-only" above). If the face window is closed, Holly carries on, his voice
+the GPU. VRAM free with everything loaded: about 2.4 GB, or 4 GB with Gemma
+text-only (see "Gemma's vision" above). If the face window is closed, Holly carries on, his voice
 playing through his own speakers from then on.
 
 The face server starts only once the chat model has loaded. Started
