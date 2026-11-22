@@ -13,13 +13,17 @@ model = "google/gemma-4-26b-a4b-qat"
 # Load with a set context, not LM Studio's default of 100k+ tokens, whose KV
 # cache fills VRAM. 30208 (LM Studio rounds 30000 up to it) holds the persona
 # and tools (~1K tokens), up to ~23K of history (see [persona]), a turn's
-# searches and the reply; ~29.8 GB of the 5090 in use with the face up.
+# searches and the reply; ~28 GB of the 5090 in use with the face up, 4 GB free.
+# Load it text-only: Holly never shows it an image, and its vision projector
+# (mmproj-*.gguf, beside the model in LM Studio's models folder) took 1.1 GB,
+# with ~0.5 GB more of buffers. Move that file out of the folder (README).
 # 26B-A4B rereads a long prompt fast: 16K tokens of history cost ~0.1 s more
 # before the first word than a cached one.
 context_length = 30208
 # One slot: Holly sends one request at a time, so more slots only cost VRAM.
-# 2048-token batches reread a long history faster than 256 (~250 against
-# ~320 ms for 24 exchanges); 256 was only needed to squeeze in Gemma 31B.
+# With the vision projector loaded, 2048-token batches reread a long history
+# fastest (1.9 s for 23K tokens against 2.3 at 512), but cost VRAM. Text-only,
+# LM Studio keeps its inner batch at 512 whatever this says: 2.3 s, same VRAM.
 parallel = 1
 eval_batch_size = 2048
 # Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.

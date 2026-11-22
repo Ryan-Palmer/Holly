@@ -14,6 +14,7 @@ while it worked.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections.abc import AsyncIterator
 
@@ -23,12 +24,18 @@ from .config import VoxCpmConfig
 from .tts_common import trim_leading_silence
 
 _DONE = object()
+# The voice model's own caches, in its tokens: the reference clip twice (~250 for
+# Holly's 20 s clip), the texts, and the speech made (~6 a second). VoxCPM sizes
+# them for 8,192, ~0.3 GB, and attends over all of it at every step; a sentence
+# of Holly's needs well under 1,000.
+CACHE_TOKENS = 2048
 
 
 class VoxCpmTts:
     def __init__(self, cfg: VoxCpmConfig):
         from voxcpm import VoxCPM
         import voxcpm.model.voxcpm2 as voxcpm2
+        from voxcpm.model.utils import get_dtype
         from tqdm import tqdm
 
         # VoxCPM wraps every sentence's generation in a progress bar, which cluttered the
@@ -40,10 +47,26 @@ class VoxCpmTts:
                 f"No reference clip at {cfg.reference_wav}: run voice/prep.py export first."
             )
         self.cfg = cfg
-        self.reference_text = cfg.reference_text.read_text(encoding="utf-8").strip()
-        self.model = VoxCPM.from_pretrained(cfg.model, load_denoiser=False, optimize=cfg.compile, device="cuda")
-        tts = getattr(self.model, "tts_model", self.model)
+        reference_text = cfg.reference_text.read_text(encoding="utf-8").strip()
+        # Not compiled yet: the compiled steps keep the caches' addresses, so the
+        # smaller caches go in first.
+        self.model = VoxCPM.from_pretrained(cfg.model, load_denoiser=False, optimize=False, device="cuda")
+        self.tts = tts = self.model.tts_model
+        dtype = get_dtype(tts.config.dtype)
+        for lm in (tts.base_lm, tts.residual_lm):
+            lm.kv_cache = None  # the 8,192 one, freed before the new one is made
+            lm.setup_cache(1, CACHE_TOKENS, tts.device, dtype)
+        if cfg.compile:
+            tts.optimize()
         self.sample_rate = int(getattr(tts, "sample_rate", 48_000))
+        # The reference clip, encoded once. VoxCPM's own generate() reads it from disk
+        # and encodes it twice (as reference and as prompt) for every sentence.
+        self.prompt = tts.build_prompt_cache(prompt_text=reference_text,
+                                             prompt_wav_path=str(cfg.reference_wav),
+                                             reference_wav_path=str(cfg.reference_wav))
+        # Its share of the cache: the clip twice, its transcript, and a margin.
+        self.prompt_tokens = (self.prompt["ref_audio_feat"].shape[0] + self.prompt["audio_feat"].shape[0]
+                              + len(tts.text_tokenizer(reference_text)) + 8)
         # One generation at a time: the model isn't safe to call concurrently.
         self._lock = threading.Lock()
 
@@ -59,6 +82,20 @@ class VoxCpmTts:
         chunks = self._stream(text)
         return trim_leading_silence(chunks, self.sample_rate) if trim_lead else chunks
 
+    def _generate(self, text: str):
+        """VoxCPM's own streaming generate, with the clip encoded once, and the speech
+        kept within the cache: a sentence too long for it is cut short, not a crash."""
+        text = re.sub(r"\s+", " ", text).strip()
+        room = CACHE_TOKENS - self.prompt_tokens - len(self.tts.text_tokenizer(text))
+        result = self.tts._generate_with_prompt_cache(
+            target_text=text, prompt_cache=self.prompt, max_len=max(room, 16),
+            inference_timesteps=self.cfg.inference_timesteps, streaming=True)
+        try:
+            for wav, _, _ in result:
+                yield wav.squeeze(0).cpu().numpy()
+        finally:
+            result.close()
+
     async def _stream(self, text: str) -> AsyncIterator[np.ndarray]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
@@ -67,13 +104,7 @@ class VoxCpmTts:
         def work() -> None:
             try:
                 with self._lock:
-                    for chunk in self.model.generate_streaming(
-                        text=text,
-                        reference_wav_path=str(self.cfg.reference_wav),
-                        prompt_wav_path=str(self.cfg.reference_wav),
-                        prompt_text=self.reference_text,
-                        inference_timesteps=self.cfg.inference_timesteps,
-                    ):
+                    for chunk in self._generate(text):
                         if stop.is_set():
                             break
                         loop.call_soon_threadsafe(queue.put_nowait, np.asarray(chunk, dtype=np.float32).reshape(-1))

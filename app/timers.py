@@ -50,6 +50,9 @@ _HALF = re.compile(r"\band a half\b", re.IGNORECASE)  # "an hour and a half": ha
 _H_MM = re.compile(r"\b(\d+)\s*h\s*(\d{1,2})\b(?!\s*[a-z])", re.IGNORECASE)  # "1h30"
 # Words in a label that don't tell timers apart, for cancelling: "the pasta timer" is "pasta".
 _LABEL_NOISE = {"the", "a", "an", "my", "timer", "timers", "reminder", "reminders", "for", "to", "about"}
+# An announcement that failed (LM Studio restarting) is tried again after this long,
+# then twice that, and so on, up to RETRY_MAX_S apart.
+RETRY_S, RETRY_MAX_S = 60, 900
 _AT = re.compile(r"^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.IGNORECASE)
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
           "october", "november", "december"]
@@ -158,9 +161,13 @@ class Timers:
         if action == "list":
             if not self.items:
                 return "Nothing is set."
-            return "Set: " + "; ".join(
-                f"{i['label']} ({i['kind']}), due {say_when(datetime.datetime.fromisoformat(i['due']), now)}"
-                for i in sorted(self.items, key=lambda i: i["due"])) + "."
+            def listed(i: dict) -> str:
+                due = datetime.datetime.fromisoformat(i["due"])
+                return f"{i['label']} ({i['kind']}), " + (
+                    f"due {say_when(due, now)}" if due > now else
+                    f"came due at {due:%H:%M} and hasn't been announced yet")
+
+            return "Set: " + "; ".join(listed(i) for i in sorted(self.items, key=lambda i: i["due"])) + "."
         if action == "cancel":
             gone = self._matching(label)
             if not gone:
@@ -207,11 +214,23 @@ class Timers:
     def due(self, now: datetime.datetime | None = None) -> list[dict]:
         """Timers and reminders whose time has come, oldest first; taken off the list."""
         now = now or datetime.datetime.now()
-        ready = [i for i in self.items if datetime.datetime.fromisoformat(i["due"]) <= now]
+        ready = [i for i in self.items if datetime.datetime.fromisoformat(i.get("retry") or i["due"]) <= now]
         if ready:
             self.items = [i for i in self.items if i not in ready]
             self._save()
         return sorted(ready, key=lambda i: i["due"])
+
+    def put_back(self, items: list[dict], now: datetime.datetime | None = None) -> None:
+        """These came due but weren't announced after all (the reply failed): keep
+        them, to try again in a minute, then two, then four, up to a quarter of an
+        hour apart. Taken off the list and never said, a reminder was simply lost."""
+        now = now or datetime.datetime.now()
+        for i in items:
+            tries = i.get("tries", 0)
+            wait = min(RETRY_S * 2 ** tries, RETRY_MAX_S)
+            self.items.append({**i, "tries": tries + 1,
+                               "retry": (now + datetime.timedelta(seconds=wait)).isoformat()})
+        self._save()
 
     def clear(self) -> None:
         self.items = []
@@ -228,8 +247,10 @@ def announcement(items: list[dict], now: datetime.datetime | None = None) -> str
     for i in items:
         due = datetime.datetime.fromisoformat(i["due"])
         late = now - due
+        # Late because he was off, or (tried before) because he couldn't get the words out.
+        why = ", and you couldn't say so then" if i.get("tries") else ", while you were switched off"
         when = (f"it came due at {due:%H:%M}" + (f" on {day(due.date())}" if due.date() != now.date() else "")
-                + ", while you were switched off") if late > datetime.timedelta(minutes=2) else "it's due now"
+                + why) if late > datetime.timedelta(minutes=2) else "it's due now"
         lines.append(f"The {i['kind']} '{i['label']}': {when}.")
     # Told only to tell the crew, a timer for "play some Metallica in 10 seconds"
     # came due with "Time for Metallica" and no music: he announced it, as told.

@@ -590,6 +590,10 @@ def main():
     sdk, setup = build_ditto(Path(args.image).resolve(), args.height or None, args.overlap)
     frames = Frames()
     setup(frames)
+    # What the warm-up used and let go: ~190 MB of VRAM back for good, measured, at no
+    # cost to speed. Ditto's working memory comes straight back, so only now, once.
+    import torch
+    torch.cuda.empty_cache()
 
     timeline = None
     link = Link(args.port, lambda: timeline)

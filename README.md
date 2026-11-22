@@ -102,10 +102,29 @@ Use a headset anyway.
 The microphone is the WASAPI default input, with all its channels mixed. Set
 `input_device` and `input_channels` under `[listen]` to choose.
 
-Run one Holly at a time. The full loop uses about 25 GB of the 5090's
-32 GB, and Windows takes a few more for the desktop. If VRAM runs out,
-Windows quietly moves GPU memory into system RAM and everything crawls, so
-the app warns at startup when less than 1 GB is free.
+Run one Holly at a time. The full loop with the face uses about 26 GB of
+the 5090's 32 GB (Gemma 15.4, Holly's voice and Whisper 7.4, the face 2.3),
+and Windows takes a couple more for the desktop: about 4 GB free. If VRAM
+runs out, Windows quietly moves GPU memory into system RAM and everything
+crawls, so the app warns at startup when less than 1.5 GB is free.
+
+**Load Gemma text-only.** LM Studio loads Gemma's vision projector with it,
+though Holly never shows it an image: 1.1 GB of VRAM, and ~0.5 GB more of
+buffers. To leave it out, move `mmproj-gemma-4-26B-A4B-it-QAT-BF16.gguf` out
+of the model's folder in LM Studio's models directory (somewhere outside the
+models directory, so it isn't taken for a model); LM Studio then lists the
+model without vision. Move it back to have vision again. Text-only, a full
+reread of a 23K-token history takes 2.3 s rather than 1.9: LM Studio no
+longer raises its inner batch to `eval_batch_size`. It happens while he
+sleeps, after his notes are written.
+
+Two more savings, in the code: VoxCPM sets aside caches for 8,192 of its
+tokens and attends over all of them at every step, where a sentence of
+Holly's needs under 1,000, so they're made for 2,048 (`app/tts_voxcpm.py`);
+and it read and encoded the reference clip twice for every sentence, so
+it's encoded once at start-up. Together: 1.5 GB less, and each sentence
+done sooner (a short one in 0.2 s rather than 0.6, a long one in 1.0 rather
+than 1.7). The face gives back what its warm-up used, ~190 MB.
 
 The first run on a new machine (or after a driver update) takes about 20 s
 longer while CUDA compiles Whisper's kernels for the GPU.
@@ -161,7 +180,7 @@ the choice of chat model:
   start stays put. Over a 60-turn test at 8K, the first word came in
   110-230 ms on every turn.
 - **A long memory.** Gemma is loaded with a 30,208-token context (LM Studio
-  rounds 30,000 up to that; ~29.8 GB of VRAM in use with the face up). The
+  rounds 30,000 up to that; ~28 GB of VRAM in use with the face up). The
   persona and tools take ~1K tokens, leaving room for ~23K of history.
   Past ~20K (`history_soft_tokens`), once Holly is asleep (`awake_s` after
   he last spoke) and the room has been quiet for 5 s, the same Gemma folds the older exchanges into a few lines
@@ -328,7 +347,9 @@ First live test (7 replies): no face frame late, one stutter, and Holly's
 voice starting 1.9-2.6 s after you stop, against about 1.2 s without the
 face. Two costs: the audio is queued 0.6 s ahead (`lead_ms`) so Ditto can
 draw each frame in time, and VoxCPM runs about half speed while Ditto shares
-the GPU. VRAM free with everything loaded: 3.3 GB.
+the GPU. VRAM free with everything loaded: about 4 GB (see "Load Gemma
+text-only" above). If the face window is closed, Holly carries on, his voice
+playing through his own speakers from then on.
 
 The face server starts only once the chat model has loaded. Started
 earlier, its VRAM made LM Studio put part of the model in system RAM
@@ -419,7 +440,9 @@ jokes don't trigger either.
   in `data/timers.json`. When one is
   due he speaks up by himself, at the next pause in the room (or between
   your turns, typed), and stays awake for a reply; one that came due while
-  he was off is mentioned when he's next up. Like the clock it's local and
+  he was off is mentioned when he's next up. If he can't get the words out
+  (LM Studio restarting), it's kept and tried again a minute later, then
+  two, four, up to every quarter of an hour. Like the clock it's local and
   instant: no stock line, and it doesn't count towards `max_searches`. In a
   test, every step took ~0.5 s, and the pasta timer came with "The pasta is
   ready. Or it's ruined. It's hard to tell from up here." A timer can be for

@@ -82,6 +82,9 @@ never mention episodes, series, the show, novels, books, actors or versions.
 Where the entries differ, go with the television account, without saying so.
 A question about an episode is about what happened then; a name can be the
 one someone went by there (in a game, a disguise, another reality).
+The question is Holly's, put to his own memory: "you" in it is Holly, and "we"
+Holly and the crew, so "when did you first meet Kryten?" asks when Holly and
+the crew did, as the ship's records tell it.
 NOTHING: only if none of the entries is about the question at all."""
 
 # Words that match everything, so they're left out of the keyword search.
@@ -293,23 +296,30 @@ class Archive:
 
     def search(self, query: str, on: datetime.date | None = None,
                question: str = "") -> list[tuple[str | None, str]]:
-        """Entries from days `query` names, matching its key words, and closest in
-        meaning to it or to `question` (what was asked). `on` is today, for working
-        out the days."""
+        """Entries from days `query` or `question` (what was asked) names, matching
+        `query`'s key words, and closest in meaning to either. `on` is today, for
+        working out the days."""
         on = on or datetime.date.today()
 
         def key_words(text: str) -> list[str]:
+            # A month is left out only as part of a date ("21 November"): April, May and
+            # June are names too, and a search for one alone had no words left.
+            # "may", without its capital, is the verb.
             out = []
-            for w in re.findall(r"[a-z0-9']+", text.lower()):
-                w = w.removesuffix("'s").strip("'")
-                if len(w) > 1 and w not in STOPWORDS and w not in MONTHS and w not in out:
+            for w in re.findall(r"[A-Za-z0-9']+", _DATE.sub(" ", text)):
+                if w == "may":
+                    continue
+                w = w.lower().removesuffix("'s").strip("'")
+                if len(w) > 1 and w not in STOPWORDS and w not in out:
                     out.append(w)
             return out
 
         words = key_words(query)
         found: dict[int, tuple[str | None, str]] = {}
         with self.lock:
-            for d in sorted(days_in(query, on)):
+            # The day may be in either: asked "what did we talk about yesterday?", he
+            # searched for "conversation topics", and yesterday was never looked at.
+            for d in sorted(days_in(f"{query} {question}", on)):
                 rows = self.db.execute("SELECT rowid, at, text FROM entries WHERE substr(at, 1, 10) = ? "
                                        "ORDER BY at LIMIT ?", (d.isoformat(), DAY_ENTRIES)).fetchall()
                 found |= {r[0]: (r[1], r[2]) for r in rows}

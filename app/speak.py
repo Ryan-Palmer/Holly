@@ -83,6 +83,7 @@ class TurnTimes:
     underruns: int = 0
     search_ms: float = 0.0  # searching and summarising, all searches
     context_tokens: int | None = None  # the last request's prompt and reply, from LM Studio
+    failed: bool = False  # the reply broke off (LM Studio restarted, a timeout): not kept
 
     def report(self) -> str:
         def ms(t: float | None) -> str:
@@ -268,9 +269,12 @@ class Holly:
                     self.fillers[kind].append(np.concatenate(chunks))
         if face_server:
             print(f"{DIM}Waiting for the face to warm up...{RESET}", flush=True)
-            self.player = await asyncio.to_thread(FacePlayer, self.tts.sample_rate, self.cfg.face.port, face_server)
+        block = self.tts.sample_rate * audio.block_ms // 1000
+        if face_server:
+            # With its own speakers to fall back on, should the face window be closed.
+            self.player = await asyncio.to_thread(FacePlayer, self.tts.sample_rate, self.cfg.face.port, face_server,
+                                                  audio.host_api, audio.output_device, block)
         else:
-            block = self.tts.sample_rate * audio.block_ms // 1000
             self.player = Player(self.tts.sample_rate, block, audio.host_api, audio.output_device)
         self.player.start()
         print(
@@ -420,6 +424,7 @@ class Holly:
         times.underruns = self.player.underruns
         if failed:  # not kept: half a turn would confuse the next one
             print()
+            times.failed = True
             return times
         said = "".join(last_said).strip()
         # What he was told: this turn, and the last few (asked "you mean 24 minutes past
@@ -622,13 +627,19 @@ class Holly:
     async def announce(self, due: list[dict]) -> TurnTimes | None:
         """Speak up about timers and reminders that have come due: his reply to a
         note saying so, which is kept in his history like any turn."""
-        print(f"{DIM}  (due: {', '.join(i['label'] for i in due)}){RESET}", flush=True)
-        self.player.wake()
+        labels = ", ".join(i["label"] for i in due)
+        print(f"{DIM}  (due: {labels}){RESET}", flush=True)
+        times = None
         try:
-            return await self.respond(timers.announcement(due))
+            self.player.wake()
+            times = await self.respond(timers.announcement(due))
         except Exception as e:
             print(f"{YELLOW}  (couldn't announce it: {e!r}){RESET}\n", flush=True)
-            return None
+        if (times is None or times.failed) and self.timers:
+            # Taken off the list as it came due, and never said: kept, and tried again.
+            self.timers.put_back(due)
+            print(f"{DIM}  (not announced: {labels}; trying again in a minute or so){RESET}\n", flush=True)
+        return times
 
     async def _watch_timers(self) -> None:
         """Typed: there's no listening loop to check between, so a task checks

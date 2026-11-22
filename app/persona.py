@@ -235,30 +235,35 @@ class Conversation:
 
     def transcript(self, end: int) -> str:
         """history[:end] as plain text, for writing notes on, with the day
-        and time each exchange began. Not the exchanges where he recalled: the
-        answers are already kept (the archive, the ship's records), and given
-        them, the notes filled with Red Dwarf ("About the crew: Lister, Cat...")."""
+        and time each exchange began. Of an exchange where he recalled, only
+        what the crew said: the answers are already kept (the archive, the
+        ship's records), and given them, the notes filled with Red Dwarf
+        ("About the crew: Lister, Cat..."). The crew's line stays: "Remember
+        Jo? She's coming on Friday now" is news."""
         return "\n".join(text for _, text in self.exchanges(end, recalled=False))
 
     def exchanges(self, end: int, recalled: bool = True) -> list[tuple[str | None, str]]:
         """history[:end] as one plain-text entry per exchange, each with when
         it was said (ISO, or None for history from before that was kept).
-        Without `recalled`, leaving out exchanges where he used recall."""
-        out: list[tuple[str | None, list[str]]] = []
+        Without `recalled`, an exchange where he used recall is cut down to
+        what the crew said."""
+        out: list[tuple[str | None, list[str], list[str]]] = []  # (when, its lines, the crew's own)
         skip: set[int] = set()
         for m in self.history[:end]:
             text = (m.get("content") or "").strip()
             if m["role"] == "user" or not out:
-                out.append((m.get("at"), []))
-            lines = out[-1][1]
+                out.append((m.get("at"), [], []))
+            lines, crew = out[-1][1], out[-1][2]
             if any(c["function"]["name"] == "recall" for c in m.get("tool_calls") or []):
                 skip.add(len(out) - 1)
             if m["role"] == "user":
                 if at := m.get("at"):
                     said = datetime.datetime.fromisoformat(at)
                     lines.append(f"(said on {when(said)})")
+                    crew.append(lines[-1])
                     text = date_days(text, said.date())
                 lines.append(f"Crew: {text}")
+                crew.append(lines[-1])
             elif m["role"] == "assistant":
                 for call in m.get("tool_calls") or []:
                     f = call["function"]
@@ -267,7 +272,8 @@ class Conversation:
                     lines.append(f"Holly: {text}")
             elif m["role"] == "tool":
                 lines.append(f"(It told him: {' '.join(text.split())[:TOOL_RESULT_CHARS]})")
-        return [(at, "\n".join(lines)) for i, (at, lines) in enumerate(out) if recalled or i not in skip]
+        return [(at, "\n".join(lines if recalled or i not in skip else crew))
+                for i, (at, lines, crew) in enumerate(out) if recalled or i not in skip or crew]
 
     def crew_lines(self, n: int = 40, chars: int = 300) -> str:
         """What the crew have said in the history, newest last, each with when: for

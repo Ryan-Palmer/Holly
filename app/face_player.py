@@ -4,6 +4,9 @@ The face server (in its own venv, face/.venv) shows Ditto's animated Holly in
 a window and plays the audio itself, so voice and face stay in step.
 FacePlayer stands in for Player: the same calls, but the audio goes over a
 local socket. See face/server.py for how the two are kept in sync.
+
+If the face window is closed, Holly carries on without it: his voice plays
+through his own Player from then on.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ import time
 import numpy as np
 
 from .config import ROOT, FaceConfig
+from .player import Player
 
 HEADER = struct.Struct("<cI")  # message type, payload length; see face/server.py
 
@@ -37,9 +41,11 @@ def start_server(cfg: FaceConfig, host_api: str, device: str, awake_s: float = 3
 
 
 class FacePlayer:
-    """Player's interface, sending the audio to the face server."""
+    """Player's interface, sending the audio to the face server; or, once the face
+    window has been closed, to a Player of its own (`fallback`)."""
 
-    def __init__(self, sample_rate: int, port: int, server: subprocess.Popen, timeout: float = 600):
+    def __init__(self, sample_rate: int, port: int, server: subprocess.Popen, host_api: str = "",
+                 device: str = "", block: int = 960, timeout: float = 600):
         self.server = server
         deadline = time.monotonic() + timeout
         while True:
@@ -55,19 +61,44 @@ class FacePlayer:
         self.sock.settimeout(None)
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.device_name = "Holly's face window"
+        self.sample_rate, self.host_api, self.device, self.block = sample_rate, host_api, device, block
         self.first_played: float | None = None
         self.first_voice: float | None = None
         self.last_played: float | None = None  # when the reply's last sample leaves the speakers
         self.underruns = 0
         self._turn = 0
+        self._in_turn = False  # between begin_turn and the turn's audio having played
         self._done: asyncio.Event | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = threading.Lock()
-        self._send(b"R", struct.pack("<I", sample_rate))
+        self._closed = False  # the face server has gone (its window closed)
+        self.fallback: Player | None = None
+        self.sock.sendall(HEADER.pack(b"R", 4) + struct.pack("<I", sample_rate))
 
-    def _send(self, kind: bytes, payload: bytes = b"") -> None:
-        with self._lock:
-            self.sock.sendall(HEADER.pack(kind, len(payload)) + payload)
+    def _send(self, kind: bytes, payload: bytes = b"") -> bool:
+        """Send to the face; False if it's gone, and the fallback Player is to be used."""
+        if self.fallback is None and not self._closed:
+            try:
+                with self._lock:
+                    self.sock.sendall(HEADER.pack(kind, len(payload)) + payload)
+                return True
+            except OSError:
+                self._closed = True
+        if self.fallback is None:
+            self._lose_face()
+        return False
+
+    def _lose_face(self) -> None:
+        """The face window is closed: carry on with Holly's own speakers. Called from the
+        event loop. A reply under way carries on there, less what the face had queued."""
+        print("\n  (the face window was closed: Holly's voice plays here from now on)", flush=True)
+        self.fallback = Player(self.sample_rate, self.block, self.host_api, self.device)
+        self.fallback.start()
+        self.device_name = self.fallback.device_name
+        if self._in_turn:
+            self.fallback.begin_turn()
+        if self.server.poll() is None:
+            self.server.terminate()
 
     def start(self) -> None:
         threading.Thread(target=self._read, daemon=True, name="face-link").start()
@@ -77,6 +108,8 @@ class FacePlayer:
             self.sock.close()
         finally:
             self.server.terminate()
+            if self.fallback:
+                self.fallback.close()
 
     def begin_turn(self) -> None:
         self._turn += 1
@@ -84,17 +117,21 @@ class FacePlayer:
         self.underruns = 0
         self._loop = asyncio.get_running_loop()
         self._done = asyncio.Event()
-        self._send(b"B", struct.pack("<I", self._turn))
+        self._in_turn = True
+        if not self._send(b"B", struct.pack("<I", self._turn)):
+            self.fallback.begin_turn()
 
     def put(self, chunk: np.ndarray) -> None:
-        if chunk.size:
-            self._send(b"A", np.ascontiguousarray(chunk, dtype=np.float32).tobytes())
+        if chunk.size and not self._send(b"A", np.ascontiguousarray(chunk, dtype=np.float32).tobytes()):
+            self.fallback.put(chunk)
 
     def end_turn(self) -> None:
-        self._send(b"E")
+        if not self._send(b"E"):
+            self.fallback.end_turn()
 
     def clear(self) -> None:
-        self._send(b"C")
+        if not self._send(b"C"):
+            self.fallback.clear()
 
     def wake(self) -> None:
         """Someone started speaking: wake the face if it's asleep."""
@@ -102,11 +139,19 @@ class FacePlayer:
 
     def expect_gap(self) -> None:
         """A pause follows the audio so far (a search): not a stutter."""
-        self._send(b"G")
+        if not self._send(b"G"):
+            self.fallback.expect_gap()
 
     async def wait_done(self) -> None:
         assert self._done is not None
-        await self._done.wait()
+        if self.fallback is None:
+            await self._done.wait()  # also set if the face goes mid-turn (see _read)
+        if self.fallback is not None:
+            await self.fallback.wait_done()
+            f = self.fallback
+            self.first_played, self.first_voice, self.last_played, self.underruns = (
+                f.first_played, f.first_voice, f.last_played, f.underruns)
+        self._in_turn = False
 
     def _read(self) -> None:
         buf = b""
@@ -127,7 +172,9 @@ class FacePlayer:
                     if self._loop and self._done:
                         self._loop.call_soon_threadsafe(self._done.set)
         except OSError:
-            # The window was closed: don't leave a reply waiting forever.
+            # The window was closed: the next call goes to the fallback, and a reply
+            # waiting for the face to finish isn't left waiting forever.
+            self._closed = True
             if self._loop and self._done:
                 self._loop.call_soon_threadsafe(self._done.set)
 
