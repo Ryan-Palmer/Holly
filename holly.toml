@@ -97,10 +97,13 @@ end_silence_ms = 400
 min_speech_ms = 250
 # Audio kept from before speech starts, so the first syllable isn't clipped.
 preroll_ms = 300
-whisper_model = "large-v3-turbo"
+# base.en: 0.56 GB of VRAM and ~29 ms a sentence, against large-v3-turbo's
+# 1.5 GB and ~59 ms. Both got all ten test sentences, names included (a
+# synthetic voice), and base.en worked well by voice, saving ~0.7 GB with
+# everything up. small.en and distil-large-v3 got 8 and 6 of the ten.
+whisper_model = "base.en"
 whisper_device = "cuda"
-# int8 weights: same transcripts and speed as float16 in half the VRAM
-# (2.2 GB against 4.3, counting CTranslate2's memory cache).
+# int8 weights: same transcripts and speed as float16 in half the VRAM.
 whisper_compute_type = "int8_float16"
 # Whisper is told to expect these names. Without them it cut "Holly" short, and
 # wrote "Critton" for Kryten, "Ruma" for Rimmer and "Kalkinski" for Kochanski, so

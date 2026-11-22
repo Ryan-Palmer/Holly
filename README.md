@@ -80,7 +80,9 @@ Speak to Holly, and he answers out loud:
 Silero VAD hears you start and stop. You've finished once you've been quiet
 for 400 ms (`end_silence_ms` in `holly.toml`; raise it if Holly cuts in
 while you pause). faster-whisper then transcribes what you said, and the
-milestone 2 pipeline answers. Timings count from when you stopped speaking.
+milestone 2 pipeline answers. Whisper is `base.en`: large-v3-turbo took
+1.5 GB of VRAM to its 0.56 GB, for no better transcripts in tests or by
+voice; small.en and distil-large-v3 misheard the crew's names. Timings count from when you stopped speaking.
 
 He answers only when you say his name among your first or last three
 words ("Holly, what's...", "Hey Holly", "...tomorrow, Holly?"), or carry on
