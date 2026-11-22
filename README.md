@@ -277,6 +277,21 @@ the choice of chat model:
   name, and gave up; without it: "The Riviera Kid"). 4,269 entries from
   914 pages.
 
+  Then the crew's own news went missing. Asked who was coming over, his
+  friend's name and her mum's, he recalled, the archive had nothing
+  (the visit hadn't left his history yet), and told "say you don't
+  remember", he did, with the answer in front of him. Now the judge also
+  reads the crew's lines still in his history, with when they were said
+  (`Conversation.crew_lines`), and an empty recall tells him to answer from
+  the conversation or his notes if they have it: all three right. His
+  notes had filled with the show ("About the crew: Lister, Cat, Rimmer,
+  Kryten", "The crew recalled the Polymorph...") and, written from those,
+  made the crew Lister ("Lister's friend is Jo"). Exchanges where he
+  recalled are now left out of what the notes are written from, and the
+  notes prompt says the crew are the people he talks with, never the
+  show's, named only as they name themselves; from the same bad notes, the
+  next ones read "The crew's friend is Jo".
+
   ```
   .venv\Scripts\python -m app.records fetch    # ~25 min, once; pages cached in data/records_raw
   .venv\Scripts\python -m app.records build    # data/records.db, with vectors

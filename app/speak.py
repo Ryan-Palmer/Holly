@@ -422,7 +422,10 @@ class Holly:
             print()
             return times
         said = "".join(last_said).strip()
-        told = [user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
+        # What he was told: this turn, and the last few (asked "you mean 24 minutes past
+        # midnight?" a turn after the clock said 00:24, his "00:24" was no guess).
+        told = ([user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
+                + [m.get("content") or "" for m in self.convo.history[-12:]])
         if CLOCK_TIME.search(said) and not any(CLOCK_TIME.search(t) for t in told):
             # He gave a time that nobody gave him (the clock, the weather's sunset, a
             # search, the crew, a timer coming due): a guess. Kept as fact in his
@@ -545,7 +548,8 @@ class Holly:
             # His question, not the crew's last words: after "you need to use the recall
             # tool", the judge was asked that, and found nothing.
             question = str(args.get("question") or "").strip() or user
-            label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, question)
+            label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, question,
+                                                                  self.convo.crew_lines())
         else:
             return f"There is no tool called {call['name']}."
         print(f"{DIM}  ({label}){RESET}", flush=True)

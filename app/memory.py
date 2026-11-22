@@ -40,6 +40,15 @@ brackets, worked out for you: "coming over tomorrow [Sunday 22 November \
 own. If it doesn't show when something was said, leave it undated: never \
 guess a date.
 
+"The crew" are the real people he talks with. Red Dwarf's own crew \
+(Lister, Rimmer, the Cat, Kryten and the rest) and their adventures are in \
+his ship's records, not his notes: never write a note about them, and if his \
+notes so far have any (a line naming one of them, or "The crew recalled..."), \
+delete it. Name the crew only as they've named themselves: someone who hasn't \
+given a name is "the crew" (never Lister or anyone else from the show, however \
+much they talk about it), and their family by how they're related to them \
+("the crew's sister is Jo").
+
 Leave out what the crew asked him for (recipes, stories, poems, \
 explanations, how-tos): what he said back needn't be remembered. Leave out \
 his own jokes and insults about them: they aren't facts. Note only what was \

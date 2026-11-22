@@ -342,9 +342,10 @@ class Archive:
             found |= {r[0]: (r[1], r[2]) for r in rows}
         return list(found.values())
 
-    def recall(self, query: str, question: str) -> Lookup:
+    def recall(self, query: str, question: str, said: str = "") -> Lookup:
         """Look `query` up, and answer `question` (what Holly asks, or failing that
-        what the crew said) from what's found."""
+        what the crew said) from what's found, and from `said`: the crew's lines
+        still in his history (Conversation.crew_lines), which aren't archived yet."""
         t0 = time.perf_counter()
         query, question = MISHEARD.sub("Kryten", query), MISHEARD.sub("Kryten", question)
         # "The Cat's name in the episode Gunmen of the Apocalypse?" got NOTHING from the
@@ -355,6 +356,8 @@ class Archive:
         days = sorted(days_in(f"{query} {question}", datetime.date.today()))
         if self.records and not days:  # a day asked about is about a conversation
             hits += self.records.search(query, question=question)
+        if said:
+            hits.insert(0, (None, f"(Said in this conversation, by the crew:)\n{said}"))
         t1 = time.perf_counter()
         if not hits:
             return self._nothing(query, t1 - t0, 0)
@@ -380,9 +383,12 @@ class Archive:
     @staticmethod
     def _nothing(query: str, search_s: float, judge_s: float, n: int = 0) -> Lookup:
         # As with search: told only that nothing was found, he'd fill the gap himself.
-        why = "Your memory has nothing on that." if not n else "Your memory doesn't say."
-        return Lookup(query, f"{why} Tell the crew you don't remember, in your own words. Don't make "
-                             "up what was said, or when.", 0, search_s * 1000, judge_s * 1000, [query])
+        # "Tell the crew you don't remember", said outright, he obeyed even with the
+        # answer in his history: asked who was coming over, he said he didn't know.
+        why = "Your archive has nothing on that." if not n else "Your archive doesn't say."
+        return Lookup(query, f"{why} If this conversation or your notes say, answer from them. If not, "
+                             "tell the crew you don't remember, in your own words. Don't make up what was "
+                             "said, or when.", 0, search_s * 1000, judge_s * 1000, [query])
 
 
 def _unit(v) -> np.ndarray:

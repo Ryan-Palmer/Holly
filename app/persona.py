@@ -235,18 +235,24 @@ class Conversation:
 
     def transcript(self, end: int) -> str:
         """history[:end] as plain text, for writing notes on, with the day
-        and time each exchange began."""
-        return "\n".join(text for _, text in self.exchanges(end))
+        and time each exchange began. Not the exchanges where he recalled: the
+        answers are already kept (the archive, the ship's records), and given
+        them, the notes filled with Red Dwarf ("About the crew: Lister, Cat...")."""
+        return "\n".join(text for _, text in self.exchanges(end, recalled=False))
 
-    def exchanges(self, end: int) -> list[tuple[str | None, str]]:
+    def exchanges(self, end: int, recalled: bool = True) -> list[tuple[str | None, str]]:
         """history[:end] as one plain-text entry per exchange, each with when
-        it was said (ISO, or None for history from before that was kept)."""
+        it was said (ISO, or None for history from before that was kept).
+        Without `recalled`, leaving out exchanges where he used recall."""
         out: list[tuple[str | None, list[str]]] = []
+        skip: set[int] = set()
         for m in self.history[:end]:
             text = (m.get("content") or "").strip()
             if m["role"] == "user" or not out:
                 out.append((m.get("at"), []))
             lines = out[-1][1]
+            if any(c["function"]["name"] == "recall" for c in m.get("tool_calls") or []):
+                skip.add(len(out) - 1)
             if m["role"] == "user":
                 if at := m.get("at"):
                     said = datetime.datetime.fromisoformat(at)
@@ -261,7 +267,19 @@ class Conversation:
                     lines.append(f"Holly: {text}")
             elif m["role"] == "tool":
                 lines.append(f"(It told him: {' '.join(text.split())[:TOOL_RESULT_CHARS]})")
-        return [(at, "\n".join(lines)) for at, lines in out]
+        return [(at, "\n".join(lines)) for i, (at, lines) in enumerate(out) if recalled or i not in skip]
+
+    def crew_lines(self, n: int = 40, chars: int = 300) -> str:
+        """What the crew have said in the history, newest last, each with when: for
+        recall's judge, which otherwise saw only the archive. Asked who was coming
+        over, recall found nothing (the visit hadn't left his history yet), and he
+        said he didn't remember, though it was in front of him."""
+        lines = []
+        for m in self.history:
+            if m["role"] == "user" and (text := (m.get("content") or "").strip()) and not text.startswith("["):
+                said = f"{when(datetime.datetime.fromisoformat(m['at']))}: " if m.get("at") else ""
+                lines.append(f"- {said}{' '.join(text.split())[:chars]}")
+        return "\n".join(lines[-n:])
 
     def recent_topics(self, n: int = 4) -> list[str]:
         """The crew's last `n` lines, newest first, for picking reminders that fit."""
