@@ -39,8 +39,10 @@ What's the time? || clock
 What's the weather going to be like tomorrow in Keswick? || weather
 How far away is the moon? || search
 Set a timer for ten minutes for the eggs. || timer
-Can you look into the best way to get rid of slugs in the garden? || research
+Can you look into the best way to get rid of slugs in the garden? || ask
 What's seven times eight?
+Can you research electric bikes under a thousand pounds and write me a report? || research
+Can you search for when the tip opens on Saturday? || search
 
 # Things he can do at more length
 Tell me a joke.

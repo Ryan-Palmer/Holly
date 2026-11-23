@@ -83,7 +83,13 @@ RESEARCH_ASKED = re.compile(r"\b(?:research|look(?:ing)? into|find out (?:all )?
                             r"read up on|look up everything)\b", re.IGNORECASE)
 PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on (?:with )?(?:it|that|this)|get back to "
                                r"you|come back to you|let you know|report back|while (?:things are quiet|"
-                               r"I doze|you sleep)|have a proper look|dig into it)\b", re.IGNORECASE)
+                               r"I doze|I'm dozing|I'm asleep|I sleep|you sleep)|have a proper look|dig into it|"
+                               r"get a report started|start (?:a|the) report)\b", re.IGNORECASE)
+# The crew asked for a report outright, or chose one when he asked: research may start.
+# Anything less ("look into slugs", "find out about heat pumps"), he asks first: a quick
+# search now, or a report while he dozes? Told to ask, in a rule alone, he mostly didn't.
+REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|in depth|in detail|properly|proper look|"
+                           r"while you doze|while you sleep|later)\b", re.IGNORECASE)
 CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
                         r"\bo'clock\b", re.IGNORECASE)
 
@@ -374,7 +380,9 @@ class Holly:
                 if not recalled and self.archive and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
                     return "he said he didn't remember without calling recall"
                 if (not researched and self.research and RESEARCH_ASKED.search(user)
-                        and PROMISED_RESEARCH.search(sentence)):
+                        and PROMISED_RESEARCH.search(sentence) and not sentence.rstrip().endswith("?")):
+                    # (A question isn't a promise: "a quick look now, or a proper look while I
+                    # doze?" is him asking which the crew want, as he's meant to.)
                     return "he promised research without calling the research tool"
                 return None
 
@@ -567,6 +575,12 @@ class Holly:
             print(f"{DIM}  (timer) {result.split('. Tell the crew')[0]}{RESET}", flush=True)
             return result
         if call["name"] == "research" and self.research:
+            if (str(args.get("action") or "start").lower() == "start" and not REPORT_WANTED.search(user)
+                    and not self._offered_report()):
+                print(f"{DIM}  (research start held: not asked for outright; he asks which){RESET}", flush=True)
+                return ("Not started: the crew didn't ask for a report. Ask them, briefly and in your own words, "
+                        "whether they want a quick search now or a report while you doze; then do what they "
+                        "choose. Don't say you've started anything.")
             # In a thread: finding a report by meaning asks LM Studio for a vector.
             result = await asyncio.to_thread(self.research.handle, args)
             shown = result.split(". Tell the crew")[0].split("\n")[0]  # a report read: its first line
@@ -652,6 +666,13 @@ class Holly:
                     + "; ".join(f"'{t}'" for t in titles[-6:])
                     + "), call the research tool to read that report, and answer from it.)")
         return Searcher.for_holly(found)
+
+    def _offered_report(self) -> bool:
+        """Did his last reply offer a report? Then the crew's answer to it ("yes, go on")
+        is them choosing one."""
+        said = next((m.get("content") or "" for m in reversed(self.convo.history)
+                     if m["role"] == "assistant" and m.get("content")), "")
+        return "report" in said.lower() and "?" in said
 
     def start_compaction(self) -> None:
         """In the background, if due: fold older history into his notes (see
