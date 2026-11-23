@@ -68,6 +68,12 @@ CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m
                         r"\bo'clock\b", re.IGNORECASE)
 
 
+def rules(tool: str) -> str:
+    """A tool's rules for Holly, added to his system prompt, from the .md
+    beside its module: rules("search") reads app/search.md."""
+    return Path(__file__).with_name(f"{tool}.md").read_text(encoding="utf-8")
+
+
 @dataclasses.dataclass
 class TurnTimes:
     """perf_counter() stamps for one reply, from pressing Enter or, when
@@ -166,19 +172,19 @@ class Holly:
         tools, prompts = [], []
         if self.searcher:
             tools += [TOOL, clock.TOOL] + ([weather.TOOL] if cfg.search.weather else [])
-            prompts.append(cfg.search.prompt.read_text(encoding="utf-8"))
+            prompts.append(rules("search"))
         if self.archive:
             tools.append(archive.TOOL)
-            prompts.append(cfg.recall.prompt.read_text(encoding="utf-8"))
+            prompts.append(rules("archive"))
         self.timers = timers.Timers(cfg.timers.file) if cfg.timers.enabled else None
         if self.timers:
             tools.append(timers.TOOL)
-            prompts.append(cfg.timers.prompt.read_text(encoding="utf-8"))
+            prompts.append(rules("timers"))
         self.spotify = (spotify.Spotify(cfg.spotify)
                         if cfg.spotify.enabled and spotify.available() else None)
         if self.spotify:
             tools.append(spotify.TOOL)
-            prompts.append(cfg.spotify.prompt.read_text(encoding="utf-8"))
+            prompts.append(rules("spotify"))
         self.tools = tools or None
         self.turn_lock = asyncio.Lock()  # one reply at a time: yours, or his speaking up
         self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)

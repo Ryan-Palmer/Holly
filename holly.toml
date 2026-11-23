@@ -194,8 +194,6 @@ max_lookup_s = 5.0
 # Gemma's thinking for that judgement: "none", or "low" and up. "low" took
 # 3-11 s a judgement against ~0.3 s, and answered no better.
 summary_reasoning = "none"
-# Rules for when to search, added to his system prompt.
-prompt = "persona/search_prompt.md"
 # A weather tool too (app/weather.py): forecasts from Open-Meteo, which is
 # free and needs no key. Web search can't do the weather: its results are
 # links to weather sites, not forecasts. Places in home_country come first.
@@ -234,8 +232,6 @@ min_similarity = 0.5
 # Keyword matches the judge reads, best first (plus all of a day asked about).
 max_entries = 12
 summary_max_tokens = 200
-# Rules for when to recall, added to his system prompt.
-prompt = "persona/recall_prompt.md"
 # Said while he recalls, when his reply starts with it.
 fillers = [
     "Hang on. It's in here somewhere.",
@@ -251,7 +247,6 @@ fillers = [
 # mentioned when he's next up.
 enabled = true
 file = "data/timers.json"
-prompt = "persona/timers_prompt.md"
 
 
 [spotify]
@@ -265,7 +260,6 @@ token_file = "data/spotify_token.json"
 device = ""  # part of a device's name, to play there when nothing is playing
 volume_step = 15
 market = "GB"  # the country whose catalogue to search
-prompt = "persona/spotify_prompt.md"
 # Said while Spotify's desktop app is opened, when nothing has it open (~5-10 s).
 fillers = [
     "Hang on. I'm just waking Spotify up.",

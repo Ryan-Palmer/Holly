@@ -24,7 +24,7 @@ and **naturalness**; while scoring, `r` replays the reference.
    `envs\NAME\Scripts\python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128`
 2. Install the model's package. If it pins an old torch, install it with
    `--no-deps` and add its other dependencies by hand.
-3. Write `adapters/NAME_adapter.py`, subclassing `Adapter` from `common.py`.
+3. Write `adapters/NAME_adapter.py`, subclassing `Adapter` from `adapters/common.py`.
    The `_adapter` suffix stops it shadowing the package it imports.
 4. Add it to `candidates.toml`.
 

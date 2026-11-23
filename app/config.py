@@ -101,7 +101,6 @@ class SearchConfig:
     max_lookup_s: float = 5.0  # no new search or read is started after this long
     context_tokens: int = 2048  # page text brave_context returns per search, in all
     summary_reasoning: str = "none"  # Gemma's thinking when judging results: "none", "low"...
-    prompt: Path = ROOT / "persona/search_prompt.md"
     weather: bool = True  # the weather tool (Open-Meteo), with search
     home_country: str = "GB"  # places here come first in weather lookups
     fillers: tuple[str, ...] = ()
@@ -119,7 +118,6 @@ class RecallConfig:
     meaning_entries: int = 8  # the closest in meaning the judge reads, at least min_similarity
     min_similarity: float = 0.5
     summary_max_tokens: int = 200
-    prompt: Path = ROOT / "persona/recall_prompt.md"
     fillers: tuple[str, ...] = ()
 
 
@@ -127,7 +125,6 @@ class RecallConfig:
 class TimersConfig:
     enabled: bool = True
     file: Path = ROOT / "data/timers.json"  # what's set, kept between sessions
-    prompt: Path = ROOT / "persona/timers_prompt.md"
 
 
 @dataclass(frozen=True)
@@ -141,7 +138,6 @@ class SpotifyConfig:
     volume_step: int = 15  # "turn it up": by this many percent
     market: str = "GB"  # the country whose catalogue to search (Spotify's own "from_token" needs more access)
     timeout_s: float = 5.0
-    prompt: Path = ROOT / "persona/spotify_prompt.md"
     fillers: tuple[str, ...] = ()  # said while the desktop app is being opened
 
 
@@ -191,9 +187,9 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         face=FaceConfig(**raw.get("face", {})),
         search=_search_config(raw.get("search", {}), base),
         recall=_recall_config(raw.get("recall", {}), base),
-        timers=TimersConfig(**{k: (base / v if k in ("file", "prompt") else v)
+        timers=TimersConfig(**{k: (base / v if k == "file" else v)
                                for k, v in raw.get("timers", {}).items()}),
-        spotify=SpotifyConfig(**{k: (base / v if k in ("token_file", "prompt") else
+        spotify=SpotifyConfig(**{k: (base / v if k == "token_file" else
                                      tuple(v) if k == "fillers" else v)
                                  for k, v in raw.get("spotify", {}).items()}),
     )
@@ -201,8 +197,6 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
 
 def _search_config(s: dict, base: Path) -> SearchConfig:
     s = dict(s)
-    if "prompt" in s:
-        s["prompt"] = base / s["prompt"]
     if "fillers" in s:
         s["fillers"] = tuple(s["fillers"])
     return SearchConfig(**s)
@@ -210,7 +204,7 @@ def _search_config(s: dict, base: Path) -> SearchConfig:
 
 def _recall_config(r: dict, base: Path) -> RecallConfig:
     r = dict(r)
-    for key in ("file", "records_file", "prompt"):
+    for key in ("file", "records_file"):
         if key in r:
             r[key] = base / r[key]
     if "fillers" in r:

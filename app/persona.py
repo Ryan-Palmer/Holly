@@ -102,7 +102,7 @@ class Conversation:
     def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None,
                  archive=None):
         """`extra_prompt` is added to the system prompt, before the examples:
-        the rules for looking things up, when Holly can search. With
+        the rules for each tool he has (app/search.md and the like). With
         `memory_file`, the history and notes are loaded from it, and saved to
         it after every change. With `archive` (app/archive.py), every exchange
         that leaves the history is stored there."""

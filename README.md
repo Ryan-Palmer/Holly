@@ -133,5 +133,6 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 
 `holly.toml` holds every setting, with comments: models, microphone and
 speakers, wake words, memory budgets, search providers and more. Holly's
-character is in `persona/`: `system_prompt.md`, example exchanges in
-`examples.toml`, and the rules for each tool.
+character is in `persona/`: `system_prompt.md` and example exchanges in
+`examples.toml`. Each tool's rules for when and how he uses it sit beside its
+code in `app/`, as a `.md` with the same name (`search.md` for `search.py`).

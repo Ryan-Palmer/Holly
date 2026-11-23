@@ -26,3 +26,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["app"]
+
+[tool.setuptools.package-data]
+app = ["*.md"]  # each tool's rules for Holly, beside its code
