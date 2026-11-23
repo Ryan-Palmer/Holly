@@ -40,8 +40,9 @@ TOOL = {
     "type": "function",
     "function": {
         "name": "research",
-        "description": "Research a topic properly, for a written report: done in the background while you're "
-                       "asleep, and you're told when the report is ready. Also: list research under way or "
+        "description": "Research a topic properly, for a written report: done in the background by you, "
+                       "while you doze between conversations, and you're told when the report is ready. Also: "
+                       "list research under way or "
                        "done, cancel some, sum up a finished report, or open one on the crew's screen.",
         "parameters": {
             "type": "object",
@@ -130,6 +131,11 @@ REFUSED_WAIT_S, REFUSED_TRIES = 20.0, 3
 ENTRY_CHARS = 1400  # of a report section, per archive entry (recall reads 1,500 of each)
 CITATION = re.compile(r"\s*\[\d+(?:\s*[,-]\s*\d+)*\]")
 UNFINISHED = ("plan", "research", "check", "write", "verify", "summary", "keep")
+# What a finished job keeps: enough to list, sum up, open and announce it. Its working
+# papers (every question's results and notes, the draft, the report's text, already in
+# its .md) are dropped: they were ~85% of jobs.json.
+KEEP = ("id", "title", "request", "asked", "stage", "finished", "file", "summary", "error", "announced",
+        "tries", "retry", "work_s", "errors")
 # Words that don't say which report: "the report on heat pumps" is "heat pumps".
 REPORT_NOISE = {"the", "a", "an", "on", "about", "of", "for", "my", "that", "this", "one", "report", "research",
                 "summary", "open", "show", "me", "it", "you", "did", "do", "into"}
@@ -207,6 +213,9 @@ class Research:
                 self.jobs = json.loads(self.file.read_text(encoding="utf-8"))
             except (ValueError, OSError) as e:
                 print(f"Couldn't read Holly's research jobs ({e}); starting with none.", flush=True)
+            # Finished jobs from before they were slimmed when finishing.
+            if sum(slim(j) for j in self.jobs if j["stage"] not in UNFINISHED):
+                self._save()
 
     def _save(self) -> None:
         tmp = self.file.with_suffix(".tmp")
@@ -258,9 +267,9 @@ class Research:
                           "sources": [], "checked": False, "work_s": 0.0, "errors": 0, "announced": False})
         self._save()
         return (f"Queued: research on '{title}'" + (f", after {ahead} other job{'s' * (ahead != 1)}" if ahead else "")
-                + ". It's done while you're asleep, and you'll be told when the report is ready. Tell the crew, "
-                "in a sentence, that you'll look into it and get back to them. You have no findings yet: give "
-                "none.")
+                + ". You'll work on it yourself while you doze between conversations (your sleep, not the "
+                "crew's), and you'll be told when the report is ready. Tell the crew, in a sentence, that you'll "
+                "look into it while things are quiet and get back to them. You have no findings yet: give none.")
 
     def _listing(self) -> str:
         if not self.jobs:
@@ -372,6 +381,7 @@ class Research:
     def _give_up(self, job: dict, why: str) -> None:
         job["stage"], job["error"] = "failed", why
         job["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
+        slim(job)
 
     async def _ask(self, system: str, user: str, max_tokens: int) -> str:
         text, _ = await self.lm.complete([{"role": "system", "content": system},
@@ -572,7 +582,16 @@ class Research:
         job["file"] = name
         job["finished"] = finished.isoformat(timespec="seconds")
         job["stage"] = "done"
+        slim(job)
         return f"report kept: {self.cfg.dir / name}"
+
+
+def slim(job: dict) -> bool:
+    """Drop a finished job's working papers, in place (see KEEP). True if any went."""
+    gone = [k for k in job if k not in KEEP]
+    for k in gone:
+        del job[k]
+    return bool(gone)
 
 
 def sections(report: str) -> list[str]:
