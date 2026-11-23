@@ -51,7 +51,7 @@ TOOL = {
             "properties": {
                 "query": {"type": "string", "description":
                     "Key words for what to remember: names as they're spelt, things, places, and the "
-                    "day if it was asked about ('lasagne Jo','boiler service', 'what we talked "
+                    "day if it was asked about ('lasagne Jo', 'boiler service', 'what we talked "
                     "about yesterday', 'Rimmer hologram death', 'Kryten first meeting', 'Better Than "
                     "Life')."},
                 "question": {"type": "string", "description":

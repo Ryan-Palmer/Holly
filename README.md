@@ -299,8 +299,8 @@ the choice of chat model:
   name, and gave up; without it: "The Riviera Kid"). 4,269 entries from
   914 pages.
 
-  Then the crew's own news went missing. Asked who was coming over, his
-  friend's name and her mum's, he recalled, the archive had nothing
+  Then the crew's own news went missing. Asked who was coming over, and
+  two names he'd just been told, he recalled, the archive had nothing
   (the visit hadn't left his history yet), and told "say you don't
   remember", he did, with the answer in front of him. Now the judge also
   reads the crew's lines still in his history, with when they were said
@@ -425,8 +425,8 @@ jokes don't trigger either.
   not forecasts. So a `weather` tool (`app/weather.py`) gets the place and
   the week's forecast from Open-Meteo, which is free with no key (~0.7 s).
   Its place lookup knows towns, villages and parks, but not counties or
-  most beaches, so a miss tells him to try again with the nearest town:
-  a beach became the town beside it, a county its main town, the Lake District
+  most beaches, so a miss tells him to try again with the nearest town: a
+  beach became the town beside it, a county its main town, the Lake District
   Keswick. Told he could also just say he couldn't find out, he always did.
   Without a county or country, places in `home_country` (GB) come first.
   It includes sunrise and sunset, so those come from it too, and the local
