@@ -84,12 +84,20 @@ RESEARCH_ASKED = re.compile(r"\b(?:research|look(?:ing)? into|find out (?:all )?
 PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on (?:with )?(?:it|that|this)|get back to "
                                r"you|come back to you|let you know|report back|while (?:things are quiet|"
                                r"I doze|I'm dozing|I'm asleep|I sleep|you sleep)|have a proper look|dig into it|"
-                               r"get a report started|start (?:a|the) report)\b", re.IGNORECASE)
+                               r"get(?:ting)? started|(?:get|got|start|started|starting|do|doing|write|writing|"
+                               r"put together) (?:on )?(?:a|the|that|your) (?:proper |full |research |little )?"
+                               r"(?:report|write-up)|report (?:started|going|under way)|it's in hand|get cracking|"
+                               r"crack on|I'm on it)\b",
+                               re.IGNORECASE)
 # The crew asked for a report outright, or chose one when he asked: research may start.
 # Anything less ("look into slugs", "find out about heat pumps"), he asks first: a quick
 # search now, or a report while he dozes? Told to ask, in a rule alone, he mostly didn't.
-REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|in depth|in detail|properly|proper look|"
-                           r"while you doze|while you sleep|later)\b", re.IGNORECASE)
+REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|write it (?:all )?up|in depth|in detail|properly|"
+                           r"proper (?:look|one|job)|full one|long one|while you doze|while you sleep|later)\b",
+                           re.IGNORECASE)
+# His last reply offered the choice in his own words ("shall I dig into it while I doze?").
+OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
+                            r"dig into|while I(?:'m)? doz|while I sleep)", re.IGNORECASE)
 CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
                         r"\bo'clock\b", re.IGNORECASE)
 
@@ -235,6 +243,10 @@ class Holly:
         self.compact_retry_at = 0.0  # after a failed try, not before this
         self.researching: asyncio.Task | None = None  # research steps, while he sleeps
         self.research_retry_at = 0.0  # after a failed step, not before this
+        self.turns = 0  # replies so far this session
+        # The turn he was told to ask search-or-report in: the crew's next turn answers it,
+        # however he put the question ("yes, go on" is a yes to whatever he offered).
+        self.report_choice_turn = -2
 
     def voice_name(self) -> str:
         return "Holly (VoxCPM2 clone)"
@@ -329,6 +341,7 @@ class Holly:
         """Answer `user` out loud. Pass `times` to count from an earlier start."""
         assert self.tts and self.player
         times = times or TurnTimes(start=time.perf_counter())
+        self.turns += 1
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
         parts: list[str] = []
         steps: list[dict] = []  # his searches and their results, for the history
@@ -362,8 +375,12 @@ class Holly:
             searches = 0
             recalled = False  # he called recall this turn
             researched = False  # he called the research tool this turn
+            answering_choice = self._answering_choice()  # the crew answering search-or-report
             retried = False  # a reply was dropped part-way and asked again (once a turn)
-            choice = None  # "required": the retry must call a tool
+            # "required": the reply must call a tool. So on a retry, and when the crew have just
+            # chosen a report in answer to his search-or-report question: then he said "I'll get
+            # cracking", "I'll get stuck into it", in ever new words, and started nothing.
+            choice = "required" if answering_choice and self.research and REPORT_WANTED.search(user) else None
 
             async def say(sentence: str) -> None:
                 times.first_sentence = times.first_sentence or time.perf_counter()
@@ -379,10 +396,13 @@ class Holly:
                     return "he said he'd looked in his memory without calling recall"
                 if not recalled and self.archive and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
                     return "he said he didn't remember without calling recall"
-                if (not researched and self.research and RESEARCH_ASKED.search(user)
+                # Asked for research, or answering his search-or-report question ("go on then,
+                # write it up"): he said he'd started a report and called nothing, four times in six.
+                if (not researched and self.research
+                        and (RESEARCH_ASKED.search(user) or REPORT_WANTED.search(user) or answering_choice)
                         and PROMISED_RESEARCH.search(sentence) and not sentence.rstrip().endswith("?")):
-                    # (A question isn't a promise: "a quick look now, or a proper look while I
-                    # doze?" is him asking which the crew want, as he's meant to.)
+                    # (A question isn't a promise: "shall I have a proper look while I doze?"
+                    # is him asking which the crew want, as he's meant to.)
                     return "he promised research without calling the research tool"
                 return None
 
@@ -576,11 +596,15 @@ class Holly:
             return result
         if call["name"] == "research" and self.research:
             if (str(args.get("action") or "start").lower() == "start" and not REPORT_WANTED.search(user)
-                    and not self._offered_report()):
+                    and not self._answering_choice()):
                 print(f"{DIM}  (research start held: not asked for outright; he asks which){RESET}", flush=True)
-                return ("Not started: the crew didn't ask for a report. Ask them, briefly and in your own words, "
-                        "whether they want a quick search now or a report while you doze; then do what they "
-                        "choose. Don't say you've started anything.")
+                self.report_choice_turn = self.turns  # their answer, next turn, is their choice
+                # No words given him to say: handed "a quick search now or a report while you
+                # doze", he said exactly that, every time.
+                return ("Not started: the crew didn't say they wanted a report. Ask them which they'd like: "
+                        "you searching it now, or researching it properly while you doze and writing it up. "
+                        "Put it your own way, about what they asked, and not as you've put it before. Then do "
+                        "what they choose. Don't say you've started anything.")
             # In a thread: finding a report by meaning asks LM Studio for a vector.
             result = await asyncio.to_thread(self.research.handle, args)
             shown = result.split(". Tell the crew")[0].split("\n")[0]  # a report read: its first line
@@ -667,12 +691,16 @@ class Holly:
                     + "), call the research tool to read that report, and answer from it.)")
         return Searcher.for_holly(found)
 
-    def _offered_report(self) -> bool:
-        """Did his last reply offer a report? Then the crew's answer to it ("yes, go on")
-        is them choosing one."""
+    def _answering_choice(self) -> bool:
+        """Are the crew answering his search-or-report question? Either the research tool
+        had him ask it last turn, or he offered it himself, in his own words, as a question
+        ("a quick search now, or shall I dig into it properly while I doze?"). Either way,
+        whatever they answer ("yes, go on") is their choice."""
+        if self.report_choice_turn == self.turns - 1:
+            return True
         said = next((m.get("content") or "" for m in reversed(self.convo.history)
                      if m["role"] == "assistant" and m.get("content")), "")
-        return "report" in said.lower() and "?" in said
+        return "?" in said and bool(OFFERED_REPORT.search(said))
 
     def start_compaction(self) -> None:
         """In the background, if due: fold older history into his notes (see
