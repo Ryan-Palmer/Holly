@@ -33,9 +33,13 @@ FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really 
 # crew ask for research and he promises it, the research tool must have been called.
 RESEARCH_ASKED = re.compile(r"\b(?:research|look(?:ing)? into|find out (?:all )?about|report on|dig into|"
                             r"read up on|look up everything)\b", re.IGNORECASE)
-PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on (?:with )?(?:it|that|this)|get back to "
+# ("I'll get onto that. I'll have a report ready for you once I've finished my nap", and
+# no research started: so "get onto", "have... ready" and naps too.)
+PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on(?:to| with)? (?:it|that|this)|get back to "
                                r"you|come back to you|let you know|report back|while (?:things are quiet|"
                                r"I doze|I'm dozing|I'm asleep|I sleep|you sleep)|have a proper look|dig into it|"
+                               r"have (?:a|the|your|it|that) (?:proper |full )?(?:report |write-up )?ready|"
+                               r"(?:my|a)(?: little| quick| short)? (?:nap|snooze|doze|kip)|when I wake|"
                                r"get(?:ting)? started|(?:get|got|start|started|starting|do|doing|write|writing|"
                                r"put together) (?:on )?(?:a|the|that|your) (?:proper |full |research |little )?"
                                r"(?:report|write-up)|report (?:started|going|under way)|it's in hand|get cracking|"
