@@ -54,20 +54,35 @@ REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|write it (?:all )
 # His last reply offered the choice in his own words ("shall I dig into it while I doze?").
 OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
                             r"dig into|while I(?:'m)? doz|while I sleep)", re.IGNORECASE)
+# Saying he can't tell the time, when he has the clock tool: told in his rules that the time
+# came only from the clock, he said "I've no clock of my own" (asked what day tomorrow was,
+# which he knew), and read the clock only when told to look at it.
+NO_CLOCK = re.compile(r"\b(?:no|not got a|haven't (?:got )?a|don't have a|without a) (?:clock|watch)\b|"
+                      r"\bcan(?:'t|not) (?:tell|see|know) (?:you )?(?:the|what) time\b|"
+                      r"\bno (?:idea|way of knowing) what time\b", re.IGNORECASE)
 # A time of day in a reply: "10:14", "10 pm", "ten o'clock". Not "12.50": that's money.
 CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
                         r"\bo'clock\b", re.IGNORECASE)
+# A tool call written out as text, in the model's own markup: asked "Do you miss Lister?",
+# Gemma's reply was `recall{query:<|"|>Lister<|"|>,...}<tool_call|>`, to be read aloud.
+# Matched as written, and as the sentence chunker leaves it (without "|" or "_"):
+# `recall{query:<"Lister<"}<toolcall`.
+TOOL_MARKUP = re.compile(r"<\||\|>|<tool_?call|<\"|\b\w+\{\w+:")
 # Added to a reply that gave a time nobody gave him (never spoken: it's for his history).
 GUESSED = " [That time was a guess, not from the clock: it's probably wrong.]"
 
 
 def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researched: bool, can_recall: bool,
-           can_research: bool, answering_choice: bool) -> str | None:
-    """Why `sentence`, from a reply to `user`, mustn't be said, if it mustn't. `recalled`
-    and `researched`: he's called those tools in this reply; `can_...`: he has them;
+           can_research: bool, answering_choice: bool, clocked: bool = False, can_clock: bool = False) -> str | None:
+    """Why `sentence`, from a reply to `user`, mustn't be said, if it mustn't. `recalled`,
+    `researched`, `clocked`: he's called those tools in this reply; `can_...`: he has them;
     `answering_choice`: the crew are answering his search-or-report question."""
     if (word := sentence.strip().strip(".!").lower()) in stray:  # Gemma's lone "thought"
         return f"a stray {word!r}"
+    if TOOL_MARKUP.search(sentence):
+        return "he wrote a tool call out as text"
+    if not clocked and can_clock and NO_CLOCK.search(sentence):
+        return "he said he couldn't tell the time without calling the clock"
     if not recalled and can_recall and CLAIMED_RECALL.search(sentence):
         return "he said he'd looked in his memory without calling recall"
     if not recalled and can_recall and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
@@ -85,7 +100,7 @@ def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researc
 
 def needs_tool(why: str) -> bool:
     """Is a sentence dropped for this reason (from unsaid) redone with a tool required?"""
-    return "recall" in why or "research" in why
+    return any(w in why for w in ("recall", "research", "clock", "tool call"))
 
 
 def guessed_time(said: str, told: list[str]) -> bool:

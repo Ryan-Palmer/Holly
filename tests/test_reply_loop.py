@@ -73,6 +73,23 @@ def test_a_time_nobody_gave_him_is_marked_a_guess(make_holly):
     assert "guess" not in holly.convo.history[-1]["content"]
 
 
+def test_saying_he_cant_tell_the_time_is_redone_with_the_clock(make_holly):
+    lm = FakeLm(["Tuesday, probably. I've no clock of my own.", [("clock", {})], "It's 23:37. Tuesday tomorrow."])
+    holly = make_holly(lm)
+    respond(holly, "What day is it tomorrow?")
+    assert lm.requests[1]["tool_choice"] == "required" and tools_called(holly) == ["clock"]
+    assert "no clock" not in " ".join(holly.tts.said)
+
+
+def test_a_tool_call_written_as_text_is_never_said(make_holly):
+    lm = FakeLm(['recall{query:<|"|>Lister<|"|>}<tool_call|>', [("recall", {"query": "Lister"})], "Not much."],
+                side=lambda system, user: "NOTHING")
+    holly = make_holly(lm)
+    respond(holly, "Do you miss Lister?")
+    assert not any("<|" in s for s in holly.tts.said) and lm.requests[1]["tool_choice"] == "required"
+    assert holly.convo.history[-1]["content"] == "Not much."
+
+
 def test_a_stray_thought_is_dropped_and_asked_again(make_holly):
     lm = FakeLm(["Thought. ", "Hello there."])
     holly = make_holly(lm)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, OFFERED_REPORT, PROMISED_RESEARCH,
+from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFERED_REPORT, PROMISED_RESEARCH,
                        REPORT_WANTED, RESEARCH_ASKED)
 
 CASES = [
@@ -26,6 +26,9 @@ CASES = [
      ["Just a quick search.", "Search it now."]),
     (OFFERED_REPORT, ["Quick search now, or shall I dig into it while I doze?", "Want a proper write-up?"],
      ["Shall I search for it?"]),
+    (NO_CLOCK, ["I've no clock of my own.", "I can't tell you the time.", "No idea what time it is.",
+                "I haven't got a watch."],
+     ["It's Tuesday.", "The clock's broken in the galley.", "Casino watch."]),
     (CLOCK_TIME, ["It's 10:14.", "About 10 pm.", "Ten o'clock.", "At 7:30 a.m. sharp"],
      ["That's £12.50.", "Ten minutes.", "Two pmegs."]),
 ]

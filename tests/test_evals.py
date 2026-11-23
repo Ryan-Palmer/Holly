@@ -35,10 +35,12 @@ def test_scorecard_and_compare(tmp_path, monkeypatch):
     scen = evals.scenario_scores(runs)
     assert (scen["passed"], scen["runs"], scen["by_name"]["a timer"]) == (1, 2, (1, 2))
     card = dict(model="google/some-model", judge="google/judge", label="try", commit="abc123", when="2026-11-23T23:00",
-                session=False, persona=persona, scenarios=scen, persona_rows=rows, scenario_runs=runs)
+                session=False, persona=persona, scenarios=scen, persona_rows=rows, scenario_runs=runs,
+                repeated=evals.openings(rows + [dict(reply="Right you are. Done."), dict(reply="Right you are. Set.")]))
     path = evals.write(card)
     md = path.with_suffix(".md").read_text(encoding="utf-8")
     assert "| a timer | 1 of 2 |" in md and "nothing set" in md and "Late." in md
+    assert "opens 'right you are' x2" in md
     table = evals.compare().splitlines()
     assert table[0].split()[:3] == ["when", "label", "model"]
     assert "some-model" in table[1] and "1/2" in table[1] and "3.00" in table[1]

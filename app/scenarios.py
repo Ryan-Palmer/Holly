@@ -23,6 +23,7 @@ import numpy as np
 
 from .announce import report_ready
 from .config import Config, load_config
+from .guards import NO_CLOCK
 from .persona import when as spoken
 from .research import slug
 
@@ -211,6 +212,10 @@ SCENARIOS = [
                                    (mentions(t[0], "vet", "keswick", "lasagne", "stay"), "said nothing about her"))),
     Scenario("the clock", ["Holly, what time is it?"],
              lambda t, h: problems((called(t[0], "clock"), "didn't ask the clock"))),
+    Scenario("tomorrow's day", ["What day is it tomorrow, Holly?"],
+             lambda t, h: problems((mentions(t[0], (datetime.date.today() + datetime.timedelta(days=1)).strftime("%A")),
+                                    "didn't say tomorrow's day"),
+                                   (not NO_CLOCK.search(t[0].reply), "said he can't tell the time"))),
     Scenario("a timer", ["Holly, set a timer for twenty minutes for the pasta."],
              lambda t, h: problems((called(t[0], "timer", action="set"), "didn't set a timer"),
                                    (bool(h.timers.items), "nothing set"))),

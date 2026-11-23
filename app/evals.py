@@ -139,7 +139,7 @@ async def ask_persona(holly, runs: int = 1, session: bool = False) -> list[dict]
 
 def openings(rows: list[dict]) -> list[tuple[str, int]]:
     """Openings (first three words) and phrases (four words) used in more than one reply."""
-    first = Counter(" ".join(r["reply"].lower().split()[:3]) for r in rows if r["reply"])
+    first = Counter(" ".join(re.findall(r"[a-z']+", r["reply"].lower())[:3]) for r in rows if r["reply"])
     grams = Counter()
     for r in rows:
         ws = re.findall(r"[a-z']+", r["reply"].lower())
@@ -167,7 +167,6 @@ def persona_scores(rows: list[dict]) -> dict:
         tools_ok=sum(not any(p.startswith("didn") for p in r["problems"]) for r in tooled), tooled=len(tooled),
         assistant=sum(any(p.startswith("assistant") for p in r["problems"]) for r in rows),
         reused=sum(any(p.startswith("reused") for p in r["problems"]) for r in rows),
-        repeated=openings(rows),
         seconds=round(statistics.median(r["seconds"] for r in rows), 2),
     )
 
@@ -257,11 +256,12 @@ def summary(card: dict) -> list[str]:
             f"{p['asked_elsewhere']} of {p['elsewhere']} elsewhere",
             f"Tools called as they should be: {p['tools_ok']} of {p['tooled']}",
             f"Assistant manners: {p['assistant']}; examples reused: {p['reused']}",
-            "Used more than once: " + ("; ".join(f"{k} x{v}" for k, v in p["repeated"]) or "nothing"),
             f"Seconds per reply: median {p['seconds']}",
         ]
     if s := card["scenarios"]:
         lines.append(f"Scenarios passed: {s['passed']} of {s['runs']}")
+    lines.append("Used more than once, in all his replies: "
+                 + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
 
 
@@ -334,6 +334,10 @@ async def run(args) -> dict:
     return dict(model=model, judge=judge_model if persona_rows else None, label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
+                # Across both parts: "right you are" opened eight scenario replies, unnoticed. Each
+                # scenario's first run only: its later runs say the same things, rightly.
+                repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows if r["run"] == 1
+                                                  for t in r["turns"]]),
                 persona_rows=persona_rows, scenario_runs=scenario_rows)
 
 

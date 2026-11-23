@@ -103,3 +103,13 @@ def test_unreadable_file_is_set_aside(cfg, tmp_path):
     c = convo(cfg, f)
     assert c.history == [] and c.memory == ""
     assert [p.name.split("-")[0] for p in tmp_path.iterdir()] == ["memory.unreadable"]
+
+
+def test_the_date_in_his_prompt_moves_on_at_midnight(cfg, monkeypatch):
+    from app import persona
+
+    c = convo(cfg)
+    monkeypatch.setattr(persona, "today", lambda: "Monday 23 November 2026")
+    assert "Today is Monday 23 November 2026." in c.messages_for("Hello.")[0]["content"]
+    monkeypatch.setattr(persona, "today", lambda: "Tuesday 24 November 2026")  # past midnight, same session
+    assert "Today is Tuesday 24 November 2026." in c.messages_for("Still up?")[0]["content"]

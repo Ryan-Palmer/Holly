@@ -334,7 +334,8 @@ class Holly:
                 return guards.unsaid(sentence, user, stray=self.stray_words, recalled="recall" in called,
                                      researched="research" in called, can_recall="recall" in self.toolbox,
                                      can_research="research" in self.toolbox,
-                                     answering_choice=turn.answering_choice)
+                                     answering_choice=turn.answering_choice, clocked="clock" in called,
+                                     can_clock="clock" in self.toolbox)
 
             while True:
                 calls: list[dict] = []
