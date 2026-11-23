@@ -10,8 +10,6 @@ import asyncio
 import dataclasses
 import json
 import re
-import subprocess
-import sys
 
 import numpy as np
 import pytest
@@ -145,22 +143,11 @@ def make_holly(cfg, monkeypatch):
     return make
 
 
-def holly_running() -> list[str]:
-    """The command lines of any Holly running on this PC (app.listen or app.speak)."""
-    if sys.platform != "win32":
-        out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
-    else:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }"],
-            capture_output=True, text=True).stdout
-    return [ln for ln in out.splitlines() if re.search(r"-m\s+app\.(?:listen|speak)\b", ln)]
-
-
 @pytest.fixture(scope="session")
 def lmstudio():
     """For tests that use the real LM Studio: it must be up, with no Holly using it."""
     from app.lmstudio import LmStudio
+    from app.scenarios import holly_running
 
     if running := holly_running():
         pytest.exit(f"Holly is running ({running[0][:80]}): close him before these tests", returncode=1)

@@ -151,16 +151,35 @@ character is in `persona/`: `system_prompt.md` and example exchanges in
 `examples.toml`. Each tool's rules for when and how he uses it sit beside its
 code in `app/`, as a `.md` with the same name (`search.md` for `search.py`).
 
-To check a change to his character, run the test prompts in
-`persona/test_prompts.txt` through him and score the replies (length,
-questions back, tools, a judge's 1-5 for sounding like Holly). Reports go to
-`runs/`; `--session` runs them as one conversation, which shows repetition.
-With LM Studio running and no other Holly:
+## Evals
+
+To check a change to his character, or another model, score him:
 
 ```
-.venv\Scripts\python -m app.persona_eval
-.venv\Scripts\python -m app.persona_eval --session
+.venv\Scripts\python -m app.evals                      # on holly.toml's model
+.venv\Scripts\python -m app.evals --model KEY --label try-31b
+.venv\Scripts\python -m app.evals --compare            # every scorecard so far
 ```
+
+It puts him through two things, with a silent voice and his memory in a
+temporary folder:
+
+- **Persona**: the prompts in `persona/test_prompts.txt`, each scored for
+  length, anything a voice can't say, an assistant's manners, questions back,
+  the tool it needs, lines recited from his examples, and repetition. A judge
+  scores each reply 1-5 for sounding like Holly.
+- **Scenarios** (`app/scenarios.py`): conversations with made-up memories
+  that need his tools and memory (recall, the clock, timers, search or
+  report, reading a report, announcing one), each run three times, since
+  the model varies.
+
+The judge is one fixed model (`[evals]` in `holly.toml`), whatever model is
+being tested, so scores compare between runs; it's loaded once every reply
+is written. A scorecard goes to `runs/`: Markdown with every reply, and JSON
+for `--compare`. `--only persona` or `--only scenarios` runs one part;
+`--session` asks the persona prompts as one conversation, which shows ruts.
+Run it with LM Studio up and no Holly running. A new model also wants its
+quirks in a `[models]` table in `holly.toml`.
 
 If you have Holly's lines from the show in `data/scripts/holly_exchanges.json`
 (not supplied), the judge is shown some of them for reference.

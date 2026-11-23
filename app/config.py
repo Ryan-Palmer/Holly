@@ -179,6 +179,12 @@ class ResearchConfig:
 
 
 @dataclass(frozen=True)
+class EvalsConfig:
+    judge: str = "google/gemma-4-26b-a4b-qat"  # scores replies, whatever model is under test
+    scenario_runs: int = 3  # runs of each scenario: Gemma varies
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
@@ -191,6 +197,7 @@ class Config:
     timers: TimersConfig = TimersConfig()
     spotify: SpotifyConfig = SpotifyConfig()
     research: ResearchConfig = ResearchConfig()
+    evals: EvalsConfig = EvalsConfig()
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -232,6 +239,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
                                  for k, v in raw.get("spotify", {}).items()}),
         research=ResearchConfig(**{k: (base / v if k == "dir" else v)
                                    for k, v in raw.get("research", {}).items()}),
+        evals=EvalsConfig(**raw.get("evals", {})),
     )
 
 

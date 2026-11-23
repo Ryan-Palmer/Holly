@@ -315,3 +315,12 @@ pause_s = 4.0
 timeout_s = 15.0
 max_minutes = 45.0  # of work per job; then the report is written from what's found
 max_errors = 5  # failed steps in a row before a job is given up
+
+[evals]
+# python -m app.evals: Holly's character and his use of tools and memory,
+# scored the same way every time, to compare models and changes (README).
+# The judge scores each reply for sounding like Holly: one fixed model,
+# whatever model is under test, so scores compare between runs. It's loaded
+# once every reply is written (two big models won't share the GPU).
+judge = "google/gemma-4-26b-a4b-qat"
+scenario_runs = 3  # runs of each scenario: Gemma varies

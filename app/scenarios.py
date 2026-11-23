@@ -12,6 +12,9 @@ import asyncio
 import dataclasses
 import datetime
 import json
+import re
+import subprocess
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -63,6 +66,19 @@ class SilentPlayer:
 
     async def wait_done(self):
         await self.done.wait()
+
+
+def holly_running() -> list[str]:
+    """The command lines of any Holly running on this PC (app.listen or app.speak): he'd be
+    sharing the GPU, and LM Studio, with whatever's tested."""
+    if sys.platform != "win32":
+        out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True).stdout
+    else:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process | ForEach-Object { $_.CommandLine }"],
+            capture_output=True, text=True).stdout
+    return [ln for ln in out.splitlines() if re.search(r"-m\s+app\.(?:listen|speak)\b", ln)]
 
 
 def quiet_config(tmp: Path, cfg: Config | None = None) -> Config:
