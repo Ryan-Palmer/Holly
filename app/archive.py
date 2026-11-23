@@ -437,13 +437,17 @@ def _unit(v) -> np.ndarray:
     return v / (np.linalg.norm(v) or 1.0)
 
 
+# Short words capitalised mid-sentence that aren't names (STOPWORDS has the rest).
+NOT_NAMES = {"ok", "oh", "no", "up", "us", "ah", "eh", "hi", "yes", "yeah"}
+
+
 def named_in(text: str, hits: list[tuple[str | None, str]]) -> list[str]:
     """Names (capitalised words, not the first of a sentence or a question word) in
     `text` that the entries found mention: who a question is about."""
-    words = re.findall(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]{2,})\b", text)
+    words = re.findall(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]+)\b", text)  # two letters or more: "Jo", "Ed"
     in_dates = {m.group(2).lower() for m in _DATE.finditer(text)}  # "22 June" is a date; "June" a name
     words = [w for w in dict.fromkeys(words) if w.lower() not in STOPWORDS and w.lower() not in WEEKDAYS
-             and w.lower() not in in_dates]
+             and w.lower() not in in_dates and w.lower() not in NOT_NAMES]
     return [w for w in words if any(re.search(rf"\b{w}\b", t) for _, t in hits)][:3]
 
 
