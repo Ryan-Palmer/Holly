@@ -63,9 +63,19 @@ LOST_THREAD = "Sorry. I seem to have lost my train of thought."
 # from his history, he said it a dozen times in a row and recalled only when told to.
 CLAIMED_RECALL = re.compile(
     r"\brecall tool\b|\b(?:used|checked|searched|looked (?:through|in)|consulted|scanned|gone through) "
-    r"(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|memory)\b|"
-    r"\bnot in my (?:records|archives?|files|memory)\b|\b(?:no|any) records? (?:of|about|on)\b",
+    r"(?:through |in )?(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|"
+    r"memory)\b|\bnot in my (?:records|archives?|files|memory)\b|\b(?:no|any) records? (?:of|about|on)\b",
     re.IGNORECASE)
+# Asked if he remembered something, he said he didn't, without calling recall ("the name's
+# gone a bit foggy", of Queeg; "lovely to meet you", to the crew's own girlfriend), and
+# recalled only when told to use it: his senility is for trivia, not for what's in his
+# archive. So asked about his memory, he can't say he doesn't remember until he's looked.
+MEMORY_ASKED = re.compile(r"\b(?:remember|recall|forgot(?:ten)?|forget|do you know (?:who|what|about)|"
+                          r"who(?:'s| is| was)|you met)\b", re.IGNORECASE)
+FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really |honestly )?(?:remember|recall|"
+                    r"place|bring (?:it|that|them|her|him) to mind)\b|\bslipped my mind\b|\bgone (?:a bit )?"
+                    r"(?:foggy|fuzzy|blurry|hazy)\b|\bnot sticking\b|\bno idea who\b|\bnever heard of\b|"
+                    r"\bdoesn't ring a bell\b", re.IGNORECASE)
 # Asked to research something, he promised to without calling the research tool ("I'll get
 # on with that later and come back to you"), and nothing was ever researched. So when the
 # crew ask for research and he promises it, the research tool must have been called.
@@ -361,6 +371,8 @@ class Holly:
                     return "a stray 'thought'"
                 if not recalled and self.archive and CLAIMED_RECALL.search(sentence):
                     return "he said he'd looked in his memory without calling recall"
+                if not recalled and self.archive and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
+                    return "he said he didn't remember without calling recall"
                 if (not researched and self.research and RESEARCH_ASKED.search(user)
                         and PROMISED_RESEARCH.search(sentence)):
                     return "he promised research without calling the research tool"

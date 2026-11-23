@@ -83,10 +83,14 @@ never mention episodes, series, the show, novels, books, actors or versions.
 Where the entries differ, go with the television account, without saying so.
 A question about an episode is about what happened then; a name can be the
 one someone went by there (in a game, a disguise, another reality).
-The question is Holly's, put to his own memory: "you" in it is Holly, and "we"
-Holly and the crew, so "when did you first meet Kryten?" asks when Holly and
-the crew did, as the ship's records tell it.
-NOTHING: only if none of the entries is about the question at all."""
+The question is Holly's, put to his own memory: "you", "I" and "me" in it are
+Holly, and "we" Holly and the crew, so "when did you first meet Kryten?" asks
+when Holly and the crew did, as the ship's records tell it. Holly meets people
+by being talked to and told about them: "did I meet Jo?" is answered yes if
+she was there or talked about, and what was said of her.
+If the entries mention who or what was asked about but don't answer it exactly,
+say what they do say about them.
+NOTHING: only if none of the entries mentions who or what was asked about."""
 
 # Words that match everything, so they're left out of the keyword search.
 STOPWORDS = set("""
@@ -320,10 +324,28 @@ class Archive:
         with self.lock:
             # The day may be in either: asked "what did we talk about yesterday?", he
             # searched for "conversation topics", and yesterday was never looked at.
+            # That day's entries that match the words asked about come first, then the rest
+            # in time order, up to DAY_ENTRIES: taken in time order alone, a busy day (147
+            # entries one Sunday) gave the judge its first hour, and "who came over to make
+            # lasagne yesterday?" was never seen.
+            asked = words + [w for w in key_words(question) if w not in words]
             for d in sorted(days_in(f"{query} {question}", on)):
-                rows = self.db.execute("SELECT rowid, at, text FROM entries WHERE substr(at, 1, 10) = ? "
-                                       "ORDER BY at LIMIT ?", (d.isoformat(), DAY_ENTRIES)).fetchall()
-                found |= {r[0]: (r[1], r[2]) for r in rows}
+                rows = []
+                if asked:
+                    rows = self.db.execute(
+                        "SELECT rowid, at, text FROM entries WHERE entries MATCH ? AND substr(at, 1, 10) = ? "
+                        "ORDER BY bm25(entries) LIMIT ?",
+                        (" OR ".join(f'"{w}"' for w in asked), d.isoformat(), DAY_ENTRIES)).fetchall()
+                if len(rows) < DAY_ENTRIES:
+                    rows += self.db.execute(
+                        "SELECT rowid, at, text FROM entries WHERE substr(at, 1, 10) = ? ORDER BY at LIMIT ?",
+                        (d.isoformat(), DAY_ENTRIES)).fetchall()
+                day_rows: dict[int, tuple[str | None, str]] = {}
+                for r in rows:
+                    if len(day_rows) == DAY_ENTRIES:
+                        break
+                    day_rows.setdefault(r[0], (r[1], r[2]))
+                found |= day_rows
             if found:
                 # A day was asked about, and he talked then: that day is the answer. Close
                 # matches from other days made the judge answer "yesterday" with Thursday.
@@ -374,6 +396,20 @@ class Archive:
             return self._nothing(query, t1 - t0, 0)
         entries = "\n\n".join(text[:ENTRY_CHARS] for _, text in sorted(hits, key=lambda h: h[0] or ""))
         about = f"\n(The question is about {', '.join(day(d) for d in days)}.)" if days else ""
+        text = self._judge(entries, question, query, about)
+        if text.upper().startswith("NOTHING") and (names := named_in(f"{query} {question}", hits)):
+            # "Did I meet Jo yesterday?" got NOTHING every way it was put, with 14 entries
+            # about her; "who is Jo?" got a full answer. Yes-or-no questions about someone
+            # trip it up, so it's asked plainly what the entries say about them.
+            text = self._judge(entries, f"What do these entries say about {' and '.join(names)}?", query, about)
+        t2 = time.perf_counter()
+        head, _, rest = text.partition(":")
+        if not text or head.strip().upper().startswith("NOTHING"):
+            return self._nothing(query, t1 - t0, t2 - t1, len(hits))
+        answer = rest.strip() if head.strip().upper() == "ANSWER" else text
+        return Lookup(query, answer, len(hits), (t1 - t0) * 1000, (t2 - t1) * 1000, [query])
+
+    def _judge(self, entries: str, question: str, query: str, about: str) -> str:
         reply = self.lm.openai.chat.completions.create(
             model=self.model,
             messages=[{"role": "system", "content": JUDGE_PROMPT.format(today=today())},
@@ -383,13 +419,7 @@ class Archive:
             max_tokens=self.cfg.summary_max_tokens,
             reasoning_effort="none",
         )
-        text = (reply.choices[0].message.content or "").strip()
-        t2 = time.perf_counter()
-        head, _, rest = text.partition(":")
-        if not text or head.strip().upper().startswith("NOTHING"):
-            return self._nothing(query, t1 - t0, t2 - t1, len(hits))
-        answer = rest.strip() if head.strip().upper() == "ANSWER" else text
-        return Lookup(query, answer, len(hits), (t1 - t0) * 1000, (t2 - t1) * 1000, [query])
+        return (reply.choices[0].message.content or "").strip()
 
     @staticmethod
     def _nothing(query: str, search_s: float, judge_s: float, n: int = 0) -> Lookup:
@@ -405,6 +435,16 @@ class Archive:
 def _unit(v) -> np.ndarray:
     v = np.asarray(v, dtype=np.float32)
     return v / (np.linalg.norm(v) or 1.0)
+
+
+def named_in(text: str, hits: list[tuple[str | None, str]]) -> list[str]:
+    """Names (capitalised words, not the first of a sentence or a question word) in
+    `text` that the entries found mention: who a question is about."""
+    words = re.findall(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]{2,})\b", text)
+    in_dates = {m.group(2).lower() for m in _DATE.finditer(text)}  # "22 June" is a date; "June" a name
+    words = [w for w in dict.fromkeys(words) if w.lower() not in STOPWORDS and w.lower() not in WEEKDAYS
+             and w.lower() not in in_dates]
+    return [w for w in words if any(re.search(rf"\b{w}\b", t) for _, t in hits)][:3]
 
 
 def days_in(text: str, on: datetime.date) -> set[datetime.date]:
