@@ -411,16 +411,9 @@ class Archive:
         return Lookup(query, answer, len(hits), (t1 - t0) * 1000, (t2 - t1) * 1000, [query])
 
     def _judge(self, entries: str, question: str, query: str, about: str) -> str:
-        reply = self.lm.openai.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "system", "content": JUDGE_PROMPT.format(today=today())},
-                      {"role": "user", "content": f"{entries}\n\nQuestion: {question}\n(Searched for: "
-                                                  f"{query}){about}"}],
-            temperature=0.2,
-            max_tokens=self.cfg.summary_max_tokens,
-            reasoning_effort="none",
-        )
-        return (reply.choices[0].message.content or "").strip()
+        return self.lm.ask(JUDGE_PROMPT.format(today=today()),
+                           f"{entries}\n\nQuestion: {question}\n(Searched for: {query}){about}",
+                           self.model, self.cfg.summary_max_tokens)
 
     @staticmethod
     def _nothing(query: str, search_s: float, judge_s: float, n: int = 0) -> Lookup:

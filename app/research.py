@@ -452,19 +452,13 @@ class Research:
         return row
 
     async def _ask(self, system: str, user: str, max_tokens: int) -> str:
-        text, _ = await self.lm.complete([{"role": "system", "content": system},
-                                          {"role": "user", "content": user}], self.model, max_tokens)
+        text, _ = await self.lm.aask(system, user, self.model, max_tokens)
         return text
 
     def _expand(self, words: str) -> str:
         """What a report the crew mean by `words` would contain (see Reports.find). Blocking,
         ~0.3 s: called from the research tool, in a worker thread."""
-        if not getattr(self.lm, "openai", None):
-            return ""
-        reply = self.lm.openai.chat.completions.create(
-            model=self.model, temperature=0.0, max_tokens=60, reasoning_effort="none",
-            messages=[{"role": "system", "content": EXPAND_PROMPT}, {"role": "user", "content": words}])
-        return reply.choices[0].message.content or ""
+        return self.lm.ask(EXPAND_PROMPT, words, self.model, 60, temperature=0.0)
 
     async def _plan(self, job: dict) -> str:
         text = await self._ask(PLAN_PROMPT.format(today=today(), n=self.cfg.questions),

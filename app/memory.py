@@ -69,21 +69,8 @@ async def write_notes(lm: LmStudio, model: str, earlier: str, transcript: str, m
     # (8K tokens of it), Gemma kept only what was in the transcript.
     user = f"The conversation to fold in:\n{transcript}\n\n" + (
         f"His notes so far:\n{earlier}" if earlier else "He has no notes yet.")
-    args = lm._chat_args([{"role": "system", "content": NOTES_PROMPT.format(words=words, today=today())},
-                          {"role": "user", "content": user}], model)
     # Temperature 0: at 0.3, one run in two dropped the cat from a fold. A little over
     # the budget, so a note isn't cut off mid-line; any part line is dropped.
-    args |= {"temperature": 0.0, "max_tokens": max_tokens + max_tokens // 4}
-    parts: list[str] = []
-    cut = False
-    stream = await lm.aopenai.chat.completions.create(**args)
-    try:
-        async for chunk in stream:
-            if not chunk.choices:
-                continue
-            parts.append(chunk.choices[0].delta.content or "")
-            cut = cut or chunk.choices[0].finish_reason == "length"
-    finally:
-        await stream.close()
-    notes = "".join(parts).strip()
+    notes, cut = await lm.aask(NOTES_PROMPT.format(words=words, today=today()), user, model,
+                               max_tokens + max_tokens // 4, temperature=0.0)
     return notes.rsplit("\n", 1)[0].strip() if cut else notes

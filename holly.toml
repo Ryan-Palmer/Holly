@@ -32,6 +32,21 @@ temperature = 0.8
 # A poem or short story takes 100-250 tokens.
 max_tokens = 300
 
+# What each chat model needs, over [llm]: its table is used when it's the model
+# above, or picked with --model. A table may set context_length,
+# reasoning_effort, temperature, max_tokens, and two quirks:
+#   stray_words: a sentence of only one of these is dropped, unsaid. Gemma
+#     sometimes starts a reply with a lone "thought", its thinking's label.
+#   tool_choice: whether it honours "required", which makes a reply call a
+#     tool (true by default). Without it, a reply he redoes because he
+#     claimed a tool he hadn't called is just asked again.
+# A new model wants a table, and a run of the evals (README) before use.
+[models."google/gemma-4-26b-a4b-qat"]
+stray_words = ["thought"]
+
+[models."google/gemma-4-31b-qat"]
+stray_words = ["thought"]
+
 [tts.voxcpm]
 # VoxCPM2 clones the voice from a reference clip and its transcript, made by
 # voice/prep.py export. Runs in this process, on the GPU, at 48 kHz.

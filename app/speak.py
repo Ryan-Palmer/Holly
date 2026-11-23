@@ -168,6 +168,8 @@ class Holly:
                  forget: bool = False, reset: bool = False, cfg=None):
         """`cfg`, if given, instead of holly.toml's (app/persona_eval.py: his memory elsewhere)."""
         cfg = cfg or load_config()
+        # The model's own settings and quirks ([models."key"] in holly.toml).
+        cfg = dataclasses.replace(cfg, llm=cfg.llm.for_model(model))
         if face is not None:
             cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
         if search is not None:
@@ -175,7 +177,8 @@ class Holly:
         if not torch.cuda.is_available():
             sys.exit("PyTorch can't see the GPU. Install a CUDA 12.8+ build (see README).")
         self.cfg = cfg
-        self.model = model or cfg.llm.model
+        self.model = cfg.llm.model
+        self.stray_words = {w.lower() for w in cfg.llm.stray_words}
         self.lm = LmStudio(cfg.llm)
         # Every request sends the same tools: they're part of the start of the
         # prompt, so changing them between requests would break LM Studio's cache.
@@ -379,8 +382,10 @@ class Holly:
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
-            # cracking", "I'll get stuck into it", in ever new words, and started nothing.
-            choice = "required" if answering_choice and self.research and REPORT_WANTED.search(user) else None
+            # cracking", "I'll get stuck into it", in ever new words, and started nothing. (If the
+            # model honours it: else a retry is just asked again.)
+            required = "required" if self.cfg.llm.tool_choice else None
+            choice = required if answering_choice and self.research and REPORT_WANTED.search(user) else None
 
             async def say(sentence: str) -> None:
                 times.first_sentence = times.first_sentence or time.perf_counter()
@@ -390,8 +395,8 @@ class Holly:
                 """Why this sentence mustn't be said, if it mustn't."""
                 if retried:
                     return None
-                if sentence.strip().strip(".!").lower() == "thought":  # a stray word from Gemma
-                    return "a stray 'thought'"
+                if (word := sentence.strip().strip(".!").lower()) in self.stray_words:  # Gemma's "thought"
+                    return f"a stray {word!r}"
                 if not recalled and self.archive and CLAIMED_RECALL.search(sentence):
                     return "he said he'd looked in his memory without calling recall"
                 if not recalled and self.archive and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
@@ -434,7 +439,7 @@ class Holly:
                     # Not said: asked again, with a tool required if he claimed one.
                     print(f"\n{DIM}  ({redo}: not said; asking again){RESET}", flush=True)
                     retried, chunker = True, SentenceChunker()
-                    choice = "required" if "recall" in redo or "research" in redo else None
+                    choice = required if "recall" in redo or "research" in redo else None
                     print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
                     continue
                 choice = None

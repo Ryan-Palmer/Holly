@@ -119,11 +119,8 @@ def reference_lines(n: int = 16) -> str:
 
 
 def judge(lm, model: str, reference: str, prompt: str, reply: str) -> tuple[int, str]:
-    out = lm.openai.chat.completions.create(
-        model=model, temperature=0.0, max_tokens=80, reasoning_effort="none",
-        messages=[{"role": "system", "content": JUDGE_PROMPT.format(reference=reference)},
-                  {"role": "user", "content": f"Said to him: {prompt}\nHis reply: {reply}"}])
-    text = (out.choices[0].message.content or "").strip()
+    text = lm.ask(JUDGE_PROMPT.format(reference=reference), f"Said to him: {prompt}\nHis reply: {reply}", model,
+                  80, temperature=0.0)
     m = re.search(r"SCORE:\s*([1-5])", text)
     return (int(m.group(1)) if m else 0), text.split(".", 1)[-1].strip()[:160]
 

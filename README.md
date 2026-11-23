@@ -92,7 +92,7 @@ spoke he's awake and listens without it.
 | `--no-wake` | answer everything, without his name (`app.listen`) |
 | `--forget` | start afresh, setting his memory of you aside |
 | `--reset` | start afresh, deleting his memory of you |
-| `--model KEY` | another LM Studio chat model |
+| `--model KEY` | another LM Studio chat model (its settings: `[models]` in `holly.toml`) |
 
 Typed, `/reset` clears his memory and `/quit` leaves.
 
@@ -145,8 +145,8 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 
 ## Configuration
 
-`holly.toml` holds every setting, with comments: models, microphone and
-speakers, wake words, memory budgets, search providers and more. Holly's
+`holly.toml` holds every setting, with comments: models (and each chat
+model's quirks), microphone and speakers, wake words, memory budgets, search providers and more. Holly's
 character is in `persona/`: `system_prompt.md` and example exchanges in
 `examples.toml`. Each tool's rules for when and how he uses it sit beside its
 code in `app/`, as a `.md` with the same name (`search.md` for `search.py`).

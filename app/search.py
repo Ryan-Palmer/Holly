@@ -299,19 +299,11 @@ class Searcher:
     def _judge(self, question: str, found: list[str], last: bool, n_results: int) -> tuple[str, str]:
         """("ANSWER", text), ("READ", result number), ("SEARCH", query) or ("NO ANSWER", "")."""
         thinking = self.cfg.summary_reasoning != "none"
-        reply = self.lm.openai.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": SUMMARY_PROMPT.format(
-                    today=today(), otherwise=LAST_ROUND if last else SEARCH_AGAIN)},
-                {"role": "user", "content": f"Question: {question}\n\n" + "\n\n".join(found)},
-            ],
-            temperature=0.2,
+        text = self.lm.ask(
+            SUMMARY_PROMPT.format(today=today(), otherwise=LAST_ROUND if last else SEARCH_AGAIN),
+            f"Question: {question}\n\n" + "\n\n".join(found), self.model,
             # Thinking spends tokens before the reply.
-            max_tokens=self.cfg.summary_max_tokens + (2000 if thinking else 0),
-            reasoning_effort=self.cfg.summary_reasoning,
-        )
-        text = (reply.choices[0].message.content or "").strip()
+            self.cfg.summary_max_tokens + (2000 if thinking else 0), reasoning=self.cfg.summary_reasoning)
         head, _, rest = text.partition(":")
         head = head.strip().upper()
         if NO_ANSWER in text.upper()[:20] or not text:

@@ -12,7 +12,6 @@ import json
 import re
 import subprocess
 import sys
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -36,11 +35,6 @@ def cfg(tmp_path):
     )
 
 
-def reply_of(text: str):
-    """A chat completion, as the OpenAI client returns one, saying `text`."""
-    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
-
-
 class FakeLm:
     """Stands in for app.lmstudio.LmStudio.
 
@@ -55,7 +49,6 @@ class FakeLm:
         self.requests: list[dict] = []  # each reply's request: messages, tools, tool_choice
         self.side_requests: list[dict] = []
         self.prewarms = 0
-        self.openai = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=self._create)))
 
     async def astream_reply(self, messages, timing, model=None, tools=None, calls=None, tool_choice=None):
         self.requests.append(dict(messages=messages, tools=tools, tool_choice=tool_choice))
@@ -71,17 +64,13 @@ class FakeLm:
             calls.extend({"id": f"call{n}_{i}", "name": name, "arguments": json.dumps(args)}
                          for i, (name, args) in enumerate(tool_calls))
 
-    def _answer(self, messages, **kw) -> str:
-        system = next((m["content"] for m in messages if m["role"] == "system"), "")
-        user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        self.side_requests.append(dict(system=system, user=user, **kw))
-        return self.side(system, user)
+    def ask(self, system, user, model=None, max_tokens=200, temperature=0.2, reasoning="none"):
+        self.side_requests.append(dict(system=system, user=user, model=model, max_tokens=max_tokens,
+                                       temperature=temperature, reasoning=reasoning))
+        return self.side(system, user).strip()
 
-    def _create(self, *, messages, **kw):
-        return reply_of(self._answer(messages, **kw))
-
-    async def complete(self, messages, model=None, max_tokens=800, temperature=0.2):
-        return self._answer(messages), False
+    async def aask(self, system, user, model=None, max_tokens=800, temperature=0.2, reasoning="none"):
+        return self.ask(system, user, model, max_tokens, temperature, reasoning), False
 
     async def prewarm(self, messages, model=None, tools=None):
         self.prewarms += 1
@@ -148,7 +137,7 @@ def make_holly(cfg, monkeypatch):
     def make(lm, **kwargs):
         monkeypatch.setattr(speak.torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(speak, "LmStudio", lambda llm_cfg: lm)
-        holly = speak.Holly(None, face=False, cfg=kwargs.pop("cfg", cfg), **kwargs)
+        holly = speak.Holly(kwargs.pop("model", None), face=False, cfg=kwargs.pop("cfg", cfg), **kwargs)
         holly.tts, holly.player = SilentVoice(), SilentPlayer()
         holly.reminded = True
         return holly

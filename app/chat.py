@@ -27,8 +27,9 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     cfg = load_config()
-    model = args.model or cfg.llm.model
-    lm = LmStudio(cfg.llm)
+    llm = cfg.llm.for_model(args.model)  # the model's own settings ([models."key"] in holly.toml)
+    model = llm.model
+    lm = LmStudio(llm)
     convo = Conversation(cfg.persona)
 
     print(f"{DIM}Loading {model}...{RESET}", end="", flush=True)

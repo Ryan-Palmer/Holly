@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,6 +21,21 @@ class LlmConfig:
     reasoning_effort: str
     temperature: float
     max_tokens: int
+    # A model's quirks, usually set in its [models."key"] table (see for_model):
+    stray_words: tuple[str, ...] = ()  # a sentence of only one of these is dropped, unsaid
+    tool_choice: bool = True  # it honours tool_choice "required" (a reply that must call a tool)
+    # Each chat model's settings: [llm]'s, with its [models."key"] table over them ("": none).
+    profiles: dict = field(default_factory=dict, compare=False, repr=False)
+
+    def for_model(self, model: str | None = None) -> LlmConfig:
+        """These settings for `model` (by default, [llm]'s own): a chat model picked with
+        --model gets its own context length, quirks and the rest."""
+        model = model or self.model
+        return dataclasses.replace(self, model=model, **self.profiles.get(model, self.profiles.get("", {})))
+
+
+# What a [models."key"] table may set.
+PROFILE_KEYS = ("context_length", "reasoning_effort", "temperature", "max_tokens", "stray_words", "tool_choice")
 
 
 @dataclass(frozen=True)
@@ -195,7 +211,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         ),
     )
     return Config(
-        llm=LlmConfig(**raw["llm"]),
+        llm=_llm_config(raw["llm"], raw.get("models", {})),
         tts=tts,
         audio=AudioConfig(**raw["audio"]),
         listen=ListenConfig(**raw["listen"]),
@@ -217,6 +233,22 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         research=ResearchConfig(**{k: (base / v if k == "dir" else v)
                                    for k, v in raw.get("research", {}).items()}),
     )
+
+
+def _llm_config(llm: dict, models: dict) -> LlmConfig:
+    """[llm], with the [models."key"] table of its model over it."""
+    def settings(table: dict) -> dict:
+        return {k: tuple(v) if k == "stray_words" else v for k, v in table.items()}
+
+    for key, table in models.items():
+        if unknown := set(table) - set(PROFILE_KEYS):
+            raise ValueError(f"[models.{key!r}] in holly.toml can't set {', '.join(sorted(unknown))}; "
+                             f"only {', '.join(PROFILE_KEYS)}")
+    # Every key, defaults too: else a model without a table kept the last one's quirks.
+    defaults = {f.name: f.default for f in dataclasses.fields(LlmConfig) if f.name in PROFILE_KEYS}
+    base = settings(defaults | {k: llm[k] for k in PROFILE_KEYS if k in llm})
+    profiles = {"": base} | {key: base | settings(table) for key, table in models.items()}
+    return LlmConfig(**settings(llm), profiles=profiles).for_model()
 
 
 def _search_config(s: dict, base: Path) -> SearchConfig:

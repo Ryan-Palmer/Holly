@@ -163,16 +163,32 @@ class LmStudio:
         resp = self.openai.embeddings.create(model=model, input=texts)
         return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
-    async def complete(self, messages: list[dict], model: str | None = None, max_tokens: int = 800,
-                       temperature: float = 0.2) -> tuple[str, bool]:
-        """A whole reply, for work out of Holly's sight. Streamed, so cancelling it
-        stops LM Studio writing. Returns (text, cut): cut if it ran out of tokens."""
-        args = self._chat_args(messages, model)
-        args |= {"temperature": temperature, "max_tokens": max_tokens}
-        del args["stream_options"]
+    # Side tasks ------------------------------------------------------
+    # Work out of Holly's sight (recall's judge, search's, his notes, research): one
+    # system prompt and one user message, no tools. They don't think ("none") unless
+    # asked to: thinking costs seconds, and these are short.
+
+    def _side_args(self, system: str, user: str, model: str | None, max_tokens: int, temperature: float,
+                   reasoning: str) -> dict:
+        return dict(model=model or self.cfg.model, temperature=temperature, max_tokens=max_tokens,
+                    reasoning_effort=reasoning, messages=[{"role": "system", "content": system},
+                                                         {"role": "user", "content": user}])
+
+    def ask(self, system: str, user: str, model: str | None = None, max_tokens: int = 200,
+            temperature: float = 0.2, reasoning: str = "none") -> str:
+        """A whole reply, blocking: call it from a worker thread."""
+        reply = self.openai.chat.completions.create(
+            **self._side_args(system, user, model, max_tokens, temperature, reasoning))
+        return (reply.choices[0].message.content or "").strip()
+
+    async def aask(self, system: str, user: str, model: str | None = None, max_tokens: int = 800,
+                   temperature: float = 0.2, reasoning: str = "none") -> tuple[str, bool]:
+        """A whole reply, streamed, so cancelling it stops LM Studio writing. Returns
+        (text, cut): cut if it ran out of tokens."""
         parts: list[str] = []
         cut = False
-        stream = await self.aopenai.chat.completions.create(**args)
+        stream = await self.aopenai.chat.completions.create(
+            **self._side_args(system, user, model, max_tokens, temperature, reasoning), stream=True)
         try:
             async for chunk in stream:
                 if not chunk.choices:

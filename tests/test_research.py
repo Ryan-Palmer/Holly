@@ -120,10 +120,10 @@ def test_open(cfg, web, monkeypatch):
 def test_a_cancelled_step_leaves_the_job_as_it_was(cfg, web):
     slow = FakeLm(side=gemma)
 
-    async def never(messages, model=None, max_tokens=800, temperature=0.2):
+    async def never(*args, **kwargs):
         await asyncio.sleep(10)
 
-    slow.complete = never
+    slow.aask = never
     r = research(cfg, slow)
     r.handle(START)
     before = json.dumps({**r.jobs[0], "work_s": 0})
