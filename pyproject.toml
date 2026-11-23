@@ -20,6 +20,14 @@ dependencies = [
     "tzdata; sys_platform == 'win32'",  # time zones for the clock tool
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["lmstudio: needs LM Studio with Holly's models, and no Holly running (run with -m lmstudio)"]
+addopts = "-m 'not lmstudio'"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

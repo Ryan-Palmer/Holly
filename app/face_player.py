@@ -180,14 +180,20 @@ class FacePlayer:
                     self.first_voice = msg["first_voice"]
                     self.last_played = msg.get("last_played")
                     self.underruns = msg["underruns"]
-                    if self._loop and self._done:
-                        self._loop.call_soon_threadsafe(self._done.set)
+                    self._finished()
         except OSError:
             # The window was closed: the next call goes to the fallback, and a reply
             # waiting for the face to finish isn't left waiting forever.
             self._closed = True
-            if self._loop and self._done:
+            self._finished()
+
+    def _finished(self) -> None:
+        """From the reader thread: the turn's audio has played (or the face has gone)."""
+        if self._loop and self._done:
+            try:
                 self._loop.call_soon_threadsafe(self._done.set)
+            except RuntimeError:  # the loop has closed: Holly is shutting down
+                pass
 
     def _recv(self) -> bytes:
         while True:

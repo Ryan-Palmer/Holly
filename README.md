@@ -164,3 +164,19 @@ With LM Studio running and no other Holly:
 
 If you have Holly's lines from the show in `data/scripts/holly_exchanges.json`
 (not supplied), the judge is shown some of them for reference.
+
+## Tests
+
+```
+.venv\Scripts\python -m pip install -e .[dev]
+.venv\Scripts\python -m pytest                 # fast: no GPU, LM Studio or network
+.venv\Scripts\python -m pytest -m lmstudio     # Holly on the real model
+```
+
+The fast tests stand in for the model, the web and the speakers: dates and
+timers, recall, the reports and research, his history, the face going away,
+and his reply loop with its safety nets. The `lmstudio` ones are
+conversations through his real reply loop on the real model
+(`app/scenarios.py`), with made-up memories in a temporary folder; they need
+LM Studio, and no Holly running. Gemma varies, so one of them may fail now
+and then: run it again before taking it for a regression.
