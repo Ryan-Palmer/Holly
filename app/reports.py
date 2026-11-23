@@ -120,14 +120,23 @@ class Reports:
         row = {k: job.get(k) for k in COLUMNS if k != "n"}
         row["announced"] = int(bool(row["announced"]))
         row["tries"] = row["tries"] or 0
+        # Added again (its queue's save failed, and it was shelved again at the next start), a
+        # report keeps its number and whether it was announced: replaced outright, it was given
+        # a new number, its old text and vector were left behind, and it was announced twice.
+        keep = ("n", "announced", "tries", "retry")
         with self.lock:
-            cur = self.db.execute(f"INSERT OR REPLACE INTO reports ({', '.join(row)}) VALUES "
-                                  f"({', '.join('?' * len(row))})", list(row.values()))
-            row["n"] = cur.lastrowid
+            self.db.execute(f"INSERT INTO reports ({', '.join(row)}) VALUES ({', '.join('?' * len(row))}) "
+                            "ON CONFLICT(id) DO UPDATE SET "
+                            + ", ".join(f"{k} = excluded.{k}" for k in row if k not in keep + ("id",)),
+                            list(row.values()))
+            stored = self.db.execute(f"SELECT {', '.join(keep)} FROM reports WHERE id = ?", (row["id"],)).fetchone()
+            row.update(dict(stored))
             self.db.execute("DELETE FROM report_text WHERE rowid = ?", (row["n"],))
+            self.db.execute("DELETE FROM report_vectors WHERE n = ?", (row["n"],))  # remade from what it is now
             self.db.execute("INSERT INTO report_text (rowid, title, request, summary, body) VALUES (?, ?, ?, ?, ?)",
                             (row["n"], row["title"], row["request"], row["summary"] or "", body))
             self.db.commit()
+        self.unannounced = [r for r in self.unannounced if r["n"] != row["n"]]
         if not row["announced"]:
             self.unannounced.append(row)
         return row
@@ -207,7 +216,8 @@ class Reports:
 
     # Finding ----------------------------------------------------------------
 
-    def find(self, words: str, least: float = 0.0, now: datetime.datetime | None = None) -> list[dict]:
+    def find(self, words: str, least: float = 0.0, now: datetime.datetime | None = None,
+             widen: bool = True) -> list[dict]:
         """The finished reports the crew may mean, best first: the latest, with no words
         that say which; the one with exactly that title; else those scoring best (see the
         module's notes) and above `least`. One only when it's clearly the one (see sure);
@@ -229,7 +239,7 @@ class Reports:
         # the crew's own words. Always, not only when unsure: "the coffee report" was sure of
         # the caffeine report, and never looked at "Budget espresso machines".
         extra: set[str] = set()
-        if self.expand:
+        if self.expand and widen:
             try:
                 extra = telling(self.expand(words)) - asked
             except Exception as e:  # LM Studio busy or gone: the crew's words alone

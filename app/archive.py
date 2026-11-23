@@ -397,7 +397,8 @@ class Archive:
         entries = "\n\n".join(text[:ENTRY_CHARS] for _, text in sorted(hits, key=lambda h: h[0] or ""))
         about = f"\n(The question is about {', '.join(day(d) for d in days)}.)" if days else ""
         text = self._judge(entries, question, query, about)
-        if text.upper().startswith("NOTHING") and (names := named_in(f"{query} {question}", hits)):
+        names = list(dict.fromkeys(named_in(query, hits, keywords=True) + named_in(question, hits)))[:3]
+        if text.upper().startswith("NOTHING") and names:
             # "Did I meet Jo yesterday?" got NOTHING every way it was put, with 14 entries
             # about her; "who is Jo?" got a full answer. Yes-or-no questions about someone
             # trip it up, so it's asked plainly what the entries say about them.
@@ -441,10 +442,13 @@ def _unit(v) -> np.ndarray:
 NOT_NAMES = {"ok", "oh", "no", "up", "us", "ah", "eh", "hi", "yes", "yeah"}
 
 
-def named_in(text: str, hits: list[tuple[str | None, str]]) -> list[str]:
+def named_in(text: str, hits: list[tuple[str | None, str]], keywords: bool = False) -> list[str]:
     """Names (capitalised words, not the first of a sentence or a question word) in
-    `text` that the entries found mention: who a question is about."""
-    words = re.findall(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]+)\b", text)  # two letters or more: "Jo", "Ed"
+    `text` that the entries found mention: who a question is about. With `keywords`,
+    `text` is recall's query, words not a sentence, so its first word counts too: there,
+    "Loki" first was the name the question ("do I remember him?") left out."""
+    lead = r"" if keywords else r"(?<![.?!]\s)(?<!^)"
+    words = re.findall(lead + r"\b([A-Z][a-z]+)\b", text)  # two letters or more: "Jo", "Ed"
     in_dates = {m.group(2).lower() for m in _DATE.finditer(text)}  # "22 June" is a date; "June" a name
     words = [w for w in dict.fromkeys(words) if w.lower() not in STOPWORDS and w.lower() not in WEEKDAYS
              and w.lower() not in in_dates and w.lower() not in NOT_NAMES]

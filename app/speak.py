@@ -605,14 +605,13 @@ class Holly:
             question = str(args.get("question") or "").strip() or user
             asked = f"{query} {question} {user}"
             if self.research and "report" in asked.lower() and (
-                    reports := await asyncio.to_thread(self.research.find, asked)):
+                    reports := await asyncio.to_thread(self.research.find, asked)
+                    ) and len(reports) == 1 and reports[0].get("sure"):
                 # Asked what a report said, he recalled (fragments, or nothing) rather than reading
-                # it, and wasn't moved by a hint to read it: so it's read for him, or, if more than
-                # one may be meant, he's told to ask which.
-                if len(reports) > 1 or not reports[0].get("sure"):
-                    print(f"{DIM}  (recalling a report: which? {'; '.join(r['title'] for r in reports)}){RESET}",
-                          flush=True)
-                    return self.research.which(reports)
+                # it, and wasn't moved by a hint to read it: so it's read for him. Only when one
+                # report is clearly meant, though: "what did the weather report say?" is a
+                # question about a conversation, and given a shortlist of research reports instead
+                # of recall, he'd have said he had no such report. Anything less sure, recall runs.
                 print(f"{DIM}  (recalling a report: reading '{reports[0]['title']}' instead){RESET}", flush=True)
                 return self.research.handle({"action": "read", "title": reports[0]["title"]})
             label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, question,
@@ -634,13 +633,15 @@ class Holly:
             # Told to "state them plainly", he recited the judge's sentences word for word.
             return (f"{found.answer}\n(This is your memory of it, and it's right. Tell it in your own "
                     "words, as something you remember, keeping the facts as they are.)")
-        if call["name"] == "recall" and self.research and (
+        if call["name"] == "recall" and self.research and self.research.finished_titles() and (
                 reports := await asyncio.to_thread(
-                    self.research.find, f"{args.get('query', '')} {args.get('question', '')} {user}", 1.0)
+                    self.research.find, f"{args.get('query', '')} {args.get('question', '')} {user}", 1.0, False)
                 ) and len(reports) == 1 and reports[0].get("sure"):
             # Nothing in his archive, and a report clearly covers it ("that marshmallow toy you
             # found"): told he had reports to read, he said "I'll have to check" and didn't. Only
-            # one clear winner, though: anything less, and he's told their titles (below).
+            # one clear winner, though: anything less, and he's told their titles (below). Not
+            # widened by Gemma (Reports.find's expand), and not at all with no reports: every
+            # miss paid for it, a third of a second or more before "I don't remember".
             print(f"{DIM}  (not in his archive: reading the report '{reports[0]['title']}'){RESET}", flush=True)
             return ("Your archive has nothing on it, but this research report of yours may be what's meant. "
                     "If it doesn't answer what was asked (what was said or done, say), you don't remember: "

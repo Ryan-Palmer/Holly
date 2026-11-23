@@ -29,6 +29,7 @@ import datetime
 import json
 import os
 import re
+import threading
 import time
 from urllib.parse import quote, urlparse
 
@@ -210,6 +211,9 @@ class Research:
         self.model = model
         self.file = cfg.dir / "jobs.json"
         self.jobs: list[dict] = []
+        # The tool runs in a worker thread (Holly._run_tool), research steps on the event loop:
+        # both change the queue and write jobs.json, so they take turns.
+        self._lock = threading.RLock()
         self.last_search = 0.0  # time.monotonic() of the last web search, for pacing
         self.shelf = Reports(cfg.dir / "reports.db", lm, embed_model, self._expand)  # the finished ones
         # Wikimedia refuses a User-Agent with no way to reach whoever runs it (403).
@@ -231,9 +235,10 @@ class Research:
     def _save(self) -> None:
         tmp = self.file.with_suffix(".tmp")
         try:
-            self.cfg.dir.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(self.jobs, indent=1), encoding="utf-8")
-            os.replace(tmp, self.file)
+            with self._lock:
+                self.cfg.dir.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(json.dumps(self.jobs, indent=1), encoding="utf-8")
+                os.replace(tmp, self.file)
         except OSError as e:
             print(f"Couldn't save Holly's research: {e}", flush=True)
 
@@ -252,11 +257,13 @@ class Research:
         if action == "list":
             return self._listing()
         if action == "cancel":
-            gone = [j for j in self._matching(title) if j["stage"] in UNFINISHED]
+            with self._lock:
+                gone = [j for j in self._matching(title) if j["stage"] in UNFINISHED]
+                if gone:
+                    self.jobs = [j for j in self.jobs if j not in gone]
+                    self._save()
             if not gone:
                 return f"No research under way called {title!r}. " + self._listing()
-            self.jobs = [j for j in self.jobs if j not in gone]
-            self._save()
             return "Cancelled: " + ", ".join(j["title"] for j in gone) + "."
         if action in ("open", "summary", "read"):
             if not (picks := self.shelf.find(title)):
@@ -296,28 +303,29 @@ class Research:
         if not request:
             return "Research needs a title and what the crew want to know. Call the research tool again with them."
         title = title or request[:60]
-        if [j for j in self.jobs if j["stage"] in UNFINISHED and j["title"].lower() == title.lower()]:
-            return f"Research on '{title}' is already under way. Tell the crew, in a sentence."
-        ahead = sum(j["stage"] in UNFINISHED for j in self.jobs)
-        # Unique, though two may be asked for in one breath ("research X and Y"): the second
-        # of the same second, its id reused, replaced the first in the reports' index.
-        jid, k = now.strftime("%Y%m%d-%H%M%S"), 2
-        while any(j["id"] == jid for j in self.jobs) or self.shelf.has(jid):
-            jid, k = f"{now:%Y%m%d-%H%M%S}-{k}", k + 1
-        self.jobs.append({"id": jid, "title": title, "request": request,
-                          "asked": now.isoformat(timespec="seconds"), "stage": "plan", "questions": [],
-                          "sources": [], "checked": False, "work_s": 0.0, "errors": 0, "announced": False})
-        self._save()
+        with self._lock:
+            if [j for j in self.jobs if j["stage"] in UNFINISHED and j["title"].lower() == title.lower()]:
+                return f"Research on '{title}' is already under way. Tell the crew, in a sentence."
+            ahead = sum(j["stage"] in UNFINISHED for j in self.jobs)
+            # Unique, though two may be asked for in one breath ("research X and Y"): the second
+            # of the same second, its id reused, replaced the first in the reports' index.
+            jid, k = now.strftime("%Y%m%d-%H%M%S"), 2
+            while any(j["id"] == jid for j in self.jobs) or self.shelf.has(jid):
+                jid, k = f"{now:%Y%m%d-%H%M%S}-{k}", k + 1
+            self.jobs.append({"id": jid, "title": title, "request": request,
+                              "asked": now.isoformat(timespec="seconds"), "stage": "plan", "questions": [],
+                              "sources": [], "checked": False, "work_s": 0.0, "errors": 0, "announced": False})
+            self._save()
         return (f"Queued: research on '{title}'" + (f", after {ahead} other job{'s' * (ahead != 1)}" if ahead else "")
                 + ". You'll work on it yourself while you doze between conversations (your sleep, not the "
                 "crew's), and you'll be told when the report is ready. Let the crew know it's in hand, briefly "
                 "and in your own words. You have no findings yet: give none.")
 
-    def find(self, words: str, least: float = 0.0) -> list[dict]:
+    def find(self, words: str, least: float = 0.0, widen: bool = True) -> list[dict]:
         """The finished reports these words may mean (app/reports.py), scoring above
         `least` (1 asks for more than one of a report's words in passing); none
-        without words that say which."""
-        return self.shelf.find(words, least) if telling(words) else []
+        without words that say which. `widen`: let Gemma add words for what's meant."""
+        return self.shelf.find(words, least, widen=widen) if telling(words) else []
 
     def finished_titles(self) -> list[str]:
         return self.shelf.titles()
@@ -383,8 +391,9 @@ class Research:
         """Every job and report, for good."""
         for f in self.shelf.clear():
             (self.cfg.dir / f).unlink(missing_ok=True)
-        self.jobs = []
-        self._save()
+        with self._lock:
+            self.jobs = []
+            self._save()
 
     # The work ---------------------------------------------------------------
 
@@ -419,9 +428,14 @@ class Research:
         return f"'{job['title']}': {label}"
 
     def _give_up(self, job: dict, why: str) -> None:
+        was = job["stage"]
         job["stage"], job["error"] = "failed", why
         job["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
-        self._shelve(job)
+        try:
+            self._shelve(job)
+        except Exception:
+            job["stage"] = was  # still in the queue, to be given up (and announced) next time
+            raise
 
     def _shelve(self, job: dict) -> dict:
         """A finished (or given up) job into the reports' index, with its report's text, and
@@ -433,7 +447,8 @@ class Research:
             except OSError:
                 pass
         row = self.shelf.add(job, body)
-        self.jobs = [j for j in self.jobs if j is not job]
+        with self._lock:
+            self.jobs = [j for j in self.jobs if j is not job]
         return row
 
     async def _ask(self, system: str, user: str, max_tokens: int) -> str:
@@ -637,7 +652,14 @@ class Research:
         job["file"] = name
         job["finished"] = finished.isoformat(timespec="seconds")
         job["stage"] = "done"
-        self._shelve(job)
+        try:
+            self._shelve(job)
+        except Exception:
+            # Not in the index (its database locked, say): still to keep, so the next step
+            # tries again. Left "done" in the queue, it was skipped for ever: never announced
+            # or found, though its file was written.
+            job["stage"] = "keep"
+            raise
         try:  # its vector, for finding it by meaning; else made when next looked for
             await asyncio.to_thread(self.shelf.embed_missing)
         except Exception as e:

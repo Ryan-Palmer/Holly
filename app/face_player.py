@@ -25,6 +25,11 @@ from .config import ROOT, FaceConfig
 from .player import Player
 
 HEADER = struct.Struct("<cI")  # message type, payload length; see face/server.py
+# The face server takes audio off the socket as it comes, whatever it's playing, so a send
+# waits a moment at most. Blocking without limit, a stalled sound driver froze Holly: the
+# face stopped reading, the socket filled, and his whole loop stopped in sendall, so he
+# heard nothing and said nothing. Past this, the face is given up as if its window closed.
+SEND_TIMEOUT_S = 3.0
 
 
 def start_server(cfg: FaceConfig, host_api: str, device: str, awake_s: float = 30.0) -> subprocess.Popen:
@@ -58,7 +63,7 @@ class FacePlayer:
                 if time.monotonic() > deadline:
                     raise RuntimeError("The face server didn't start; see face/data/server.log")
                 time.sleep(0.5)
-        self.sock.settimeout(None)
+        self.sock.settimeout(SEND_TIMEOUT_S)  # for sends; the reader waits on regardless (_recv)
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.device_name = "Holly's face window"
         self.sample_rate, self.host_api, self.device, self.block = sample_rate, host_api, device, block
@@ -82,16 +87,22 @@ class FacePlayer:
                 with self._lock:
                     self.sock.sendall(HEADER.pack(kind, len(payload)) + payload)
                 return True
+            except TimeoutError:  # an OSError too: caught first, to say why
+                self._closed = True
+                self._lose_face(f"the face stopped taking audio for {SEND_TIMEOUT_S:.0f} s (its sound "
+                                "device may have stalled)")
+                return False
             except OSError:
                 self._closed = True
         if self.fallback is None:
             self._lose_face()
         return False
 
-    def _lose_face(self) -> None:
-        """The face window is closed: carry on with Holly's own speakers. Called from the
-        event loop. A reply under way carries on there, less what the face had queued."""
-        print("\n  (the face window was closed: Holly's voice plays here from now on)", flush=True)
+    def _lose_face(self, why: str = "the face window was closed") -> None:
+        """The face is gone (its window closed, or it stalled): carry on with Holly's own
+        speakers. Called from the event loop. A reply under way carries on there, less
+        what the face had queued."""
+        print(f"\n  ({why}: Holly's voice plays here from now on)", flush=True)
         self.fallback = Player(self.sample_rate, self.block, self.host_api, self.device)
         self.fallback.start()
         self.device_name = self.fallback.device_name
@@ -179,7 +190,13 @@ class FacePlayer:
                 self._loop.call_soon_threadsafe(self._done.set)
 
     def _recv(self) -> bytes:
-        data = self.sock.recv(65536)
+        while True:
+            try:
+                data = self.sock.recv(65536)
+                break
+            except TimeoutError:  # the socket's send timeout: quiet for a while is fine here
+                if self._closed:
+                    raise OSError("face given up")
         if not data:
             raise OSError("face server closed the connection")
         return data
