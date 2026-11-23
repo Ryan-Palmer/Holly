@@ -125,9 +125,11 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   .venv\Scripts\python -m app.spotify login
   ```
 
-- **Research.** "Holly, can you research heat pumps for an old house?" He
-  works on it only while he's asleep, a step at a time, and stops whenever
-  anyone speaks. He splits the request into questions, searches the web
+- **Research.** "Holly, can you research heat pumps for an old house?" Ask
+  him to look into something without saying which you want, and he asks
+  whether you'd like a quick search now or a report. He works on reports
+  only while he's asleep, a step at a time, and stops whenever anyone
+  speaks. He splits the request into questions, searches the web
   (free, through ddgs) and Wikipedia, reads the likeliest pages, keeps notes
   with their sources, and writes a report from the notes. When it's done he
   says so and asks if you'd like a summary, then whether to open it. The
@@ -138,7 +140,8 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   `holly.toml`.
 - **His face.** Ditto animates the still from his voice, in a window that
   scales to any size (F11 or a double-click for full screen). It dozes off
-  when he does.
+  when he does. If the window is closed, or its sound stalls, his voice
+  carries on through the speakers.
 
 ## Configuration
 
