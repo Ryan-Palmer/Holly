@@ -24,6 +24,7 @@ import json
 import random
 from pathlib import Path
 import re
+import shutil
 import sys
 import time
 
@@ -35,7 +36,7 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation, set_aside, when
 from .face_player import FacePlayer, start_server
 from .player import Player
-from . import archive, clock, memory, spotify, timers, weather
+from . import archive, clock, memory, research, spotify, timers, weather
 from .records import reminders as pick_reminders, source_of
 from .search import TOOL, Searcher
 from .speech_text import SentenceChunker
@@ -51,8 +52,9 @@ def stamp() -> str:
 
 # Tools that answer at once (Spotify in well under a second): no stock line, and they
 # don't count towards the lookups allowed per reply.
-LOCAL_TOOLS = ("clock", "timer", "spotify")
+LOCAL_TOOLS = ("clock", "timer", "spotify", "research")
 COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
+RESEARCH_RETRY_S = 60.0  # after a research step failed (LM Studio, the network), wait this long
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
 # A time of day in a reply: "10:14", "10 pm", "ten o'clock". Not "12.50": that's money.
@@ -150,14 +152,14 @@ class Holly:
             # Everything of yours, for good: history and notes, the archive, timers and
             # reminders, and whatever --forget or an unreadable file set aside. Not the
             # ship's records.
-            gone = wipe_yours([memory_file, cfg.recall.file, cfg.timers.file])
+            gone = wipe_yours([memory_file, cfg.recall.file, cfg.timers.file]) + wipe_folder(cfg.research.dir)
             print(f"{DIM}Deleted {len(gone)} file{'s' * (len(gone) != 1)} of Holly's memory"
                   f"{': ' + ', '.join(p.name for p in gone) if gone else ''}; he starts afresh.{RESET}")
         elif forget:
             # Everything of yours (history and notes, the archive, timers and reminders), but
             # not the ship's records. Set aside, not deleted, in case it was a mistake; each
             # with its own time, so a second --forget doesn't overwrite the first.
-            yours = [memory_file, cfg.recall.file, cfg.timers.file]
+            yours = [memory_file, cfg.recall.file, cfg.timers.file, cfg.research.dir]
             asides = [set_aside_with_sidecars(f, "forgotten") for f in yours if f and f.exists()]
             if asides:
                 print(f"{DIM}Holly's memory of earlier sessions is set aside "
@@ -185,6 +187,12 @@ class Holly:
         if self.spotify:
             tools.append(spotify.TOOL)
             prompts.append(rules("spotify"))
+        # Research jobs (app/research.py): queued by the tool, worked on while he sleeps.
+        self.research = (research.Research(cfg.research, cfg.search, self.lm, self.model, self.archive)
+                         if cfg.research.enabled and self.searcher else None)
+        if self.research:
+            tools.append(research.TOOL)
+            prompts.append(rules("research"))
         self.tools = tools or None
         self.turn_lock = asyncio.Lock()  # one reply at a time: yours, or his speaking up
         self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)
@@ -198,6 +206,8 @@ class Holly:
         self.resuming: asyncio.Task | None = None  # at startup: the last session into his notes
         self.compaction: asyncio.Task | None = None  # later: older history into his notes
         self.compact_retry_at = 0.0  # after a failed try, not before this
+        self.researching: asyncio.Task | None = None  # research steps, while he sleeps
+        self.research_retry_at = 0.0  # after a failed step, not before this
 
     def voice_name(self) -> str:
         return "Holly (VoxCPM2 clone)"
@@ -528,6 +538,11 @@ class Holly:
             result = self.timers.handle(args)
             print(f"{DIM}  (timer) {result.split('. Tell the crew')[0]}{RESET}", flush=True)
             return result
+        if call["name"] == "research" and self.research:
+            result = self.research.handle(args)
+            print(f"{DIM}  (research {args.get('action') or 'start'}) {result.split('. Tell the crew')[0]}{RESET}",
+                  flush=True)
+            return result
         if call["name"] == "spotify" and self.spotify:
             t0 = time.perf_counter()
             loop = asyncio.get_running_loop()
@@ -586,7 +601,7 @@ class Holly:
         `self.compaction` while `self.writing_notes` to leave the history as
         it was."""
         due = self.convo.needs_compacting() or (self.records and not self.reminded)
-        if self.compaction or time.perf_counter() < self.compact_retry_at or not due:
+        if self.compaction or self.researching or time.perf_counter() < self.compact_retry_at or not due:
             return
         self.compaction = asyncio.create_task(self.sleep_work())
         self.compaction.add_done_callback(self._compacted)
@@ -630,6 +645,61 @@ class Holly:
             print(f"{DIM}  (couldn't write his notes{f': {e!r}' if e else ''}; trying again in "
                   f"{COMPACT_RETRY_S:.0f} s){RESET}", flush=True)
 
+    def _notes_due(self) -> bool:
+        """His notes (or reminders from the records) want writing, and may be tried now."""
+        return bool(self.convo.needs_compacting() or (self.records and not self.reminded)) and (
+            time.perf_counter() >= self.compact_retry_at)
+
+    def start_research(self) -> None:
+        """In the background, while he sleeps: the next steps of any research jobs
+        (app/research.py), one at a time. Not while his notes are due or being
+        written: they come first. Stop it with stop_research when anyone speaks."""
+        if (not self.research or self.researching or self.compaction or self._notes_due()
+                or time.perf_counter() < self.research_retry_at or not self.research.has_work()):
+            return
+        self.researching = asyncio.create_task(self._research_loop())
+        self.researching.add_done_callback(self._researched)
+
+    def stop_research(self) -> None:
+        """Someone's speaking, or he's about to: the step in hand is dropped, and
+        done again at his next sleep. (Each step is saved only when it's done.)"""
+        if self.researching:
+            self.researching.cancel()
+
+    async def _research_loop(self) -> None:
+        while self.research.has_work() and not self._notes_due():
+            label = await self.research.step()
+            print(f"{DIM}  (research {label}){RESET}", flush=True)
+        if not self.research.has_work():
+            # All done: his own prompt back into LM Studio's cache, for his next reply.
+            await self.lm.prewarm(self.convo.messages_for(), self.model, self.tools)
+
+    def _researched(self, task: asyncio.Task) -> None:
+        self.researching = None
+        if task.cancelled():
+            return  # someone spoke: carried on at the next sleep
+        if e := task.exception():
+            self.research_retry_at = time.perf_counter() + RESEARCH_RETRY_S
+            print(f"{DIM}  (a research step failed: {e!r}; trying again in {RESEARCH_RETRY_S:.0f} s){RESET}",
+                  flush=True)
+
+    async def announce_report(self, job: dict) -> TurnTimes | None:
+        """Speak up about a research job that's finished (or given up): his reply to a
+        note saying so, kept in his history like any turn."""
+        print(f"{DIM}  (research {'finished' if job['stage'] == 'done' else 'given up'}: {job['title']}){RESET}",
+              flush=True)
+        times = None
+        try:
+            self.player.wake()
+            times = await self.respond(research.announcement(job))
+        except Exception as e:
+            print(f"{YELLOW}  (couldn't announce it: {e!r}){RESET}\n", flush=True)
+        ok = times is not None and not times.failed
+        self.research.announced(job, ok)
+        if not ok:
+            print(f"{DIM}  (not announced: {job['title']}; trying again later){RESET}\n", flush=True)
+        return times
+
     async def announce(self, due: list[dict]) -> TurnTimes | None:
         """Speak up about timers and reminders that have come due: his reply to a
         note saying so, which is kept in his history like any turn."""
@@ -653,9 +723,17 @@ class Holly:
         while True:
             await asyncio.sleep(1)
             if self.timers and (due := self.timers.due()):
+                self.stop_research()
                 async with self.turn_lock:
                     await self.announce(due)
                 print("You: ", end="", flush=True)
+            elif self.research and (job := self.research.ready()):
+                self.stop_research()
+                async with self.turn_lock:
+                    await self.announce_report(job)
+                print("You: ", end="", flush=True)
+            elif not self.turn_lock.locked():
+                self.start_research()  # while you're typing, or not
 
     async def run(self) -> None:
         await self.start()
@@ -668,6 +746,7 @@ class Holly:
                 user = (await asyncio.to_thread(input, "You: ")).strip()
                 if self.compaction and self.writing_notes:
                     self.compaction.cancel()
+                self.stop_research()
                 if not user:
                     continue
                 if user in ("/quit", "/exit"):
@@ -677,7 +756,9 @@ class Holly:
                         self.convo.reset()
                         if self.timers:
                             self.timers.clear()
-                    print(f"{DIM}History, notes, archive, timers and reminders cleared, on disk "
+                        if self.research:
+                            self.research.clear()
+                    print(f"{DIM}History, notes, archive, timers, reminders and research cleared, on disk "
                           f"too.{RESET}\n")
                     continue
                 try:
@@ -689,14 +770,15 @@ class Holly:
             print()
         finally:
             watcher.cancel()
+            self.stop_research()
             if self.player:
                 self.player.close()
 
 
-FORGET_HELP = ("start afresh, setting aside (renamed, not deleted) his history, notes, archive, timers "
-               "and reminders; the ship's records stay")
-RESET_HELP = ("start afresh, deleting his history, notes, archive, timers and reminders for good, and "
-              "anything --forget set aside; the ship's records stay")
+FORGET_HELP = ("start afresh, setting aside (renamed, not deleted) his history, notes, archive, timers, "
+               "reminders and research; the ship's records stay")
+RESET_HELP = ("start afresh, deleting his history, notes, archive, timers, reminders and research for good, "
+              "and anything --forget set aside; the ship's records stay")
 
 
 def sidecars(f: Path) -> list[Path]:
@@ -725,6 +807,16 @@ def wipe_yours(files: list[Path | None]) -> list[Path]:
             for q in [p, *sidecars(p)] if p.exists() else sidecars(p):
                 q.unlink()
                 gone.append(q)
+    return gone
+
+
+def wipe_folder(d: Path) -> list[Path]:
+    """Delete a folder of his (his research) and any copies --forget set aside."""
+    gone = []
+    for p in [d, *d.parent.glob(f"{d.name}.forgotten-*")] if d.parent.exists() else []:
+        if p.is_dir():
+            shutil.rmtree(p)
+            gone.append(p)
     return gone
 
 

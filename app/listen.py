@@ -106,8 +106,13 @@ class ListeningHolly(Holly):
                 if self.timers and (due := self.timers.due()):
                     if self.compaction and self.writing_notes:
                         self.compaction.cancel()  # as for speech: he's about to talk
+                    self.stop_research()
                     self.detector.reset()
                     return due
+                if self.research and (job := self.research.ready()):
+                    self.stop_research()  # the next job's step, if it had started one
+                    self.detector.reset()
+                    return job
                 self._maybe_compact()
             if captured < self.deaf_until:
                 continue
@@ -120,6 +125,7 @@ class ListeningHolly(Holly):
                     # after the notes can't be stopped, and costs nothing extra:
                     # the reply would have to reread the prompt anyway.
                     self.compaction.cancel()
+                self.stop_research()
                 print(f"{DIM}(listening){RESET}", end="\r", flush=True)
             if utterance:
                 return utterance
@@ -128,10 +134,12 @@ class ListeningHolly(Holly):
                 self.quiet_since = time.perf_counter()
 
     def _maybe_compact(self) -> None:
-        """Once he's asleep and the room is quiet, compact a long history (Holly.compact)."""
+        """Once he's asleep and the room is quiet, compact a long history (Holly.compact),
+        and after that, get on with any research (Holly.start_research)."""
         now = time.perf_counter()
         if now >= self.awake_until and now - self.quiet_since >= COMPACT_QUIET_S:
             self.start_compaction()
+            self.start_research()
 
     async def run(self) -> None:
         await self.start()
@@ -141,6 +149,8 @@ class ListeningHolly(Holly):
                 utterance = await self.next_utterance()
                 if isinstance(utterance, list):  # timers or reminders due: he speaks up
                     await self.announce(utterance)
+                elif isinstance(utterance, dict):  # a research report is ready: likewise
+                    await self.announce_report(utterance)
                 else:
                     text = await asyncio.to_thread(self.stt.transcribe, utterance.audio)
                     times = TurnTimes(start=utterance.speech_end, transcribed=time.perf_counter())
@@ -168,6 +178,7 @@ class ListeningHolly(Holly):
         except KeyboardInterrupt:
             print()
         finally:
+            self.stop_research()
             self.mic.close()
             self.player.close()
 

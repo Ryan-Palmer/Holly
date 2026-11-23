@@ -163,6 +163,26 @@ class LmStudio:
         resp = self.openai.embeddings.create(model=model, input=texts)
         return [d.embedding for d in sorted(resp.data, key=lambda d: d.index)]
 
+    async def complete(self, messages: list[dict], model: str | None = None, max_tokens: int = 800,
+                       temperature: float = 0.2) -> tuple[str, bool]:
+        """A whole reply, for work out of Holly's sight. Streamed, so cancelling it
+        stops LM Studio writing. Returns (text, cut): cut if it ran out of tokens."""
+        args = self._chat_args(messages, model)
+        args |= {"temperature": temperature, "max_tokens": max_tokens}
+        del args["stream_options"]
+        parts: list[str] = []
+        cut = False
+        stream = await self.aopenai.chat.completions.create(**args)
+        try:
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                parts.append(chunk.choices[0].delta.content or "")
+                cut = cut or chunk.choices[0].finish_reason == "length"
+        finally:
+            await stream.close()
+        return "".join(parts).strip(), cut
+
     async def prewarm(self, messages: list[dict], model: str | None = None,
                       tools: list[dict] | None = None) -> int | None:
         """Have LM Studio read `messages` into its cache now, so the next reply

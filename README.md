@@ -66,7 +66,7 @@ publish. Everything below goes in git-ignored folders.
   see `face/README.md`.
 
 Holly keeps his memory in `data/`: his history and notes, an archive of
-past conversations, timers, and the Spotify login.
+past conversations, timers, research reports, and the Spotify login.
 
 ## Run
 
@@ -125,6 +125,15 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   .venv\Scripts\python -m app.spotify login
   ```
 
+- **Research.** "Holly, can you research heat pumps for an old house?" He
+  works on it only while he's asleep, a step at a time, and stops whenever
+  anyone speaks. He splits the request into questions, searches the web
+  (free, through ddgs) and Wikipedia, reads the likeliest pages, keeps notes
+  with their sources, and writes a report from the notes. When it's done he
+  speaks up with the gist. The report is saved as markdown, with its sources,
+  in `data/research/`; ask him to show it and he opens it, and recall answers
+  questions about it later. No setup; limits are under `[research]` in
+  `holly.toml`.
 - **His face.** Ditto animates the still from his voice, in a window that
   scales to any size (F11 or a double-click for full screen). It dozes off
   when he does.

@@ -142,6 +142,27 @@ class SpotifyConfig:
 
 
 @dataclass(frozen=True)
+class ResearchConfig:
+    enabled: bool = True  # and only with search on
+    dir: Path = ROOT / "data/research"  # the jobs, and each report as markdown
+    provider: str = "ddgs"  # web search for research: free; the choices are as under [search]
+    wikipedia: str = "en"  # Wikipedia's language, searched alongside the web; "" for none
+    user_agent: str = "HollyResearch/0.1 (https://github.com/Ryan-Palmer/Holly)"  # Wikipedia wants a contact
+    questions: int = 5  # a job's research questions, at most
+    gaps: int = 2  # questions the check may add
+    searches: int = 3  # per question
+    reads: int = 4  # pages read per question
+    results: int = 8  # per web search
+    page_chars: int = 12_000  # of each page, for the notes
+    notes: int = 12  # per page, at most
+    report_words: int = 900
+    pause_s: float = 4.0  # between searches, so the free engines don't take it for a bot
+    timeout_s: float = 15.0  # for a search or a page
+    max_minutes: float = 45.0  # of work per job; then the report is written from what's found
+    max_errors: int = 5  # failed steps in a row before a job is given up
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
@@ -153,6 +174,7 @@ class Config:
     recall: RecallConfig = RecallConfig()
     timers: TimersConfig = TimersConfig()
     spotify: SpotifyConfig = SpotifyConfig()
+    research: ResearchConfig = ResearchConfig()
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -192,6 +214,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         spotify=SpotifyConfig(**{k: (base / v if k == "token_file" else
                                      tuple(v) if k == "fillers" else v)
                                  for k, v in raw.get("spotify", {}).items()}),
+        research=ResearchConfig(**{k: (base / v if k == "dir" else v)
+                                   for k, v in raw.get("research", {}).items()}),
     )
 
 

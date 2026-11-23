@@ -265,3 +265,37 @@ fillers = [
     "Hang on. I'm just waking Spotify up.",
     "One moment. The music's still getting its shoes on.",
 ]
+
+[research]
+# Research jobs (app/research.py): "Holly, can you research heat pumps for an
+# old house?" queues a job, worked on only while he's asleep, a step at a time,
+# and stopped the moment anyone speaks. Plan the questions; research each (the
+# web and Wikipedia, the likeliest pages read and noted, each note tied to its
+# source); check for gaps; write the report from the notes and check it
+# against them. The report goes to dir as markdown, and into his archive for
+# recall; then he speaks up. Needs search on.
+enabled = true
+dir = "data/research"
+# Web search for research: ddgs, free. A job makes dozens of searches, which
+# would soon use up Brave's free credit; research is in no hurry, so it paces
+# its searches (pause_s) and waits out the engines' refusals. Any provider
+# under [search] works here, in a list tried in order.
+provider = "ddgs"
+# Wikipedia is searched alongside, through its API: "en", or "" for none.
+# Wikimedia refuses a User-Agent without a way to reach whoever runs the
+# program, so Wikipedia is skipped until this has a contact: an email address
+# or a URL, as "HollyResearch/0.1 (https://example.org/you; you@example.org)".
+wikipedia = "en"
+user_agent = "HollyResearch/0.1 (https://github.com/Ryan-Palmer/Holly)"
+questions = 5  # research questions per job, at most
+gaps = 2  # extra questions the check may add
+searches = 3  # per question
+reads = 4  # pages read per question
+results = 8  # per web search
+page_chars = 12000  # of each page, for the notes (~3K tokens)
+notes = 12  # per page, at most
+report_words = 900
+pause_s = 4.0
+timeout_s = 15.0
+max_minutes = 45.0  # of work per job; then the report is written from what's found
+max_errors = 5  # failed steps in a row before a job is given up

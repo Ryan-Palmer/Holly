@@ -190,8 +190,8 @@ def _public(url: str) -> bool:
         return False
 
 
-def fetch_page(url: str, cfg: SearchConfig) -> str:
-    """A result's page as plain text, menus dropped, cut to PAGE_CHARS.
+def fetch_page(url: str, cfg: SearchConfig, chars: int = PAGE_CHARS) -> str:
+    """A result's page as plain text, menus dropped, cut to `chars`.
 
     Only public web pages: a result could name, or redirect to, an address
     on this machine or network (a router's admin page, say), and Holly
@@ -220,7 +220,7 @@ def fetch_page(url: str, cfg: SearchConfig) -> str:
     # Menus and buttons are short lines with no numbers: "News Home", "Sign in".
     lines = [ln.strip() for ln in text.splitlines()]
     kept = [ln for ln in lines if len(ln.split()) >= 5 or re.search(r"\d", ln)]
-    return "\n".join(kept)[:PAGE_CHARS] or "(this page had no text: pick another result or search)"
+    return "\n".join(kept)[:chars] or "(this page had no text: pick another result or search)"
 
 
 class Searcher:
