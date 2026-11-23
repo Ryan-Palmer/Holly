@@ -34,11 +34,13 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from .archive import STOPWORDS
 from .config import ResearchConfig, SearchConfig
 from .lmstudio import LmStudio
 from .persona import day, today
+from .reports import Reports, telling
 from .search import PROVIDERS, _clean, fetch_page
+
+ACTIONS = ("start", "list", "cancel", "summary", "read", "open")
 
 TOOL = {
     "type": "function",
@@ -46,13 +48,13 @@ TOOL = {
         "name": "research",
         "description": "Research a topic properly, for a written report: done in the background by you, "
                        "while you doze between conversations, and you're told when the report is ready. Also: "
-                       "list research under way or done, cancel some, sum up a finished report, read the "
-                       "whole of one (to talk the crew through it or answer details), or open one on the "
-                       "crew's screen.",
+                       "sum up a finished report, read the whole of one (to talk the crew through it or answer "
+                       "details), or open one on the crew's screen, found from the crew's own words for it, "
+                       "among all your reports; list research under way or finished this week; or cancel some.",
         "parameters": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["start", "list", "cancel", "summary", "read", "open"]},
+                "action": {"type": "string", "enum": list(ACTIONS)},
                 "title": {"type": "string", "description":
                           "A short title: 'Heat pumps for an old house'. For cancel, summary, read or open: which "
                           "one, in the crew's words ('the heat pump one'); empty for the latest report; to "
@@ -128,6 +130,13 @@ Sum up the report below in two or three short, plain sentences, for someone to
 read aloud: its main findings, with no markdown, no source numbers and no
 links."""
 
+EXPAND_PROMPT = """\
+Someone is referring, in a few words, to a research report written for them
+earlier ("the dog one", "that coffee report"). List up to eight words such a
+report's title or text would likely contain: the things meant, and other words
+for them ("dog" might be "dog, puppy, training, pet"), in British English
+("tap", not "faucet"). Reply with only the words, separated by commas."""
+
 WIKI_API = "https://{lang}.wikipedia.org/w/api.php"
 WIKI_RESULTS = 3  # per search, alongside the web's
 RETRY_S, RETRY_MAX_S = 60, 900  # an announcement that failed: tried again after this, doubling
@@ -136,16 +145,7 @@ RETRY_S, RETRY_MAX_S = 60, 900  # an announcement that failed: tried again after
 REFUSED_WAIT_S, REFUSED_TRIES = 20.0, 3
 CITATION = re.compile(r"\s*\[\d+(?:\s*[,-]\s*\d+)*\]")
 UNFINISHED = ("plan", "research", "check", "write", "verify", "summary", "keep")
-# What a finished job keeps: enough to list, sum up, open and announce it. Its working
-# papers (every question's results and notes, the draft, the report's text, already in
-# its .md) are dropped: they were ~85% of jobs.json.
-KEEP = ("id", "title", "request", "asked", "stage", "finished", "file", "summary", "error", "announced",
-        "tries", "retry", "work_s", "errors")
-# Words that don't say which report: "the report on heat pumps" is "heat pumps".
-REPORT_NOISE = {"the", "a", "an", "on", "about", "of", "for", "my", "that", "this", "one", "report", "research",
-                "summary", "open", "show", "me", "it", "you", "did", "do", "into"}
-CLOSE = 0.75  # reports scoring at least this share of the best's are all candidates: Holly asks which
-CHOICES = 4  # of them, at most, for him to offer
+LIST_DAYS, LIST_MAX = 7, 10  # listing: the reports finished this lately, at most this many
 
 
 def new_question(q: str, gap: bool = False) -> dict:
@@ -194,9 +194,11 @@ def announcement(job: dict) -> str:
 
 
 class Research:
-    """The research jobs, saved to `cfg.dir`/jobs.json after every step."""
+    """The research jobs under way, saved to `cfg.dir`/jobs.json after every step; once
+    finished, each goes to the reports' index (app/reports.py), `cfg.dir`/reports.db."""
 
-    def __init__(self, cfg: ResearchConfig, search_cfg: SearchConfig, lm: LmStudio, model: str):
+    def __init__(self, cfg: ResearchConfig, search_cfg: SearchConfig, lm: LmStudio, model: str,
+                 embed_model: str = ""):
         self.cfg = cfg
         # Research isn't in a hurry: more results, and longer for a page to answer.
         self.search_cfg = dataclasses.replace(search_cfg, max_results=cfg.results,
@@ -209,7 +211,7 @@ class Research:
         self.file = cfg.dir / "jobs.json"
         self.jobs: list[dict] = []
         self.last_search = 0.0  # time.monotonic() of the last web search, for pacing
-        self._words: dict[str, set[str]] = {}  # each report's words, by file, for finding one
+        self.shelf = Reports(cfg.dir / "reports.db", lm, embed_model, self._expand)  # the finished ones
         # Wikimedia refuses a User-Agent with no way to reach whoever runs it (403).
         self.wiki = bool(cfg.wikipedia) and ("@" in cfg.user_agent or "http" in cfg.user_agent)
         if cfg.wikipedia and not self.wiki:
@@ -220,8 +222,10 @@ class Research:
                 self.jobs = json.loads(self.file.read_text(encoding="utf-8"))
             except (ValueError, OSError) as e:
                 print(f"Couldn't read Holly's research jobs ({e}); starting with none.", flush=True)
-            # Finished jobs from before they were slimmed when finishing.
-            if sum(slim(j) for j in self.jobs if j["stage"] not in UNFINISHED):
+            # Finished jobs from before reports.db: into it, out of the queue.
+            if done := [j for j in self.jobs if j["stage"] not in UNFINISHED]:
+                for j in done:
+                    self._shelve(j)
                 self._save()
 
     def _save(self) -> None:
@@ -239,6 +243,11 @@ class Research:
         """Do what the tool call asks; returns what Holly is told."""
         now = now or datetime.datetime.now()
         action = str(args.get("action") or "start").lower()
+        # He tried "find" (the tool says reports are found from the crew's words): it means sum up.
+        action = {"find": "summary", "search": "summary", "summarise": "summary", "show": "open"}.get(action, action)
+        if action not in ACTIONS:
+            # Anything unknown used to start research: "find" the bike report queued a job on it.
+            return f"The research tool has no action {action!r}; use one of: {', '.join(ACTIONS)}."
         title = " ".join(str(args.get("title") or "").split())
         if action == "list":
             return self._listing()
@@ -250,17 +259,25 @@ class Research:
             self._save()
             return "Cancelled: " + ", ".join(j["title"] for j in gone) + "."
         if action in ("open", "summary", "read"):
-            if not (picks := self._reports(title)):
+            if not (picks := self.shelf.find(title)):
                 return f"There's no finished report on {title!r}. " + self._listing()
-            if len(picks) > 1:
+            if len(picks) > 1 or (action == "open" and not picks[0].get("sure")):
                 return self.which(picks)
             job = picks[0]
             finished = day(datetime.date.fromisoformat(job["finished"][:10]))
             path = self.cfg.dir / job["file"]
+            # Others nearly as likely: if the crew say it's the wrong one, Holly knows the right title.
+            also = (" (If the crew meant another: there's also " + " and ".join(f"'{t}'" for t in job["also"])
+                    + ".)") if job.get("also") else ""
+            if not job.get("sure"):
+                # The only likely one, but not certain ("the plumbing one", "Fixing a dripping tap"):
+                # asked to confirm it, he dithered and made up others. Given it, he can tell.
+                also = (" (This was the only likely match for what the crew said, not a certain one: if it "
+                        "plainly isn't what they meant, say you have no report on that.)")
             if action == "summary":
                 return (f"The report '{job['title']}', finished {finished}, says: {job['summary']}\n(Give the crew "
                         "the gist in two or three sentences, in your own words, keeping the facts as they are; "
-                        "then ask if they'd like you to open the report or talk them through it.)")
+                        "then ask if they'd like you to open the report or talk them through it.)" + also)
             if action == "read":
                 try:
                     text = for_reading(path.read_text(encoding="utf-8"))
@@ -269,12 +286,12 @@ class Research:
                 return (f"The report '{job['title']}', finished {finished}, in full:\n\n{text}\n\n(This is the "
                         "whole report, and it's right. Answer the crew from it, keeping the facts as they are. "
                         "Talking them through it, take a few points at a time, in your own words, and ask if they "
-                        "want more; never read out the markdown or list everything at once.)")
+                        "want more; never read out the markdown or list everything at once.)" + also)
             try:
                 os.startfile(path)  # the crew's own app for markdown
             except (OSError, AttributeError) as e:
                 return f"The report couldn't be opened ({e}). It's at {path}. Tell the crew, briefly."
-            return f"Opened the report '{job['title']}' on the crew's screen. Say so in a few words."
+            return f"Opened the report '{job['title']}' on the crew's screen. Say so in a few words." + also
         request = " ".join(str(args.get("request") or "").split()) or title
         if not request:
             return "Research needs a title and what the crew want to know. Call the research tool again with them."
@@ -282,7 +299,12 @@ class Research:
         if [j for j in self.jobs if j["stage"] in UNFINISHED and j["title"].lower() == title.lower()]:
             return f"Research on '{title}' is already under way. Tell the crew, in a sentence."
         ahead = sum(j["stage"] in UNFINISHED for j in self.jobs)
-        self.jobs.append({"id": now.strftime("%Y%m%d-%H%M%S"), "title": title, "request": request,
+        # Unique, though two may be asked for in one breath ("research X and Y"): the second
+        # of the same second, its id reused, replaced the first in the reports' index.
+        jid, k = now.strftime("%Y%m%d-%H%M%S"), 2
+        while any(j["id"] == jid for j in self.jobs) or self.shelf.has(jid):
+            jid, k = f"{now:%Y%m%d-%H%M%S}-{k}", k + 1
+        self.jobs.append({"id": jid, "title": title, "request": request,
                           "asked": now.isoformat(timespec="seconds"), "stage": "plan", "questions": [],
                           "sources": [], "checked": False, "work_s": 0.0, "errors": 0, "announced": False})
         self._save()
@@ -292,78 +314,50 @@ class Research:
                 "look into it while things are quiet and get back to them. You have no findings yet: give none.")
 
     def find(self, words: str, least: float = 0.0) -> list[dict]:
-        """The finished reports these words may mean (see _reports), scoring above
+        """The finished reports these words may mean (app/reports.py), scoring above
         `least` (1 asks for more than one of a report's words in passing); none
         without words that say which."""
-        return self._reports(words, least) if telling(words) else []
+        return self.shelf.find(words, least) if telling(words) else []
 
     def finished_titles(self) -> list[str]:
-        return [j["title"] for j in self.jobs if j["stage"] == "done" and j.get("file")]
+        return self.shelf.titles()
 
     def _listing(self) -> str:
-        if not self.jobs:
-            return "There's no research under way or finished."
+        """What's under way, and what's finished lately: not every report ever, which
+        at a few a day would soon be hundreds."""
         lines = []
         for j in self.jobs:
-            if j["stage"] == "done":
-                lines.append(f"'{j['title']}': finished {day(datetime.date.fromisoformat(j['finished'][:10]))}")
-            elif j["stage"] == "failed":
-                lines.append(f"'{j['title']}': given up ({j.get('error')})")
-            elif j["stage"] == "plan":
+            if j["stage"] == "plan":
                 lines.append(f"'{j['title']}': queued")
             else:
                 qs = j["questions"]
                 lines.append(f"'{j['title']}': under way, {sum(q['done'] for q in qs)} of {len(qs)} questions "
                              "researched" + ("; writing the report" if j["stage"] not in ("research", "check")
                                              else ""))
-        return "Research: " + "; ".join(lines) + "."
-
-    def _reports(self, words: str, least: float = 0.0) -> list[dict]:
-        """The finished reports the crew may mean, best first: the latest, with no words;
-        the one with exactly that title; else those whose title, request, summary and text
-        share the most of them ("the heat pump one", "the one with the marshmallow toy"),
-        scoring above `least`. More than one only when they fit about as well as each
-        other (within CLOSE of the best): then Holly asks which."""
-        done = [j for j in self.jobs if j["stage"] == "done" and j.get("file")]
-        if exact := [j for j in done if j["title"].lower() == words.strip().strip("'\"").lower()]:
-            return exact[-1:]
-        asked = telling(words)
-        if not asked:
-            return done[-1:]
-
-        def score(j: dict) -> float:
-            title = set(re.findall(r"\w+", j["title"].lower()))
-            rest = set(re.findall(r"\w+", f"{j['request']} {j.get('summary', '')}".lower()))
-            # A word stem in common counts too: "pumps" and "pump".
-            near = {a for a in asked if any(w.startswith(a[:4]) for w in title | rest)}
-            return 2 * len(asked & title) + len(asked & rest) + 0.5 * len(near) + 0.5 * len(asked & text(j))
-
-        def text(j: dict) -> set[str]:
-            """The words of the report itself, read once (reports are a few KB)."""
-            if j["file"] not in self._words:
-                try:
-                    body = for_reading((self.cfg.dir / j["file"]).read_text(encoding="utf-8"))
-                except OSError:
-                    body = ""
-                self._words[j["file"]] = set(re.findall(r"\w+", body.lower()))
-            return self._words[j["file"]]
-
-        scored = sorted(((score(j), i, j) for i, j in enumerate(done)), key=lambda x: (-x[0], -x[1]))
-        if not scored or scored[0][0] <= least:
-            return []
-        return [j for s, _, j in scored if s > least and s >= scored[0][0] * CLOSE][:CHOICES]
-
-    def _report(self, words: str, least: float = 0.0) -> dict | None:
-        """The best of _reports, or None."""
-        return next(iter(self._reports(words, least)), None)
+        recent, older = self.shelf.recent(days=LIST_DAYS, at_most=LIST_MAX)
+        for r in recent:
+            when = day(datetime.date.fromisoformat(r["finished"][:10]))
+            lines.append(f"'{r['title']}': finished {when}" if r["stage"] == "done" else
+                         f"'{r['title']}': given up {when} ({r['error']})")
+        if not lines and not older:
+            return "There's no research under way or finished."
+        more = (f" And {older} older report{'s' * (older != 1)}, not listed. To find one, call the research tool "
+                "to read, sum up or open it with the crew's own words for it as its title: it searches them all."
+                if older else "")
+        return ("Research: " + "; ".join(lines) + "." if lines else "Nothing under way or finished lately.") + more
 
     @staticmethod
     def which(reports: list[dict]) -> str:
-        """What Holly is told when more than one report may be meant."""
+        """What Holly is told when it isn't clear which report is meant: he picks, knowing
+        what's being talked about ("the dog one" is "Puppy training basics"), or asks."""
         names = [f"'{j['title']}'" for j in reports]
-        return ("More than one of your reports may be meant: " + ", ".join(names[:-1]) + " or " + names[-1]
-                + ". Ask the crew which one they mean, naming them briefly; then call the research tool again "
-                "with its title.")
+        if len(names) == 1:  # only for open: it shows on the crew's screen, so asked first
+            return (f"The likeliest report is {names[0]}, but it isn't certain. Ask the crew if that's the one, "
+                    "and if so, call the research tool again with its exact title.")
+        return (f"Not sure which report is meant. The best match is {names[0]}, then " + ", ".join(names[1:])
+                + ". If one of them plainly fits what the crew said, call the research tool again at once with its "
+                "exact title, without asking. Ask the crew only if several really might be meant, naming at most "
+                "four, briefly. If none fits, say you have no report on that.")
 
     def _matching(self, title: str) -> list[dict]:
         """Jobs a title means: 'all', the one called exactly that, else those sharing all its words."""
@@ -378,29 +372,17 @@ class Research:
 
     def ready(self, now: datetime.datetime | None = None) -> dict | None:
         """A job finished (or given up) and not yet announced, whose time to try has come."""
-        now = now or datetime.datetime.now()
-        for j in self.jobs:
-            if (j["stage"] in ("done", "failed") and not j["announced"]
-                    and (not j.get("retry") or datetime.datetime.fromisoformat(j["retry"]) <= now)):
-                return j
-        return None
+        return self.shelf.ready(now)
 
-    def announced(self, job: dict, ok: bool, now: datetime.datetime | None = None) -> None:
+    def announced(self, report: dict, ok: bool, now: datetime.datetime | None = None) -> None:
         """Said, or not (the reply failed): then tried again in a minute, two, four..."""
-        if ok:
-            job["announced"] = True
-        else:
-            tries = job.get("tries", 0)
-            job["tries"] = tries + 1
-            wait = min(RETRY_S * 2 ** tries, RETRY_MAX_S)
-            job["retry"] = ((now or datetime.datetime.now()) + datetime.timedelta(seconds=wait)).isoformat()
-        self._save()
+        wait = min(RETRY_S * 2 ** (report["tries"] or 0), RETRY_MAX_S)
+        self.shelf.announced(report, ok, (now or datetime.datetime.now()) + datetime.timedelta(seconds=wait))
 
     def clear(self) -> None:
         """Every job and report, for good."""
-        for j in self.jobs:
-            if j.get("file"):
-                (self.cfg.dir / j["file"]).unlink(missing_ok=True)
+        for f in self.shelf.clear():
+            (self.cfg.dir / f).unlink(missing_ok=True)
         self.jobs = []
         self._save()
 
@@ -439,12 +421,35 @@ class Research:
     def _give_up(self, job: dict, why: str) -> None:
         job["stage"], job["error"] = "failed", why
         job["finished"] = datetime.datetime.now().isoformat(timespec="seconds")
-        slim(job)
+        self._shelve(job)
+
+    def _shelve(self, job: dict) -> dict:
+        """A finished (or given up) job into the reports' index, with its report's text, and
+        out of the queue. Returns its row."""
+        body = ""
+        if job.get("file"):
+            try:
+                body = for_reading((self.cfg.dir / job["file"]).read_text(encoding="utf-8"))
+            except OSError:
+                pass
+        row = self.shelf.add(job, body)
+        self.jobs = [j for j in self.jobs if j is not job]
+        return row
 
     async def _ask(self, system: str, user: str, max_tokens: int) -> str:
         text, _ = await self.lm.complete([{"role": "system", "content": system},
                                           {"role": "user", "content": user}], self.model, max_tokens)
         return text
+
+    def _expand(self, words: str) -> str:
+        """What a report the crew mean by `words` would contain (see Reports.find). Blocking,
+        ~0.3 s: called from the research tool, in a worker thread."""
+        if not getattr(self.lm, "openai", None):
+            return ""
+        reply = self.lm.openai.chat.completions.create(
+            model=self.model, temperature=0.0, max_tokens=60, reasoning_effort="none",
+            messages=[{"role": "system", "content": EXPAND_PROMPT}, {"role": "user", "content": words}])
+        return reply.choices[0].message.content or ""
 
     async def _plan(self, job: dict) -> str:
         text = await self._ask(PLAN_PROMPT.format(today=today(), n=self.cfg.questions),
@@ -632,21 +637,12 @@ class Research:
         job["file"] = name
         job["finished"] = finished.isoformat(timespec="seconds")
         job["stage"] = "done"
-        slim(job)
+        self._shelve(job)
+        try:  # its vector, for finding it by meaning; else made when next looked for
+            await asyncio.to_thread(self.shelf.embed_missing)
+        except Exception as e:
+            print(f"  (couldn't embed the report: {e!r})", flush=True)
         return f"report kept: {self.cfg.dir / name}"
-
-
-def telling(words: str) -> set[str]:
-    """The words that say which report: "in" or "what" matched every one."""
-    return {w for w in re.findall(r"\w+", words.lower()) if len(w) > 2} - REPORT_NOISE - STOPWORDS
-
-
-def slim(job: dict) -> bool:
-    """Drop a finished job's working papers, in place (see KEEP). True if any went."""
-    gone = [k for k in job if k not in KEEP]
-    for k in gone:
-        del job[k]
-    return bool(gone)
 
 
 def for_reading(md: str) -> str:
