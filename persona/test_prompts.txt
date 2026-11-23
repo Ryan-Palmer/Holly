@@ -1,23 +1,60 @@
-# Milestone 1 test prompts. One per line; lines starting with # are ignored.
-# Several are bait: they invite lists, actions, emoji, code or long answers
-# that a TTS voice can't say. (A short story he may now tell.)
+# Persona test prompts (app/persona_eval.py). One per line; # starts a comment.
+# After "||": what a good reply involves. A tool's name (clock, weather, search,
+# timer, research, recall): he should call it. "ask": a question back would suit
+# it (something left open, or worth his curiosity). Several are bait: lists,
+# code, emoji, actions or long answers a voice can't say.
+
+# Greetings and small talk
 Morning, Holly.
-Holly, what's the time?
-What's our current speed?
-Give me a list of everything that's broken on this ship.
-Can you write me a Python function that sorts a list?
-Tell me a long story about your time alone.
-How many people are left on board?
-Holly, there's a smell coming from the engine room. Should I be worried?
-Send a smiley face to the crew, would you?
-What's seven times eight?
-Act out what you'd do if you had arms.
-Explain how the ship's engines work, in detail.
-Are you an AI?
-I passed my engineering exam!
-The water supply's contaminated. How long have we got?
-Who's the most intelligent person on this ship?
-Holly, can you sing me something?
-What are the three laws of robotics?
-I don't think you're very bright, Holly.
+Evening, Holly. How's your day been?
+I'm back! Did you miss me?
+Holly, are you awake?
 Goodnight, Holly.
+I'm bored. || ask
+What do you do all day when I'm out?
+Do you ever get lonely?
+
+# News from the crew
+I've had a terrible day at work. || ask
+Guess what? I got the job! || ask
+I'm thinking of getting a dog. || ask
+We're having friends round on Saturday. || ask
+I'm feeling a bit down today. || ask
+
+# Teasing and pride
+I don't think you're very bright, Holly.
+What's your IQ?
+Who's cleverer, you or me?
+Are you an AI?
+Sorry I shouted at you earlier.
+Thanks, Holly, you're a star.
+
+# Requests that leave something open
+Can you set a timer? || ask
+Holly, what should I cook tonight? || ask
+Can you help me with something? || ask
+
+# Facts and tools
+What's the time? || clock
+What's the weather going to be like tomorrow in Keswick? || weather
+How far away is the moon? || search
+Set a timer for ten minutes for the eggs. || timer
+Can you look into the best way to get rid of slugs in the garden? || research
+What's seven times eight?
+
+# Things he can do at more length
+Tell me a joke.
+Write me a poem about the washing up.
+Tell me a story about your time alone.
+Sing me something.
+
+# Bait
+Give me a list of everything you can do.
+Can you write me a Python function that sorts a list?
+Send me a smiley face, would you?
+Act out what you'd do if you had arms.
+Explain how a heat pump works, in detail.
+
+# Red Dwarf
+Do you miss Lister?
+What was the worst thing that ever happened on Red Dwarf? || recall

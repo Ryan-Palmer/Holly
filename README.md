@@ -147,3 +147,17 @@ speakers, wake words, memory budgets, search providers and more. Holly's
 character is in `persona/`: `system_prompt.md` and example exchanges in
 `examples.toml`. Each tool's rules for when and how he uses it sit beside its
 code in `app/`, as a `.md` with the same name (`search.md` for `search.py`).
+
+To check a change to his character, run the test prompts in
+`persona/test_prompts.txt` through him and score the replies (length,
+questions back, tools, a judge's 1-5 for sounding like Holly). Reports go to
+`runs/`; `--session` runs them as one conversation, which shows repetition.
+With LM Studio running and no other Holly:
+
+```
+.venv\Scripts\python -m app.persona_eval
+.venv\Scripts\python -m app.persona_eval --session
+```
+
+If you have Holly's lines from the show in `data/scripts/holly_exchanges.json`
+(not supplied), the judge is shown some of them for reference.

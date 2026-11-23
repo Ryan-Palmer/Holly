@@ -160,11 +160,34 @@ class Conversation:
                             "never force one in.\n" + "\n".join(f"- {r}" for r in self.reminders))
             self.preamble = [{"role": "system", "content": content}]
 
+    def worn_phrases(self, replies: int = 8, at_most: int = 4) -> list[str]:
+        """Openings (three words) and phrases (four) in more than one of his last few
+        replies. He fell into ruts: "I'll look into it while things are quiet" five
+        times running, "that's a bit" to open three replies in one evening."""
+        said = [m["content"] for m in self.history if m["role"] == "assistant" and m.get("content")][-replies:]
+        openings: dict[str, int] = {}
+        phrases: dict[str, int] = {}
+        for text in said:
+            words = re.findall(r"[a-z']+", text.lower())
+            if len(words) >= 3:
+                openings[" ".join(words[:3])] = openings.get(" ".join(words[:3]), 0) + 1
+            for p in {" ".join(words[i:i + 4]) for i in range(len(words) - 3)}:
+                phrases[p] = phrases.get(p, 0) + 1
+        worn = [p for p, n in openings.items() if n > 1]
+        worn += [p for p, n in sorted(phrases.items(), key=lambda x: -x[1]) if n > 1 and p not in worn
+                 and not any(p in w or w in p for w in worn)]
+        return worn[:at_most]
+
     def messages_for(self, user_text: str | None = None) -> list[dict]:
         """The full message list to send for a new user line. The time isn't
         here: he asks the clock tool for it (app/clock.py). Without
-        `user_text`, just the preamble and history."""
+        `user_text`, just the preamble and history. If he's fallen into a rut
+        (worn_phrases), a note says so, in this request only: it isn't kept in
+        his history, and being last, it leaves LM Studio's cache of the rest."""
         self._build_preamble()
+        if user_text is not None and (worn := self.worn_phrases()):
+            user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
+                          + ". Put it differently this time.]")
         tail = [{"role": "user", "content": user_text}] if user_text is not None else []
         history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
         return [*self.preamble, *history, *tail]

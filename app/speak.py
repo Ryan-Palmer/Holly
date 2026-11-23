@@ -66,6 +66,14 @@ CLAIMED_RECALL = re.compile(
     r"(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|memory)\b|"
     r"\bnot in my (?:records|archives?|files|memory)\b|\b(?:no|any) records? (?:of|about|on)\b",
     re.IGNORECASE)
+# Asked to research something, he promised to without calling the research tool ("I'll get
+# on with that later and come back to you"), and nothing was ever researched. So when the
+# crew ask for research and he promises it, the research tool must have been called.
+RESEARCH_ASKED = re.compile(r"\b(?:research|look(?:ing)? into|find out (?:all )?about|report on|dig into|"
+                            r"read up on|look up everything)\b", re.IGNORECASE)
+PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on (?:with )?(?:it|that|this)|get back to "
+                               r"you|come back to you|let you know|report back|while (?:things are quiet|"
+                               r"I doze|you sleep)|have a proper look|dig into it)\b", re.IGNORECASE)
 CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
                         r"\bo'clock\b", re.IGNORECASE)
 
@@ -133,8 +141,9 @@ class Holly:
     HINT =" /reset to start over, /quit to leave."
 
     def __init__(self, model: str | None, face: bool | None = None, search: bool | None = None,
-                 forget: bool = False, reset: bool = False):
-        cfg = load_config()
+                 forget: bool = False, reset: bool = False, cfg=None):
+        """`cfg`, if given, instead of holly.toml's (app/persona_eval.py: his memory elsewhere)."""
+        cfg = cfg or load_config()
         if face is not None:
             cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
         if search is not None:
@@ -336,6 +345,7 @@ class Holly:
             asked = len(messages)
             searches = 0
             recalled = False  # he called recall this turn
+            researched = False  # he called the research tool this turn
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             choice = None  # "required": the retry must call a tool
 
@@ -351,6 +361,9 @@ class Holly:
                     return "a stray 'thought'"
                 if not recalled and self.archive and CLAIMED_RECALL.search(sentence):
                     return "he said he'd looked in his memory without calling recall"
+                if (not researched and self.research and RESEARCH_ASKED.search(user)
+                        and PROMISED_RESEARCH.search(sentence)):
+                    return "he promised research without calling the research tool"
                 return None
 
             while True:
@@ -381,7 +394,7 @@ class Holly:
                     # Not said: asked again, with a tool required if he claimed one.
                     print(f"\n{DIM}  ({redo}: not said; asking again){RESET}", flush=True)
                     retried, chunker = True, SentenceChunker()
-                    choice = "required" if "recall" in redo else None
+                    choice = "required" if "recall" in redo or "research" in redo else None
                     print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
                     continue
                 choice = None
@@ -408,6 +421,7 @@ class Holly:
                     if call["name"] not in LOCAL_TOOLS:  # instant and local: no limit
                         searches += 1
                     recalled = recalled or call["name"] == "recall"
+                    researched = researched or call["name"] == "research"
                     result = await self._run_tool(call, user, searches, times)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                 print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)

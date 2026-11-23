@@ -310,8 +310,8 @@ class Research:
         self._save()
         return (f"Queued: research on '{title}'" + (f", after {ahead} other job{'s' * (ahead != 1)}" if ahead else "")
                 + ". You'll work on it yourself while you doze between conversations (your sleep, not the "
-                "crew's), and you'll be told when the report is ready. Tell the crew, in a sentence, that you'll "
-                "look into it while things are quiet and get back to them. You have no findings yet: give none.")
+                "crew's), and you'll be told when the report is ready. Let the crew know it's in hand, briefly "
+                "and in your own words. You have no findings yet: give none.")
 
     def find(self, words: str, least: float = 0.0) -> list[dict]:
         """The finished reports these words may mean (app/reports.py), scoring above
