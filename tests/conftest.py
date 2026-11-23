@@ -139,7 +139,7 @@ def make_holly(cfg, monkeypatch):
         monkeypatch.setattr(speak, "LmStudio", lambda llm_cfg: lm)
         holly = speak.Holly(kwargs.pop("model", None), face=False, cfg=kwargs.pop("cfg", cfg), **kwargs)
         holly.tts, holly.player = SilentVoice(), SilentPlayer()
-        holly.reminded = True
+        holly.background.reminded = True
         return holly
 
     return make

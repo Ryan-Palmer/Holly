@@ -14,7 +14,8 @@ import time
 import httpx
 
 from .config import SearchConfig
-from .search import Lookup
+from .search import Lookup, Searcher
+from .tools import Lookup as LookupTool, Turn
 
 TOOL = {
     "type": "function",
@@ -142,3 +143,16 @@ def forecast(place: str, cfg: SearchConfig) -> Lookup:
             + f"wind up to {daily['wind_speed_10m_max'][i]:.0f}, gusts {daily['wind_gusts_10m_max'][i]:.0f}, "
             f"sunrise {daily['sunrise'][i][-5:]}, sunset {daily['sunset'][i][-5:]}.")
     return done("\n".join(lines), True)
+
+
+class WeatherTool(LookupTool):
+    name, schema = "weather", TOOL  # his rules for it are in search.md
+
+    def __init__(self, cfg: SearchConfig):
+        self.cfg = cfg
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        if not (place := str(args.get("place", "")).strip()):
+            return "The weather tool needs a place."
+        found = await self.look_up(f"weather: {place}", lambda: forecast(place, self.cfg), turn)
+        return found if isinstance(found, str) else Searcher.for_holly(found)

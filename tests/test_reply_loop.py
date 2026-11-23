@@ -6,7 +6,7 @@ import datetime as dt
 
 import pytest
 
-from app import speak
+from app import announce, research, weather
 from app.speak import LOST_THREAD
 from conftest import FakeLm
 
@@ -49,7 +49,7 @@ def test_a_broken_tool_is_told_to_him(make_holly, monkeypatch):
     def broken(*a, **k):
         raise KeyError("current")
 
-    monkeypatch.setattr(speak.weather, "forecast", broken)
+    monkeypatch.setattr(weather, "forecast", broken)
     lm = FakeLm([[("weather", {"place": "Keswick"})], "Couldn't get the weather."])
     holly = make_holly(lm)
     respond(holly, "What's the weather in Keswick?")
@@ -173,8 +173,7 @@ def test_worn_phrases_are_noted_for_one_request(make_holly):
 def test_a_failed_timer_announcement_keeps_the_timer(make_holly):
     holly = make_holly(FakeLm([ConnectionError("LM Studio restarting")]))
     holly.timers.items = [{"label": "pasta", "due": "2026-11-22T00:00:00", "kind": "timer"}]
-    due = holly.timers.due()
-    times = asyncio.run(holly.announce(due))
+    times = asyncio.run(holly.announce(announce.timers_due(holly.timers)))
     assert times.failed and [i["label"] for i in holly.timers.items] == ["pasta"]
 
 
@@ -183,10 +182,11 @@ def test_a_failed_report_announcement_is_tried_again(make_holly):
     holly.research.shelf.add({"id": "r1", "title": "Keeping chickens", "request": "chickens", "stage": "done",
                               "finished": dt.datetime.now().isoformat(timespec="seconds"), "file": "r1.md",
                               "summary": "Hens need a coop.", "announced": False})
-    job = holly.research.ready()
-    asyncio.run(holly.announce_report(job))
+    asyncio.run(holly.announce(announce.report_ready(holly.research)))
     assert holly.research.ready() is None  # not yet
     later = dt.datetime.now() + dt.timedelta(minutes=2)
-    asyncio.run(holly.announce_report(holly.research.ready(later)))
+    job = holly.research.ready(later)
+    asyncio.run(holly.announce(announce.Announcement("again", research.announcement(job),
+                                                     lambda ok: holly.research.announced(job, ok))))
     assert holly.research.ready(later + dt.timedelta(hours=1)) is None
     assert "is finished, and the report is written" in holly.convo.history[0]["content"]

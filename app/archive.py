@@ -24,6 +24,7 @@ The judge sorts out the near misses each way brings.
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import re
 import sqlite3
@@ -34,9 +35,11 @@ from pathlib import Path
 import numpy as np
 
 from .config import RecallConfig
+from .console import DIM, RESET
 from .lmstudio import LmStudio
 from .persona import WEEKDAYS, _DAY_WORDS, day, resolve_day, today
-from .search import Lookup
+from .search import Lookup, Searcher
+from .tools import Lookup as LookupTool, Turn
 
 TOOL = {
     "type": "function",
@@ -463,3 +466,58 @@ def days_in(text: str, on: datetime.date) -> set[datetime.date]:
             continue
         days.add(d if d <= on else d.replace(year=on.year - 1))
     return days
+
+
+class RecallTool(LookupTool):
+    """Recall, which also finds his research reports: they aren't in his archive."""
+
+    name, schema, rules, filler = "recall", TOOL, "archive", "recall"
+
+    def __init__(self, archive: Archive, research=None):
+        self.archive = archive
+        self.research = research  # app/research.py's Research, if he has it
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        if not (query := str(args.get("query", "")).strip()):
+            return "Recall needs a query."
+        # His question, not the crew's last words: after "you need to use the recall
+        # tool", the judge was asked that, and found nothing.
+        question = str(args.get("question") or "").strip() or turn.user
+        research = self.research
+        asked = f"{query} {question} {turn.user}"
+        if research and "report" in asked.lower() and (
+                reports := await asyncio.to_thread(research.find, asked)) and len(reports) == 1 and reports[0].get("sure"):
+            # Asked what a report said, he recalled (fragments, or nothing) rather than reading
+            # it, and wasn't moved by a hint to read it: so it's read for him. Only when one
+            # report is clearly meant, though: "what did the weather report say?" is a
+            # question about a conversation, and given a shortlist of research reports instead
+            # of recall, he'd have said he had no such report. Anything less sure, recall runs.
+            print(f"{DIM}  (recalling a report: reading '{reports[0]['title']}' instead){RESET}", flush=True)
+            return research.handle({"action": "read", "title": reports[0]["title"]})
+        said = turn.crew_lines()
+        found = await self.look_up(f"recalling: {query}", lambda: self.archive.recall(query, question, said), turn)
+        if isinstance(found, str):
+            return found
+        if found.results:
+            # Told to "state them plainly", he recited the judge's sentences word for word.
+            return (f"{found.answer}\n(This is your memory of it, and it's right. Tell it in your own "
+                    "words, as something you remember, keeping the facts as they are.)")
+        if research and research.finished_titles() and (
+                reports := await asyncio.to_thread(
+                    research.find, f"{args.get('query', '')} {args.get('question', '')} {turn.user}", 1.0, False)
+                ) and len(reports) == 1 and reports[0].get("sure"):
+            # Nothing in his archive, and a report clearly covers it ("that marshmallow toy you
+            # found"): told he had reports to read, he said "I'll have to check" and didn't. Only
+            # one clear winner, though: anything less, and he's told their titles (below). Not
+            # widened by Gemma (Reports.find's expand), and not at all with no reports: every
+            # miss paid for it, a third of a second or more before "I don't remember".
+            print(f"{DIM}  (not in his archive: reading the report '{reports[0]['title']}'){RESET}", flush=True)
+            return ("Your archive has nothing on it, but this research report of yours may be what's meant. "
+                    "If it doesn't answer what was asked (what was said or done, say), you don't remember: "
+                    "say so.\n\n" + research.handle({"action": "read", "title": reports[0]["title"]}))
+        if research and (titles := research.finished_titles()):
+            # Asked what a report said, he recalled rather than reading it, and found nothing.
+            return (f"{found.answer}\n(But if it's about one of your research reports ("
+                    + "; ".join(f"'{t}'" for t in titles[-6:])
+                    + "), call the research tool to read that report, and answer from it.)")
+        return Searcher.for_holly(found)

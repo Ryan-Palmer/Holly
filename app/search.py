@@ -25,6 +25,7 @@ import httpx
 from .config import SearchConfig
 from .lmstudio import LmStudio
 from .persona import today
+from .tools import Lookup as LookupTool, Turn
 
 TOOL = {
     "type": "function",
@@ -335,3 +336,16 @@ class Searcher:
             return found.answer
         return (f"{found.answer}\n(These facts are right. State them plainly, without "
                 "changing or doubting them; any joke goes around them.)")
+
+
+class SearchTool(LookupTool):
+    name, schema, rules = "search", TOOL, "search"
+
+    def __init__(self, searcher: Searcher):
+        self.searcher = searcher
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        if not (query := str(args.get("query", "")).strip()):
+            return "The search needs a query."
+        found = await self.look_up(f"searching: {query}", lambda: self.searcher.look_up(query, turn.user), turn)
+        return found if isinstance(found, str) else Searcher.for_holly(found)

@@ -139,7 +139,7 @@ async def run(args) -> dict:
         spotify=dataclasses.replace(cfg.spotify, enabled=False))
     holly = Holly(None, face=False, cfg=cfg)
     holly.tts, holly.player = SilentVoice(), SilentPlayer()
-    holly.reminded = True  # no reminders from the records: the same prompt every time
+    holly.background.reminded = True  # no reminders from the records: the same prompt every time
     holly.lm.ensure_loaded(holly.model)
     reference = "" if args.no_judge else reference_lines()
     with open(cfg.persona.examples, "rb") as f:

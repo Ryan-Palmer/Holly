@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .announce import report_ready
 from .config import Config, load_config
 from .persona import when as spoken
 from .research import slug
@@ -83,7 +84,7 @@ def quiet_holly(model: str | None = None, tmp: Path | None = None):
     tmp = tmp or Path(tempfile.mkdtemp(prefix="holly-quiet-"))
     holly = Holly(model, face=False, cfg=quiet_config(tmp))
     holly.tts, holly.player = SilentVoice(), SilentPlayer()
-    holly.reminded = True  # no reminders from the records: the same prompt every time
+    holly.background.reminded = True  # no reminders from the records: the same prompt every time
     return holly
 
 
@@ -216,7 +217,8 @@ SCENARIOS = [
     Scenario("a report announced", [ANNOUNCE],
              lambda t, h: problems((mentions(t[0], "puppy", "puppies", "dog"), "didn't say which report"),
                                    ("?" in t[0].reply, "didn't ask about a summary"),
-                                   (not t[0].tools, "called a tool")),
+                                   (all(t == ("research", {"action": "list"}) for t in t[0].tools),
+                                    "called a tool (other than listing his research)")),
              setup=a_finished_report),
 ]
 
@@ -229,7 +231,7 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
     for said in scenario.turns:
         before = len(holly.convo.history)
         if said == ANNOUNCE:
-            await holly.announce_report(holly.research.ready())
+            await holly.announce(report_ready(holly.research))
         else:
             await holly.respond(said)
         new = holly.convo.history[before:]

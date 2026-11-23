@@ -2,7 +2,7 @@
 
 Asked to look into something properly, Holly calls the `research` tool, which
 queues a job (data/research/jobs.json). While he's asleep, Holly works through
-it one step at a time (Holly.start_research): plan the research questions;
+it one step at a time (app/background.py): plan the research questions;
 research each in turn (search the web and Wikipedia, read the likeliest pages,
 take notes, each tied to its source); check the notes for gaps; write the
 report from the notes; check it against them; sum it up. Each step is saved
@@ -35,11 +35,15 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
+from .announce import retry_wait
 from .config import ResearchConfig, SearchConfig
+from .console import DIM, RESET
+from .guards import REPORT_WANTED
 from .lmstudio import LmStudio
 from .persona import day, today
 from .reports import Reports, telling
 from .search import PROVIDERS, _clean, fetch_page
+from .tools import Tool, Turn
 
 ACTIONS = ("start", "list", "cancel", "summary", "read", "open")
 
@@ -140,7 +144,6 @@ for them ("dog" might be "dog, puppy, training, pet"), in British English
 
 WIKI_API = "https://{lang}.wikipedia.org/w/api.php"
 WIKI_RESULTS = 3  # per search, alongside the web's
-RETRY_S, RETRY_MAX_S = 60, 900  # an announcement that failed: tried again after this, doubling
 # A web search the engines refused (ddgs says "No results found" to a CAPTCHA): research is
 # in no hurry, so it waits and tries again, this long and then twice it, before giving up.
 REFUSED_WAIT_S, REFUSED_TRIES = 20.0, 3
@@ -384,7 +387,7 @@ class Research:
 
     def announced(self, report: dict, ok: bool, now: datetime.datetime | None = None) -> None:
         """Said, or not (the reply failed): then tried again in a minute, two, four..."""
-        wait = min(RETRY_S * 2 ** (report["tries"] or 0), RETRY_MAX_S)
+        wait = retry_wait(report["tries"] or 0)
         self.shelf.announced(report, ok, (now or datetime.datetime.now()) + datetime.timedelta(seconds=wait))
 
     def clear(self) -> None:
@@ -666,3 +669,31 @@ def for_reading(md: str) -> str:
     which mean nothing to say aloud."""
     md = re.split(r"\n## Sources\s*\n", md)[0]
     return CITATION.sub("", md).strip()
+
+
+class ResearchTool(Tool):
+    """Starting research is held unless the crew asked for a report outright, or chose one
+    when he asked: then he asks them whether they'd like a quick search now or a report."""
+
+    name, schema, rules, local = "research", TOOL, "research", True
+
+    def __init__(self, research: Research):
+        self.research = research
+        self.held_turn = -2  # the reply a start was last held in: the crew's next turn answers his question
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        if (str(args.get("action") or "start").lower() == "start" and not REPORT_WANTED.search(turn.user)
+                and not turn.answering_choice):
+            print(f"{DIM}  (research start held: not asked for outright; he asks which){RESET}", flush=True)
+            self.held_turn = turn.number
+            # No words given him to say: handed "a quick search now or a report while you
+            # doze", he said exactly that, every time.
+            return ("Not started: the crew didn't say they wanted a report. Ask them which they'd like: "
+                    "you searching it now, or researching it properly while you doze and writing it up. "
+                    "Put it your own way, about what they asked, and not as you've put it before. Then do "
+                    "what they choose. Don't say you've started anything.")
+        # In a thread: finding a report by meaning asks LM Studio for a vector.
+        result = await asyncio.to_thread(self.research.handle, args)
+        shown = result.split(". Tell the crew")[0].split("\n")[0]  # a report read: its first line
+        print(f"{DIM}  (research {args.get('action') or 'start'}) {shown}{RESET}", flush=True)
+        return result

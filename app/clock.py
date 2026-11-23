@@ -11,6 +11,9 @@ from __future__ import annotations
 import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # time zone data from tzdata on Windows
 
+from .console import DIM, RESET
+from .tools import Tool, Turn
+
 TOOL = {
     "type": "function",
     "function": {
@@ -44,3 +47,14 @@ def now(timezone: str | None = None) -> str:
             lines.append(f"There is no time zone called {timezone!r}: use an IANA name like 'Europe/Paris', "
                          "or the weather tool, which gives a place's local time.")
     return "\n".join(lines)
+
+
+class ClockTool(Tool):
+    name, schema, local = "clock", TOOL, True  # his rules for it are in search.md
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        zone = str(args.get("timezone") or "").strip() or None
+        result = now(zone)
+        print(f"{DIM}  (clock{': ' + zone if zone else ''}) {result.splitlines()[-1]}{RESET}", flush=True)
+        # Given the right time, he still hedged it ("11:42 AM. Or 11:42 PM").
+        return result + "\n(This is the exact time. Say it plainly, without doubting it.)"

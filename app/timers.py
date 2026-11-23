@@ -17,7 +17,10 @@ import os
 import re
 from pathlib import Path
 
+from .announce import retry_wait
+from .console import DIM, RESET
 from .persona import day, resolve_day, _DAY_WORDS
+from .tools import Tool, Turn
 
 TOOL = {
     "type": "function",
@@ -50,9 +53,6 @@ _HALF = re.compile(r"\band a half\b", re.IGNORECASE)  # "an hour and a half": ha
 _H_MM = re.compile(r"\b(\d+)\s*h\s*(\d{1,2})\b(?!\s*[a-z])", re.IGNORECASE)  # "1h30"
 # Words in a label that don't tell timers apart, for cancelling: "the pasta timer" is "pasta".
 _LABEL_NOISE = {"the", "a", "an", "my", "timer", "timers", "reminder", "reminders", "for", "to", "about"}
-# An announcement that failed (LM Studio restarting) is tried again after this long,
-# then twice that, and so on, up to RETRY_MAX_S apart.
-RETRY_S, RETRY_MAX_S = 60, 900
 _AT = re.compile(r"^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.IGNORECASE)
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
           "october", "november", "december"]
@@ -227,9 +227,8 @@ class Timers:
         now = now or datetime.datetime.now()
         for i in items:
             tries = i.get("tries", 0)
-            wait = min(RETRY_S * 2 ** tries, RETRY_MAX_S)
             self.items.append({**i, "tries": tries + 1,
-                               "retry": (now + datetime.timedelta(seconds=wait)).isoformat()})
+                               "retry": (now + datetime.timedelta(seconds=retry_wait(tries))).isoformat()})
         self._save()
 
     def clear(self) -> None:
@@ -257,3 +256,15 @@ def announcement(items: list[dict], now: datetime.datetime | None = None) -> str
     return ("[" + " ".join(lines) + " If it's for something you do with a tool (playing music, say), "
             "call the tool now and do it; otherwise tell the crew, in a sentence or two, in your own words. "
             "Nobody has spoken: you're speaking up by yourself.]")
+
+
+class TimerTool(Tool):
+    name, schema, rules, local = "timer", TOOL, "timers", True
+
+    def __init__(self, timers: Timers):
+        self.timers = timers
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        result = self.timers.handle(args)
+        print(f"{DIM}  (timer) {result.split('. Tell the crew')[0]}{RESET}", flush=True)
+        return result

@@ -26,8 +26,10 @@ import sys
 import subprocess
 import time
 
+from .announce import Announcement
+from .console import DIM, RESET, YELLOW, stamp
 from .mic import Mic
-from .speak import DIM, FORGET_HELP, RESET, RESET_HELP, YELLOW, Holly, TurnTimes, stamp
+from .speak import FORGET_HELP, RESET_HELP, Holly, TurnTimes
 from .stt import Transcriber
 from .vad import TurnDetector
 
@@ -97,35 +99,24 @@ class ListeningHolly(Holly):
         print(f"{DIM}Listening on {self.mic.device_name}. {how} Ctrl-C to quit.{RESET}\n")
 
     async def next_utterance(self):
-        """Wait for you to say something; returns the detector's Utterance, or a list
-        of timers and reminders that have come due (checked while nobody's speaking)."""
+        """Wait for you to say something; returns the detector's Utterance, or an
+        Announcement (timers come due, a report finished), checked while nobody's speaking."""
         hearing = False
         while True:
             block, captured = await self.mic.queue.get()
             if not hearing:
-                if self.timers and (due := self.timers.due()):
-                    if self.compaction and self.writing_notes:
-                        self.compaction.cancel()  # as for speech: he's about to talk
-                    self.stop_research()
+                if announcement := self.pending():
+                    self.background.wake()  # as for speech: he's about to talk
                     self.detector.reset()
-                    return due
-                if self.research and (job := self.research.ready()):
-                    self.stop_research()  # the next job's step, if it had started one
-                    self.detector.reset()
-                    return job
-                self._maybe_compact()
+                    return announcement
+                self._maybe_doze()
             if captured < self.deaf_until:
                 continue
             utterance = self.detector.feed(block, captured)
             if self.detector.in_speech and not hearing:
                 hearing = True
                 self.player.wake()  # the face may be asleep; it needs ~0.6 s to come round
-                if self.compaction and self.writing_notes:
-                    # Not finished: leave the history as it was. The reread
-                    # after the notes can't be stopped, and costs nothing extra:
-                    # the reply would have to reread the prompt anyway.
-                    self.compaction.cancel()
-                self.stop_research()
+                self.background.wake()
                 print(f"{DIM}(listening){RESET}", end="\r", flush=True)
             if utterance:
                 return utterance
@@ -133,13 +124,12 @@ class ListeningHolly(Holly):
                 hearing = False
                 self.quiet_since = time.perf_counter()
 
-    def _maybe_compact(self) -> None:
-        """Once he's asleep and the room is quiet, compact a long history (Holly.compact),
-        and after that, get on with any research (Holly.start_research)."""
+    def _maybe_doze(self) -> None:
+        """Once he's asleep and the room is quiet: his notes, then any research
+        (app/background.py)."""
         now = time.perf_counter()
         if now >= self.awake_until and now - self.quiet_since >= COMPACT_QUIET_S:
-            self.start_compaction()
-            self.start_research()
+            self.background.doze()
 
     async def run(self) -> None:
         await self.start()
@@ -147,10 +137,8 @@ class ListeningHolly(Holly):
         try:
             while True:
                 utterance = await self.next_utterance()
-                if isinstance(utterance, list):  # timers or reminders due: he speaks up
+                if isinstance(utterance, Announcement):  # timers due, a report finished: he speaks up
                     await self.announce(utterance)
-                elif isinstance(utterance, dict):  # a research report is ready: likewise
-                    await self.announce_report(utterance)
                 else:
                     text = await asyncio.to_thread(self.stt.transcribe, utterance.audio)
                     times = TurnTimes(start=utterance.speech_end, transcribed=time.perf_counter())
@@ -173,12 +161,12 @@ class ListeningHolly(Holly):
                 # The same span his face stays awake for (the face server's --sleep-after):
                 # awake, no wake word needed; asleep, it is.
                 self.awake_until = spoke_until + self.cfg.listen.awake_s
-                self.reminded = False  # new talk: fresh reminders from the records when he sleeps
+                self.background.reminded = False  # new talk: fresh reminders from the records when he sleeps
                 self.detector.reset()
         except KeyboardInterrupt:
             print()
         finally:
-            self.stop_research()
+            self.background.stop()
             self.mic.close()
             self.player.close()
 

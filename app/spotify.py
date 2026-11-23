@@ -23,6 +23,7 @@ Trying it without Holly:  python -m app.spotify do play "Talking Heads" artist
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -34,7 +35,9 @@ import spotipy
 from spotipy.oauth2 import SpotifyOauthError, SpotifyPKCE
 
 from .config import SpotifyConfig, load_config
+from .console import DIM, RESET, YELLOW, note
 from .search import _user_env
+from .tools import Tool, Turn
 
 # spotipy logs every refusal ("Restriction violated" when already paused); the tool says it instead.
 logging.getLogger("spotipy").setLevel(logging.CRITICAL)
@@ -429,3 +432,26 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+class SpotifyTool(Tool):
+    name, schema, rules, local, filler = "spotify", TOOL, "spotify", True, "spotify"
+
+    def __init__(self, spotify: Spotify):
+        self.spotify = spotify
+
+    async def run(self, args: dict, turn: Turn) -> str:
+        t0 = time.perf_counter()
+        loop = asyncio.get_running_loop()
+
+        def starting() -> None:  # Spotify's app is being opened: up to ~10 s, so say so
+            loop.call_soon_threadsafe(turn.filler, "spotify")
+
+        try:
+            result = await asyncio.to_thread(self.spotify.handle, args, starting)
+        except Exception as e:  # the network, or Spotify itself
+            note(f"spotify failed: {e!r}", YELLOW)
+            return "Spotify didn't answer. Tell the crew, in a few words."
+        print(f"{DIM}  (spotify {args.get('action')}{': ' + str(args['query']) if args.get('query') else ''}"
+              f" - {(time.perf_counter() - t0) * 1000:.0f} ms) {result}{RESET}", flush=True)
+        return result

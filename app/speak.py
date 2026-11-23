@@ -10,6 +10,10 @@ Holly can search the web (app/search.py). When his reply starts with a
 search instead of words, he says a stock line ("Hang on, let me look that
 up"), rendered at startup so it plays at once, while the search runs.
 
+His tools are in app/tools.py and beside their code; the safety nets that
+make him redo a reply are in app/guards.py; what he does while he sleeps is
+in app/background.py; speaking up by himself, in app/announce.py.
+
 Commands: /reset clears the conversation, /quit leaves.
 """
 
@@ -18,12 +22,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
-import datetime
-import functools
-import json
 import random
 from pathlib import Path
-import re
 import shutil
 import sys
 import time
@@ -31,81 +31,26 @@ import time
 import numpy as np
 import torch
 
+from . import archive, guards, research, spotify, timers
+from .announce import Announcement, pending
+from .background import Background, context_report
+from .clock import ClockTool
 from .config import load_config
+from .console import CYAN, DIM, RESET, YELLOW, note, stamp
+from .face_player import FacePlayer, start_server
 from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation, set_aside, when
-from .face_player import FacePlayer, start_server
 from .player import Player
-from . import archive, clock, memory, research, spotify, timers, weather
-from .records import reminders as pick_reminders, source_of
-from .search import TOOL, Searcher
+from .search import SearchTool, Searcher
 from .speech_text import SentenceChunker
+from .tools import Toolbox, Turn
 from .tts_common import Tts, make_tts
+from .weather import WeatherTool
 
-DIM, RESET, CYAN, YELLOW = "\033[2m", "\033[0m", "\033[36m", "\033[33m"
+__all__ = ["CYAN", "DIM", "RESET", "YELLOW", "stamp", "Holly", "TurnTimes"]  # app/listen.py uses these
 
-
-def stamp() -> str:
-    """The time now, dimmed, to start a line of talk in the console."""
-    return f"{DIM}{datetime.datetime.now():%H:%M:%S}{RESET} "
-
-
-# Tools that answer at once (Spotify in well under a second): no stock line, and they
-# don't count towards the lookups allowed per reply.
-LOCAL_TOOLS = ("clock", "timer", "spotify", "research")
-COMPACT_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
-RESEARCH_RETRY_S = 60.0  # after a research step failed (LM Studio, the network), wait this long
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
-# A time of day in a reply: "10:14", "10 pm", "ten o'clock". Not "12.50": that's money.
-# A claim to have looked in his memory: "I've used the recall tool, but...", "I've
-# checked my records", "not in my files". Said without calling recall, it stuck: copied
-# from his history, he said it a dozen times in a row and recalled only when told to.
-CLAIMED_RECALL = re.compile(
-    r"\brecall tool\b|\b(?:used|checked|searched|looked (?:through|in)|consulted|scanned|gone through) "
-    r"(?:through |in )?(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|"
-    r"memory)\b|\bnot in my (?:records|archives?|files|memory)\b|\b(?:no|any) records? (?:of|about|on)\b",
-    re.IGNORECASE)
-# Asked if he remembered something, he said he didn't, without calling recall ("the name's
-# gone a bit foggy", of Queeg; "lovely to meet you", to the crew's own girlfriend), and
-# recalled only when told to use it: his senility is for trivia, not for what's in his
-# archive. So asked about his memory, he can't say he doesn't remember until he's looked.
-MEMORY_ASKED = re.compile(r"\b(?:remember|recall|forgot(?:ten)?|forget|do you know (?:who|what|about)|"
-                          r"who(?:'s| is| was)|you met)\b", re.IGNORECASE)
-FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really |honestly )?(?:remember|recall|"
-                    r"place|bring (?:it|that|them|her|him) to mind)\b|\bslipped my mind\b|\bgone (?:a bit )?"
-                    r"(?:foggy|fuzzy|blurry|hazy)\b|\bnot sticking\b|\bno idea who\b|\bnever heard of\b|"
-                    r"\bdoesn't ring a bell\b", re.IGNORECASE)
-# Asked to research something, he promised to without calling the research tool ("I'll get
-# on with that later and come back to you"), and nothing was ever researched. So when the
-# crew ask for research and he promises it, the research tool must have been called.
-RESEARCH_ASKED = re.compile(r"\b(?:research|look(?:ing)? into|find out (?:all )?about|report on|dig into|"
-                            r"read up on|look up everything)\b", re.IGNORECASE)
-PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on (?:with )?(?:it|that|this)|get back to "
-                               r"you|come back to you|let you know|report back|while (?:things are quiet|"
-                               r"I doze|I'm dozing|I'm asleep|I sleep|you sleep)|have a proper look|dig into it|"
-                               r"get(?:ting)? started|(?:get|got|start|started|starting|do|doing|write|writing|"
-                               r"put together) (?:on )?(?:a|the|that|your) (?:proper |full |research |little )?"
-                               r"(?:report|write-up)|report (?:started|going|under way)|it's in hand|get cracking|"
-                               r"crack on|I'm on it)\b",
-                               re.IGNORECASE)
-# The crew asked for a report outright, or chose one when he asked: research may start.
-# Anything less ("look into slugs", "find out about heat pumps"), he asks first: a quick
-# search now, or a report while he dozes? Told to ask, in a rule alone, he mostly didn't.
-REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|write it (?:all )?up|in depth|in detail|properly|"
-                           r"proper (?:look|one|job)|full one|long one|while you doze|while you sleep|later)\b",
-                           re.IGNORECASE)
-# His last reply offered the choice in his own words ("shall I dig into it while I doze?").
-OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
-                            r"dig into|while I(?:'m)? doz|while I sleep)", re.IGNORECASE)
-CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
-                        r"\bo'clock\b", re.IGNORECASE)
-
-
-def rules(tool: str) -> str:
-    """A tool's rules for Holly, added to his system prompt, from the .md
-    beside its module: rules("search") reads app/search.md."""
-    return Path(__file__).with_name(f"{tool}.md").read_text(encoding="utf-8")
 
 
 @dataclasses.dataclass
@@ -162,11 +107,11 @@ def quiet_connection_resets(loop: asyncio.AbstractEventLoop) -> None:
 
 
 class Holly:
-    HINT =" /reset to start over, /quit to leave."
+    HINT = " /reset to start over, /quit to leave."
 
     def __init__(self, model: str | None, face: bool | None = None, search: bool | None = None,
                  forget: bool = False, reset: bool = False, cfg=None):
-        """`cfg`, if given, instead of holly.toml's (app/persona_eval.py: his memory elsewhere)."""
+        """`cfg`, if given, instead of holly.toml's (app/scenarios.py: his memory elsewhere)."""
         cfg = cfg or load_config()
         # The model's own settings and quirks ([models."key"] in holly.toml).
         cfg = dataclasses.replace(cfg, llm=cfg.llm.for_model(model))
@@ -180,8 +125,6 @@ class Holly:
         self.model = cfg.llm.model
         self.stray_words = {w.lower() for w in cfg.llm.stray_words}
         self.lm = LmStudio(cfg.llm)
-        # Every request sends the same tools: they're part of the start of the
-        # prompt, so changing them between requests would break LM Studio's cache.
         self.searcher = Searcher(cfg.search, self.lm, self.model) if cfg.search.enabled else None
         memory_file = cfg.persona.memory_file
         if reset:
@@ -204,52 +147,44 @@ class Holly:
         # few, fitting what's been said, put in his prompt while he sleeps to bring up now and then.
         self.records = (archive.Archive(cfg.recall, self.lm, self.model, cfg.recall.records_file)
                         if cfg.recall.enabled and cfg.recall.records_file.exists() else None)
-        self.reminded = False  # the reminders fit the talk so far
         self.archive = (archive.Archive(cfg.recall, self.lm, self.model, records=self.records)
                         if cfg.recall.enabled else None)
-        tools, prompts = [], []
-        if self.searcher:
-            tools += [TOOL, clock.TOOL] + ([weather.TOOL] if cfg.search.weather else [])
-            prompts.append(rules("search"))
-        if self.archive:
-            tools.append(archive.TOOL)
-            prompts.append(rules("archive"))
         self.timers = timers.Timers(cfg.timers.file) if cfg.timers.enabled else None
-        if self.timers:
-            tools.append(timers.TOOL)
-            prompts.append(rules("timers"))
         self.spotify = (spotify.Spotify(cfg.spotify)
                         if cfg.spotify.enabled and spotify.available() else None)
-        if self.spotify:
-            tools.append(spotify.TOOL)
-            prompts.append(rules("spotify"))
         # Research jobs (app/research.py): queued by the tool, worked on while he sleeps.
         # Finished reports are found by meaning too, with recall's embedding model, if it's on.
         self.research = (research.Research(cfg.research, cfg.search, self.lm, self.model,
                                            cfg.recall.embed_model if cfg.recall.enabled else "")
                          if cfg.research.enabled and self.searcher else None)
-        if self.research:
-            tools.append(research.TOOL)
-            prompts.append(rules("research"))
-        self.tools = tools or None
+        self.research_tool = research.ResearchTool(self.research) if self.research else None
+        tools = []
+        if self.searcher:
+            tools += [SearchTool(self.searcher), ClockTool()] + ([WeatherTool(cfg.search)] if cfg.search.weather else [])
+        if self.archive:
+            tools.append(archive.RecallTool(self.archive, self.research))
+        if self.timers:
+            tools.append(timers.TimerTool(self.timers))
+        if self.spotify:
+            tools.append(spotify.SpotifyTool(self.spotify))
+        if self.research_tool:
+            tools.append(self.research_tool)
+        self.toolbox = Toolbox(tools, cfg.search.max_searches)
+        # Every request sends the same tools: they're part of the start of the
+        # prompt, so changing them between requests would break LM Studio's cache.
+        self.tools = self.toolbox.schemas()
         self.turn_lock = asyncio.Lock()  # one reply at a time: yours, or his speaking up
-        self.convo = Conversation(cfg.persona, "\n\n".join(prompts), memory_file, self.archive)
+        self.convo = Conversation(cfg.persona, self.toolbox.rules(), memory_file, self.archive)
+        self.background = Background(cfg, self.convo, self.lm, self.model, self.tools, self.archive, self.records,
+                                     self.research)
         # Stock lines in his voice for while a tool works, by kind: "search" (web
-        # search and weather) and "recall" (his archive).
+        # search and weather), "recall" (his archive) and "spotify" (its app opening).
         self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": []}
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
-        self.writing_notes = False
         self.resuming: asyncio.Task | None = None  # at startup: the last session into his notes
-        self.compaction: asyncio.Task | None = None  # later: older history into his notes
-        self.compact_retry_at = 0.0  # after a failed try, not before this
-        self.researching: asyncio.Task | None = None  # research steps, while he sleeps
-        self.research_retry_at = 0.0  # after a failed step, not before this
         self.turns = 0  # replies so far this session
-        # The turn he was told to ask search-or-report in: the crew's next turn answers it,
-        # however he put the question ("yes, go on" is a yes to whatever he offered).
-        self.report_choice_turn = -2
 
     def voice_name(self) -> str:
         return "Holly (VoxCPM2 clone)"
@@ -278,7 +213,7 @@ class Holly:
             print(f"{DIM}He remembers talking until {when(self.convo.previous_end)}"
                   f"{', and has notes' if self.convo.memory else ''}.{RESET}", flush=True)
             if end := self.convo.resume_split():
-                self.resuming = asyncio.create_task(self.compact(end, "from last time"))
+                self.resuming = asyncio.create_task(self.background.compact(end, "from last time"))
         face_server = None
         if self.cfg.face.enabled:
             # Its own process and venv; it warms up while the voice loads. Only
@@ -311,7 +246,7 @@ class Holly:
                 print(f"{DIM}  (couldn't write his notes: {e!r}){RESET}", flush=True)
         if self.records:
             try:
-                await self.refresh_reminders(prewarm=False)  # the warm-up below reads them
+                await self.background.refresh_reminders(prewarm=False)  # the warm-up below reads them
             except Exception as e:
                 print(f"{DIM}  (couldn't pick reminders from the ship's records: {e!r}){RESET}", flush=True)
         async for _ in self.lm.astream_reply(self.convo.messages_for("Hello."), ReplyTiming(), self.model,
@@ -375,41 +310,31 @@ class Holly:
             print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
             messages = self.convo.messages_for(user)
             asked = len(messages)
-            searches = 0
-            recalled = False  # he called recall this turn
-            researched = False  # he called the research tool this turn
-            answering_choice = self._answering_choice()  # the crew answering search-or-report
+            lookups = 0  # slow tools called this reply
+            called: set[str] = set()  # the tools called this reply
+            turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
+                        self._answering_choice(), self.convo.crew_lines)
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
             # cracking", "I'll get stuck into it", in ever new words, and started nothing. (If the
             # model honours it: else a retry is just asked again.)
             required = "required" if self.cfg.llm.tool_choice else None
-            choice = required if answering_choice and self.research and REPORT_WANTED.search(user) else None
+            choice = (required if turn.answering_choice and "research" in self.toolbox
+                      and guards.REPORT_WANTED.search(user) else None)
 
             async def say(sentence: str) -> None:
                 times.first_sentence = times.first_sentence or time.perf_counter()
                 await sentences.put(sentence)
 
             def dropped(sentence: str) -> str | None:
-                """Why this sentence mustn't be said, if it mustn't."""
+                """Why this sentence mustn't be said, if it mustn't (app/guards.py)."""
                 if retried:
                     return None
-                if (word := sentence.strip().strip(".!").lower()) in self.stray_words:  # Gemma's "thought"
-                    return f"a stray {word!r}"
-                if not recalled and self.archive and CLAIMED_RECALL.search(sentence):
-                    return "he said he'd looked in his memory without calling recall"
-                if not recalled and self.archive and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
-                    return "he said he didn't remember without calling recall"
-                # Asked for research, or answering his search-or-report question ("go on then,
-                # write it up"): he said he'd started a report and called nothing, four times in six.
-                if (not researched and self.research
-                        and (RESEARCH_ASKED.search(user) or REPORT_WANTED.search(user) or answering_choice)
-                        and PROMISED_RESEARCH.search(sentence) and not sentence.rstrip().endswith("?")):
-                    # (A question isn't a promise: "shall I have a proper look while I doze?"
-                    # is him asking which the crew want, as he's meant to.)
-                    return "he promised research without calling the research tool"
-                return None
+                return guards.unsaid(sentence, user, stray=self.stray_words, recalled="recall" in called,
+                                     researched="research" in called, can_recall="recall" in self.toolbox,
+                                     can_research="research" in self.toolbox,
+                                     answering_choice=turn.answering_choice)
 
             while True:
                 calls: list[dict] = []
@@ -439,21 +364,19 @@ class Holly:
                     # Not said: asked again, with a tool required if he claimed one.
                     print(f"\n{DIM}  ({redo}: not said; asking again){RESET}", flush=True)
                     retried, chunker = True, SentenceChunker()
-                    choice = required if "recall" in redo or "research" in redo else None
+                    choice = required if guards.needs_tool(redo) else None
                     print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
                     continue
                 choice = None
                 last_said[:] = said
-                if not calls or searches > self.cfg.search.max_searches:
+                if not calls or lookups > self.cfg.search.max_searches:
                     break  # (past the limit, he was told to stop; stop asking him)
                 # He wants to look something up. Say anything he wrote first;
                 # if he wrote nothing yet, a stock line covers the wait.
                 for sentence in chunker.flush():
-                    times.first_sentence = times.first_sentence or time.perf_counter()
-                    await sentences.put(sentence)
-                slow = [c["name"] for c in calls if c["name"] not in LOCAL_TOOLS]  # these are instant
-                if not parts and slow:
-                    self._say_filler(times, "recall" if all(n == "recall" for n in slow) else "search")
+                    await say(sentence)
+                if not parts and (kind := self.toolbox.filler([c["name"] for c in calls])):
+                    self._say_filler(times, kind)
                 self.player.expect_gap()
                 messages = [*messages, {
                     "role": "assistant",
@@ -463,19 +386,17 @@ class Holly:
                                    for c in calls],
                 }]
                 for call in calls:
-                    if call["name"] not in LOCAL_TOOLS:  # instant and local: no limit
-                        searches += 1
-                    recalled = recalled or call["name"] == "recall"
-                    researched = researched or call["name"] == "research"
-                    result = await self._run_tool(call, user, searches, times)
+                    if not self.toolbox.local(call["name"]):  # instant and local: no limit
+                        lookups += 1
+                    called.add(call["name"])
+                    result = await self.toolbox.run(call, turn, lookups)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                 print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
             steps.extend(messages[asked:])
             if timing.prompt_tokens is not None:
                 times.context_tokens = timing.prompt_tokens + (timing.completion_tokens or 0)
             for sentence in chunker.flush():
-                times.first_sentence = times.first_sentence or time.perf_counter()
-                await sentences.put(sentence)
+                await say(sentence)
             print()
 
         async def speak() -> None:
@@ -508,67 +429,15 @@ class Holly:
         # midnight?" a turn after the clock said 00:24, his "00:24" was no guess).
         told = ([user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
                 + [m.get("content") or "" for m in self.convo.history[-12:]])
-        if CLOCK_TIME.search(said) and not any(CLOCK_TIME.search(t) for t in told):
-            # He gave a time that nobody gave him (the clock, the weather's sunset, a
-            # search, the crew, a timer coming due): a guess. Kept as fact in his
-            # history, it stuck: greeted, he said "10:14 PM" at 7:56, and repeated it
-            # four times, asked to use the clock or not. (The brackets are never spoken.)
-            said += " [That time was a guess, not from the clock: it's probably wrong.]"
+        if guards.guessed_time(said, told):
+            said += guards.GUESSED
         dropped = self.convo.record(user, said, steps)
         print(f"{DIM}  {times.report()}{RESET}")
         if dropped:
             print(f"{DIM}  (history past {self.cfg.persona.history_hard_tokens:,} tokens: dropped the "
                   f"oldest {dropped} exchanges, without notes){RESET}")
-        print(f"{DIM}  {self.context_report(times.context_tokens)}{RESET}\n")
+        print(f"{DIM}  {context_report(self.cfg, self.convo, times.context_tokens)}{RESET}\n")
         return times
-
-    def context_report(self, used: int | None) -> str:
-        """How full his context is, and how far his history is from being
-        folded into notes (see compact)."""
-        size = self.cfg.llm.context_length
-        soft = self.cfg.persona.history_soft_tokens
-        history = self.convo.tokens()
-        # `used` is LM Studio's count; the history's is characters / 4, which runs ~10% high.
-        report = f"context {used:,} of {size:,} tokens" if used else f"context ? of {size:,} tokens"
-        if history > soft:
-            return report + "; older history goes into his notes when he next sleeps"
-        return report + f"; ~{soft - history:,} more before older history goes into his notes"
-
-    async def compact(self, end: int | None = None, label: str = "asleep") -> bool:
-        """Fold the older history, history[:end], into his notes
-        (app/memory.py), then have LM Studio read the new, shorter prompt, so
-        his next reply doesn't wait for it. Meant for while he sleeps, and
-        for startup; `self.writing_notes` is True while the notes are being
-        written, the part that's safe to cancel. Returns True if the history
-        was compacted."""
-        convo = self.convo
-        if not (end := end or convo.compaction_split()):
-            return False
-        dropped = convo.history[:end]
-        exchanges = sum(m["role"] == "user" for m in dropped)
-        before = convo.tokens()
-        t0 = time.perf_counter()
-        self.writing_notes = True
-        try:
-            notes = await memory.write_notes(self.lm, self.model, convo.memory, convo.transcript(end),
-                                             self.cfg.persona.memory_tokens)
-        finally:
-            self.writing_notes = False
-        if not notes or not convo.apply_compaction(end, dropped, notes):
-            return False
-        self.reminded = False  # the talk has moved on: reminders to fit it
-        t1 = time.perf_counter()
-        prompt = await self.lm.prewarm(convo.messages_for(), self.model, self.tools)
-        if self.archive:  # the archived exchanges' vectors, now rather than at his next recall
-            try:
-                await asyncio.to_thread(self.archive.embed_missing)
-            except Exception as e:
-                print(f"{DIM}  (couldn't embed the archive: {e!r}){RESET}", flush=True)
-        print(f"{DIM}  ({label}: folded {exchanges} exchanges into his notes, ~{len(notes) // 4} tokens; "
-              f"history ~{before:,} -> ~{convo.tokens():,} tokens; {t1 - t0:.1f} s to write, "
-              f"{time.perf_counter() - t1:.1f} s to reread)\n  {self.context_report(prompt)}{RESET}",
-              flush=True)
-        return True
 
     def _say_filler(self, times: TurnTimes, kind: str = "search") -> None:
         """Play a stock line ("Hang on, let me look that up") in his voice."""
@@ -582,283 +451,62 @@ class Holly:
         for i in range(0, len(audio), step):
             self.player.put(audio[i:i + step])
 
-    async def _run_tool(self, call: dict, user: str, n: int, times: TurnTimes) -> str:
-        """Run one tool call; returns what goes back to the model."""
-        print()
-        try:
-            args = json.loads(call["arguments"] or "{}")
-        except json.JSONDecodeError:
-            args = {}
-        if call["name"] == "clock":
-            zone = str(args.get("timezone") or "").strip() or None
-            result = clock.now(zone)
-            print(f"{DIM}  (clock{': ' + zone if zone else ''}) {result.splitlines()[-1]}{RESET}", flush=True)
-            # Given the right time, he still hedged it ("11:42 AM. Or 11:42 PM").
-            return result + "\n(This is the exact time. Say it plainly, without doubting it.)"
-        if call["name"] == "timer" and self.timers:
-            result = self.timers.handle(args)
-            print(f"{DIM}  (timer) {result.split('. Tell the crew')[0]}{RESET}", flush=True)
-            return result
-        if call["name"] == "research" and self.research:
-            if (str(args.get("action") or "start").lower() == "start" and not REPORT_WANTED.search(user)
-                    and not self._answering_choice()):
-                print(f"{DIM}  (research start held: not asked for outright; he asks which){RESET}", flush=True)
-                self.report_choice_turn = self.turns  # their answer, next turn, is their choice
-                # No words given him to say: handed "a quick search now or a report while you
-                # doze", he said exactly that, every time.
-                return ("Not started: the crew didn't say they wanted a report. Ask them which they'd like: "
-                        "you searching it now, or researching it properly while you doze and writing it up. "
-                        "Put it your own way, about what they asked, and not as you've put it before. Then do "
-                        "what they choose. Don't say you've started anything.")
-            # In a thread: finding a report by meaning asks LM Studio for a vector.
-            result = await asyncio.to_thread(self.research.handle, args)
-            shown = result.split(". Tell the crew")[0].split("\n")[0]  # a report read: its first line
-            print(f"{DIM}  (research {args.get('action') or 'start'}) {shown}{RESET}", flush=True)
-            return result
-        if call["name"] == "spotify" and self.spotify:
-            t0 = time.perf_counter()
-            loop = asyncio.get_running_loop()
-
-            def starting() -> None:  # Spotify's app is being opened: up to ~10 s, so say so
-                loop.call_soon_threadsafe(self._say_filler, times, "spotify")
-
-            try:
-                result = await asyncio.to_thread(self.spotify.handle, args, starting)
-            except Exception as e:  # the network, or Spotify itself
-                print(f"{YELLOW}  (spotify failed: {e!r}){RESET}", flush=True)
-                return "Spotify didn't answer. Tell the crew, in a few words."
-            print(f"{DIM}  (spotify {args.get('action')}{': ' + str(args['query']) if args.get('query') else ''}"
-                  f" - {(time.perf_counter() - t0) * 1000:.0f} ms) {result}{RESET}", flush=True)
-            return result
-        if n > self.cfg.search.max_searches:
-            return "That's enough searching. Answer with what you have."
-        if call["name"] == "search" and self.searcher:
-            if not (query := str(args.get("query", "")).strip()):
-                return "The search needs a query."
-            label, job = f"searching: {query}", functools.partial(self.searcher.look_up, query, user)
-        elif call["name"] == "weather" and self.searcher and self.cfg.search.weather:
-            if not (place := str(args.get("place", "")).strip()):
-                return "The weather tool needs a place."
-            label, job = f"weather: {place}", functools.partial(weather.forecast, place, self.cfg.search)
-        elif call["name"] == "recall" and self.archive:
-            if not (query := str(args.get("query", "")).strip()):
-                return "Recall needs a query."
-            # His question, not the crew's last words: after "you need to use the recall
-            # tool", the judge was asked that, and found nothing.
-            question = str(args.get("question") or "").strip() or user
-            asked = f"{query} {question} {user}"
-            if self.research and "report" in asked.lower() and (
-                    reports := await asyncio.to_thread(self.research.find, asked)
-                    ) and len(reports) == 1 and reports[0].get("sure"):
-                # Asked what a report said, he recalled (fragments, or nothing) rather than reading
-                # it, and wasn't moved by a hint to read it: so it's read for him. Only when one
-                # report is clearly meant, though: "what did the weather report say?" is a
-                # question about a conversation, and given a shortlist of research reports instead
-                # of recall, he'd have said he had no such report. Anything less sure, recall runs.
-                print(f"{DIM}  (recalling a report: reading '{reports[0]['title']}' instead){RESET}", flush=True)
-                return self.research.handle({"action": "read", "title": reports[0]["title"]})
-            label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, question,
-                                                                  self.convo.crew_lines())
-        else:
-            return f"There is no tool called {call['name']}."
-        print(f"{DIM}  ({label}){RESET}", flush=True)
-        try:
-            found = await asyncio.to_thread(job)
-        except Exception as e:  # LM Studio, a provider or the weather service broke: he says he couldn't
-            print(f"{YELLOW}  ({call['name']} failed: {e!r}){RESET}", flush=True)
-            return (f"The {call['name']} tool broke ({type(e).__name__}). Tell the crew you couldn't find "
-                    "out, in your own words, and give no time, number, date or name for it.")
-        times.search_ms += found.search_ms + found.summary_ms
-        again = f"; searched again: {'; '.join(found.queries[1:])}" if len(found.queries) > 1 else ""
-        print(f"{DIM}  ({found.results} results{again}, {found.search_ms:.0f} + {found.summary_ms:.0f} ms: "
-              f"{found.answer}){RESET}", flush=True)
-        if call["name"] == "recall" and found.results:
-            # Told to "state them plainly", he recited the judge's sentences word for word.
-            return (f"{found.answer}\n(This is your memory of it, and it's right. Tell it in your own "
-                    "words, as something you remember, keeping the facts as they are.)")
-        if call["name"] == "recall" and self.research and self.research.finished_titles() and (
-                reports := await asyncio.to_thread(
-                    self.research.find, f"{args.get('query', '')} {args.get('question', '')} {user}", 1.0, False)
-                ) and len(reports) == 1 and reports[0].get("sure"):
-            # Nothing in his archive, and a report clearly covers it ("that marshmallow toy you
-            # found"): told he had reports to read, he said "I'll have to check" and didn't. Only
-            # one clear winner, though: anything less, and he's told their titles (below). Not
-            # widened by Gemma (Reports.find's expand), and not at all with no reports: every
-            # miss paid for it, a third of a second or more before "I don't remember".
-            print(f"{DIM}  (not in his archive: reading the report '{reports[0]['title']}'){RESET}", flush=True)
-            return ("Your archive has nothing on it, but this research report of yours may be what's meant. "
-                    "If it doesn't answer what was asked (what was said or done, say), you don't remember: "
-                    "say so.\n\n" + self.research.handle({"action": "read", "title": reports[0]["title"]}))
-        if call["name"] == "recall" and self.research and (titles := self.research.finished_titles()):
-            # Asked what a report said, he recalled rather than reading it, and found nothing.
-            return (f"{found.answer}\n(But if it's about one of your research reports ("
-                    + "; ".join(f"'{t}'" for t in titles[-6:])
-                    + "), call the research tool to read that report, and answer from it.)")
-        return Searcher.for_holly(found)
-
     def _answering_choice(self) -> bool:
         """Are the crew answering his search-or-report question? Either the research tool
         had him ask it last turn, or he offered it himself, in his own words, as a question
         ("a quick search now, or shall I dig into it properly while I doze?"). Either way,
         whatever they answer ("yes, go on") is their choice."""
-        if self.report_choice_turn == self.turns - 1:
+        if self.research_tool and self.research_tool.held_turn == self.turns - 1:
             return True
         said = next((m.get("content") or "" for m in reversed(self.convo.history)
                      if m["role"] == "assistant" and m.get("content")), "")
-        return "?" in said and bool(OFFERED_REPORT.search(said))
+        return "?" in said and bool(guards.OFFERED_REPORT.search(said))
 
-    def start_compaction(self) -> None:
-        """In the background, if due: fold older history into his notes (see
-        compact), and pick fresh reminders from the ship's records. Cancel
-        `self.compaction` while `self.writing_notes` to leave the history as
-        it was."""
-        due = self.convo.needs_compacting() or (self.records and not self.reminded)
-        if self.compaction or self.researching or time.perf_counter() < self.compact_retry_at or not due:
-            return
-        self.compaction = asyncio.create_task(self.sleep_work())
-        self.compaction.add_done_callback(self._compacted)
+    # Speaking up by himself -----------------------------------------------------
 
-    async def sleep_work(self) -> bool:
-        """What's done while he sleeps. False if the notes couldn't be written."""
-        ok = True
-        if self.convo.needs_compacting():
-            ok = await self.compact()
-        if self.records and not self.reminded:
-            try:
-                await self.refresh_reminders()
-            except Exception as e:  # the notes may be fine: not their failure, nor their retry
-                self.reminded = True  # try again after the next talk, not straight away
-                print(f"{DIM}  (couldn't pick reminders from the ship's records: {e!r}){RESET}", flush=True)
-        return ok
+    def pending(self) -> Announcement | None:
+        """Timers come due, or a report finished, to speak up about now (app/announce.py)."""
+        return pending(self.timers, self.research)
 
-    async def refresh_reminders(self, prewarm: bool = True) -> None:
-        """A few entries from the ship's records for his system prompt, close to
-        what's been said lately (app/records.py); then, if they changed, LM
-        Studio rereads the prompt, as after his notes."""
-        picks = await asyncio.to_thread(pick_reminders, self.records, self.convo.recent_topics(),
-                                        self.cfg.recall.reminders)
-        self.reminded = True
-        if picks == self.convo.reminders:
-            return
-        self.convo.reminders = picks
-        names = "; ".join(source_of(p) for p in picks)
-        print(f"{DIM}  (from the ship's records, on his mind: {names}){RESET}", flush=True)
-        if prewarm:
-            await self.lm.prewarm(self.convo.messages_for(), self.model, self.tools)
-
-    def _compacted(self, task: asyncio.Task) -> None:
-        self.compaction = None
-        if task.cancelled():
-            return  # someone spoke: tried again later, no wait
-        if (e := task.exception()) or not task.result():
-            # LM Studio refused, or the notes came back empty: not again for a
-            # while, rather than once per mic block.
-            self.compact_retry_at = time.perf_counter() + COMPACT_RETRY_S
-            print(f"{DIM}  (couldn't write his notes{f': {e!r}' if e else ''}; trying again in "
-                  f"{COMPACT_RETRY_S:.0f} s){RESET}", flush=True)
-
-    def _notes_due(self) -> bool:
-        """His notes (or reminders from the records) want writing, and may be tried now."""
-        return bool(self.convo.needs_compacting() or (self.records and not self.reminded)) and (
-            time.perf_counter() >= self.compact_retry_at)
-
-    def start_research(self) -> None:
-        """In the background, while he sleeps: the next steps of any research jobs
-        (app/research.py), one at a time. Not while his notes are due or being
-        written: they come first. Stop it with stop_research when anyone speaks."""
-        if (not self.research or self.researching or self.compaction or self._notes_due()
-                or time.perf_counter() < self.research_retry_at or not self.research.has_work()):
-            return
-        self.researching = asyncio.create_task(self._research_loop())
-        self.researching.add_done_callback(self._researched)
-
-    def stop_research(self) -> None:
-        """Someone's speaking, or he's about to: the step in hand is dropped, and
-        done again at his next sleep. (Each step is saved only when it's done.)"""
-        if self.researching:
-            self.researching.cancel()
-
-    async def _research_loop(self) -> None:
-        while self.research.has_work() and not self._notes_due():
-            label = await self.research.step()
-            print(f"{DIM}  (research {label}){RESET}", flush=True)
-        if not self.research.has_work():
-            # All done: his own prompt back into LM Studio's cache, for his next reply.
-            await self.lm.prewarm(self.convo.messages_for(), self.model, self.tools)
-
-    def _researched(self, task: asyncio.Task) -> None:
-        self.researching = None
-        if task.cancelled():
-            return  # someone spoke: carried on at the next sleep
-        if e := task.exception():
-            self.research_retry_at = time.perf_counter() + RESEARCH_RETRY_S
-            print(f"{DIM}  (a research step failed: {e!r}; trying again in {RESEARCH_RETRY_S:.0f} s){RESET}",
-                  flush=True)
-
-    async def announce_report(self, job: dict) -> TurnTimes | None:
-        """Speak up about a research job that's finished (or given up): his reply to a
-        note saying so, kept in his history like any turn."""
-        print(f"{DIM}  (research {'finished' if job['stage'] == 'done' else 'given up'}: {job['title']}){RESET}",
-              flush=True)
+    async def announce(self, announcement: Announcement) -> TurnTimes | None:
+        """Speak up: his reply to a note saying what's happened, kept in his history like
+        any turn. If it fails, what it was about is kept, to try again later."""
+        note(announcement.what)
         times = None
         try:
             self.player.wake()
-            times = await self.respond(research.announcement(job))
+            times = await self.respond(announcement.note)
         except Exception as e:
             print(f"{YELLOW}  (couldn't announce it: {e!r}){RESET}\n", flush=True)
         ok = times is not None and not times.failed
-        self.research.announced(job, ok)
+        announcement.done(ok)
         if not ok:
-            print(f"{DIM}  (not announced: {job['title']}; trying again later){RESET}\n", flush=True)
+            print(f"{DIM}  (not announced: {announcement.what}; trying again later){RESET}\n", flush=True)
         return times
 
-    async def announce(self, due: list[dict]) -> TurnTimes | None:
-        """Speak up about timers and reminders that have come due: his reply to a
-        note saying so, which is kept in his history like any turn."""
-        labels = ", ".join(i["label"] for i in due)
-        print(f"{DIM}  (due: {labels}){RESET}", flush=True)
-        times = None
-        try:
-            self.player.wake()
-            times = await self.respond(timers.announcement(due))
-        except Exception as e:
-            print(f"{YELLOW}  (couldn't announce it: {e!r}){RESET}\n", flush=True)
-        if (times is None or times.failed) and self.timers:
-            # Taken off the list as it came due, and never said: kept, and tried again.
-            self.timers.put_back(due)
-            print(f"{DIM}  (not announced: {labels}; trying again in a minute or so){RESET}\n", flush=True)
-        return times
-
-    async def _watch_timers(self) -> None:
-        """Typed: there's no listening loop to check between, so a task checks
-        every second and speaks up between your turns."""
+    async def _watch(self) -> None:
+        """Typed: there's no listening loop to check between, so a task checks every
+        second, speaks up between your turns, and otherwise lets him doze."""
         while True:
             await asyncio.sleep(1)
-            if self.timers and (due := self.timers.due()):
-                self.stop_research()
+            if announcement := self.pending():
+                self.background.wake()
                 async with self.turn_lock:
-                    await self.announce(due)
-                print("You: ", end="", flush=True)
-            elif self.research and (job := self.research.ready()):
-                self.stop_research()
-                async with self.turn_lock:
-                    await self.announce_report(job)
+                    await self.announce(announcement)
                 print("You: ", end="", flush=True)
             elif not self.turn_lock.locked():
-                self.start_research()  # while you're typing, or not
+                self.background.doze()  # while you're typing, or not
 
     async def run(self) -> None:
         await self.start()
-        watcher = asyncio.create_task(self._watch_timers())
+        watcher = asyncio.create_task(self._watch())
         try:
             while True:
                 # Typed, there's no sleep to wait for: his notes are written while
                 # you type, and dropped if you send before they're done.
-                self.start_compaction()
+                self.background.doze()
                 user = (await asyncio.to_thread(input, "You: ")).strip()
-                if self.compaction and self.writing_notes:
-                    self.compaction.cancel()
-                self.stop_research()
+                self.background.wake()
                 if not user:
                     continue
                 if user in ("/quit", "/exit"):
@@ -882,7 +530,7 @@ class Holly:
             print()
         finally:
             watcher.cancel()
-            self.stop_research()
+            self.background.stop()
             if self.player:
                 self.player.close()
 

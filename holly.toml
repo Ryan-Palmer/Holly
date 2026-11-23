@@ -287,8 +287,9 @@ fillers = [
 # and stopped the moment anyone speaks. Plan the questions; research each (the
 # web and Wikipedia, the likeliest pages read and noted, each note tied to its
 # source); check for gaps; write the report from the notes and check it
-# against them. The report goes to dir as markdown, and into his archive for
-# recall; then he speaks up. Needs search on.
+# against them. The report goes to dir as markdown, indexed in reports.db
+# beside it (not his archive), to find from the crew's words; then he speaks
+# up. Needs search on.
 enabled = true
 dir = "data/research"
 # Web search for research: ddgs, free. A job makes dozens of searches, which
