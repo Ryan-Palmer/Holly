@@ -188,7 +188,7 @@ class Holly:
             tools.append(spotify.TOOL)
             prompts.append(rules("spotify"))
         # Research jobs (app/research.py): queued by the tool, worked on while he sleeps.
-        self.research = (research.Research(cfg.research, cfg.search, self.lm, self.model, self.archive)
+        self.research = (research.Research(cfg.research, cfg.search, self.lm, self.model)
                          if cfg.research.enabled and self.searcher else None)
         if self.research:
             tools.append(research.TOOL)
@@ -540,8 +540,8 @@ class Holly:
             return result
         if call["name"] == "research" and self.research:
             result = self.research.handle(args)
-            print(f"{DIM}  (research {args.get('action') or 'start'}) {result.split('. Tell the crew')[0]}{RESET}",
-                  flush=True)
+            shown = result.split(". Tell the crew")[0].split("\n")[0]  # a report read: its first line
+            print(f"{DIM}  (research {args.get('action') or 'start'}) {shown}{RESET}", flush=True)
             return result
         if call["name"] == "spotify" and self.spotify:
             t0 = time.perf_counter()
@@ -574,6 +574,17 @@ class Holly:
             # His question, not the crew's last words: after "you need to use the recall
             # tool", the judge was asked that, and found nothing.
             question = str(args.get("question") or "").strip() or user
+            asked = f"{query} {question} {user}"
+            if self.research and "report" in asked.lower() and (reports := self.research.find(asked)):
+                # Asked what a report said, he recalled (fragments, or nothing) rather than reading
+                # it, and wasn't moved by a hint to read it: so it's read for him, or, if more than
+                # one may be meant, he's told to ask which.
+                if len(reports) > 1:
+                    print(f"{DIM}  (recalling a report: which? {'; '.join(r['title'] for r in reports)}){RESET}",
+                          flush=True)
+                    return self.research.which(reports)
+                print(f"{DIM}  (recalling a report: reading '{reports[0]['title']}' instead){RESET}", flush=True)
+                return self.research.handle({"action": "read", "title": reports[0]["title"]})
             label, job = f"recalling: {query}", functools.partial(self.archive.recall, query, question,
                                                                   self.convo.crew_lines())
         else:
@@ -593,6 +604,24 @@ class Holly:
             # Told to "state them plainly", he recited the judge's sentences word for word.
             return (f"{found.answer}\n(This is your memory of it, and it's right. Tell it in your own "
                     "words, as something you remember, keeping the facts as they are.)")
+        if call["name"] == "recall" and self.research and (
+                reports := self.research.find(f"{args.get('query', '')} {args.get('question', '')} {user}", 1.0)):
+            # Nothing in his archive, and a report clearly covers it ("that marshmallow toy you
+            # found"): told he had reports to read, he said "I'll have to check" and didn't.
+            if len(reports) > 1:
+                print(f"{DIM}  (not in his archive; which report? {'; '.join(r['title'] for r in reports)}){RESET}",
+                      flush=True)
+                return ("Your archive has nothing on it, but it may be in one of your research reports. "
+                        + self.research.which(reports))
+            print(f"{DIM}  (not in his archive: reading the report '{reports[0]['title']}'){RESET}", flush=True)
+            return ("Your archive has nothing on it, but this research report of yours may be what's meant. "
+                    "If it doesn't answer what was asked (what was said or done, say), you don't remember: "
+                    "say so.\n\n" + self.research.handle({"action": "read", "title": reports[0]["title"]}))
+        if call["name"] == "recall" and self.research and (titles := self.research.finished_titles()):
+            # Asked what a report said, he recalled rather than reading it, and found nothing.
+            return (f"{found.answer}\n(But if it's about one of your research reports ("
+                    + "; ".join(f"'{t}'" for t in titles[-6:])
+                    + "), call the research tool to read that report, and answer from it.)")
         return Searcher.for_holly(found)
 
     def start_compaction(self) -> None:

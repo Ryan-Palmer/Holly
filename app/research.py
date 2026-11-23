@@ -7,9 +7,12 @@ research each in turn (search the web and Wikipedia, read the likeliest pages,
 take notes, each tied to its source); check the notes for gaps; write the
 report from the notes; check it against them; sum it up. Each step is saved
 when it's done, so speech can cancel the one in hand and the next sleep picks
-up after the last. The report is kept as markdown beside the jobs, for people,
-and section by section in his archive, so recall finds it. When it's done, he
-speaks up.
+up after the last. The report is kept as markdown beside the jobs. When it's
+done, he speaks up; asked about it later, the tool finds it from the crew's
+words (its title, request, summary or text) and he reads the whole of it. It
+isn't put in his archive: what he and the crew say about it goes there, as
+any talk does, and a second copy of the report, in fragments, only led recall
+to thin answers.
 
 Every request goes to the same Gemma as his replies, one at a time. On one GPU,
 subagents side by side would share its speed and split its context; what one
@@ -31,6 +34,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
+from .archive import STOPWORDS
 from .config import ResearchConfig, SearchConfig
 from .lmstudio import LmStudio
 from .persona import day, today
@@ -42,14 +46,15 @@ TOOL = {
         "name": "research",
         "description": "Research a topic properly, for a written report: done in the background by you, "
                        "while you doze between conversations, and you're told when the report is ready. Also: "
-                       "list research under way or "
-                       "done, cancel some, sum up a finished report, or open one on the crew's screen.",
+                       "list research under way or done, cancel some, sum up a finished report, read the "
+                       "whole of one (to talk the crew through it or answer details), or open one on the "
+                       "crew's screen.",
         "parameters": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["start", "list", "cancel", "summary", "open"]},
+                "action": {"type": "string", "enum": ["start", "list", "cancel", "summary", "read", "open"]},
                 "title": {"type": "string", "description":
-                          "A short title: 'Heat pumps for an old house'. For cancel, summary or open: which "
+                          "A short title: 'Heat pumps for an old house'. For cancel, summary, read or open: which "
                           "one, in the crew's words ('the heat pump one'); empty for the latest report; to "
                           "cancel everything, 'all'."},
                 "request": {"type": "string", "description":
@@ -106,8 +111,9 @@ notes below, in markdown: a "# " title, a "## Summary" of three or four
 sentences, then a "## " section for each part, in plain prose (a short list
 only where it helps). Use only the notes, never your own knowledge: every fact
 must come from them, with its source number in square brackets after it, like
-[3]. Where notes disagree, say so; where a question isn't answered, say so in a
-sentence. Don't add a list of sources: it's added for you. At most {words}
+[3]. Where sources disagree, say so; where a question isn't answered, say so in
+a sentence. Write as the report itself: never mention the notes, or how it was
+researched. Don't add a list of sources: it's added for you. At most {words}
 words."""
 
 VERIFY_PROMPT = """\
@@ -128,7 +134,6 @@ RETRY_S, RETRY_MAX_S = 60, 900  # an announcement that failed: tried again after
 # A web search the engines refused (ddgs says "No results found" to a CAPTCHA): research is
 # in no hurry, so it waits and tries again, this long and then twice it, before giving up.
 REFUSED_WAIT_S, REFUSED_TRIES = 20.0, 3
-ENTRY_CHARS = 1400  # of a report section, per archive entry (recall reads 1,500 of each)
 CITATION = re.compile(r"\s*\[\d+(?:\s*[,-]\s*\d+)*\]")
 UNFINISHED = ("plan", "research", "check", "write", "verify", "summary", "keep")
 # What a finished job keeps: enough to list, sum up, open and announce it. Its working
@@ -139,6 +144,8 @@ KEEP = ("id", "title", "request", "asked", "stage", "finished", "file", "summary
 # Words that don't say which report: "the report on heat pumps" is "heat pumps".
 REPORT_NOISE = {"the", "a", "an", "on", "about", "of", "for", "my", "that", "this", "one", "report", "research",
                 "summary", "open", "show", "me", "it", "you", "did", "do", "into"}
+CLOSE = 0.75  # reports scoring at least this share of the best's are all candidates: Holly asks which
+CHOICES = 4  # of them, at most, for him to offer
 
 
 def new_question(q: str, gap: bool = False) -> dict:
@@ -182,14 +189,14 @@ def announcement(job: dict) -> str:
     return (f"[Your research on '{job['title']}' is finished, and the report is written. Tell the crew it's "
             "ready, in a sentence, and ask if they'd like a summary; don't give it yet. If they would, here it "
             f"is: {job['summary']} Give it in two or three sentences in your own words, keeping the facts as "
-            "they are, then ask if they'd like you to open the report. Nobody has spoken: you're speaking up "
-            "by yourself.]")
+            "they are, then ask if they'd like you to open the report or talk them through it. Nobody has "
+            "spoken: you're speaking up by yourself.]")
 
 
 class Research:
     """The research jobs, saved to `cfg.dir`/jobs.json after every step."""
 
-    def __init__(self, cfg: ResearchConfig, search_cfg: SearchConfig, lm: LmStudio, model: str, archive=None):
+    def __init__(self, cfg: ResearchConfig, search_cfg: SearchConfig, lm: LmStudio, model: str):
         self.cfg = cfg
         # Research isn't in a hurry: more results, and longer for a page to answer.
         self.search_cfg = dataclasses.replace(search_cfg, max_results=cfg.results,
@@ -199,10 +206,10 @@ class Research:
             raise ValueError(f"unknown research provider {unknown[0]!r}; use any of {', '.join(PROVIDERS)}")
         self.lm = lm
         self.model = model
-        self.archive = archive
         self.file = cfg.dir / "jobs.json"
         self.jobs: list[dict] = []
         self.last_search = 0.0  # time.monotonic() of the last web search, for pacing
+        self._words: dict[str, set[str]] = {}  # each report's words, by file, for finding one
         # Wikimedia refuses a User-Agent with no way to reach whoever runs it (403).
         self.wiki = bool(cfg.wikipedia) and ("@" in cfg.user_agent or "http" in cfg.user_agent)
         if cfg.wikipedia and not self.wiki:
@@ -242,14 +249,27 @@ class Research:
             self.jobs = [j for j in self.jobs if j not in gone]
             self._save()
             return "Cancelled: " + ", ".join(j["title"] for j in gone) + "."
-        if action in ("open", "summary"):
-            if not (job := self._report(title)):
+        if action in ("open", "summary", "read"):
+            if not (picks := self._reports(title)):
                 return f"There's no finished report on {title!r}. " + self._listing()
-            if action == "summary":
-                return (f"The report '{job['title']}', finished {day(datetime.date.fromisoformat(job['finished'][:10]))}, "
-                        f"says: {job['summary']}\n(Give the crew the gist in two or three sentences, in your own "
-                        "words, keeping the facts as they are; then ask if they'd like you to open the report.)")
+            if len(picks) > 1:
+                return self.which(picks)
+            job = picks[0]
+            finished = day(datetime.date.fromisoformat(job["finished"][:10]))
             path = self.cfg.dir / job["file"]
+            if action == "summary":
+                return (f"The report '{job['title']}', finished {finished}, says: {job['summary']}\n(Give the crew "
+                        "the gist in two or three sentences, in your own words, keeping the facts as they are; "
+                        "then ask if they'd like you to open the report or talk them through it.)")
+            if action == "read":
+                try:
+                    text = for_reading(path.read_text(encoding="utf-8"))
+                except OSError as e:
+                    return f"The report couldn't be read ({e}). Tell the crew, briefly."
+                return (f"The report '{job['title']}', finished {finished}, in full:\n\n{text}\n\n(This is the "
+                        "whole report, and it's right. Answer the crew from it, keeping the facts as they are. "
+                        "Talking them through it, take a few points at a time, in your own words, and ask if they "
+                        "want more; never read out the markdown or list everything at once.)")
             try:
                 os.startfile(path)  # the crew's own app for markdown
             except (OSError, AttributeError) as e:
@@ -271,6 +291,15 @@ class Research:
                 "crew's), and you'll be told when the report is ready. Tell the crew, in a sentence, that you'll "
                 "look into it while things are quiet and get back to them. You have no findings yet: give none.")
 
+    def find(self, words: str, least: float = 0.0) -> list[dict]:
+        """The finished reports these words may mean (see _reports), scoring above
+        `least` (1 asks for more than one of a report's words in passing); none
+        without words that say which."""
+        return self._reports(words, least) if telling(words) else []
+
+    def finished_titles(self) -> list[str]:
+        return [j["title"] for j in self.jobs if j["stage"] == "done" and j.get("file")]
+
     def _listing(self) -> str:
         if not self.jobs:
             return "There's no research under way or finished."
@@ -289,23 +318,52 @@ class Research:
                                              else ""))
         return "Research: " + "; ".join(lines) + "."
 
-    def _report(self, words: str) -> dict | None:
-        """The finished report the crew mean: the latest, with no words; else the one whose
-        title, request and summary share the most of them ("the heat pump one")."""
+    def _reports(self, words: str, least: float = 0.0) -> list[dict]:
+        """The finished reports the crew may mean, best first: the latest, with no words;
+        the one with exactly that title; else those whose title, request, summary and text
+        share the most of them ("the heat pump one", "the one with the marshmallow toy"),
+        scoring above `least`. More than one only when they fit about as well as each
+        other (within CLOSE of the best): then Holly asks which."""
         done = [j for j in self.jobs if j["stage"] == "done" and j.get("file")]
-        asked = set(re.findall(r"\w+", words.lower())) - REPORT_NOISE
+        if exact := [j for j in done if j["title"].lower() == words.strip().strip("'\"").lower()]:
+            return exact[-1:]
+        asked = telling(words)
         if not asked:
-            return done[-1] if done else None
+            return done[-1:]
 
         def score(j: dict) -> float:
             title = set(re.findall(r"\w+", j["title"].lower()))
             rest = set(re.findall(r"\w+", f"{j['request']} {j.get('summary', '')}".lower()))
             # A word stem in common counts too: "pumps" and "pump".
             near = {a for a in asked if any(w.startswith(a[:4]) for w in title | rest)}
-            return 2 * len(asked & title) + len(asked & rest) + 0.5 * len(near)
+            return 2 * len(asked & title) + len(asked & rest) + 0.5 * len(near) + 0.5 * len(asked & text(j))
 
-        best = max(reversed(done), key=score, default=None)  # on a tie, the latest
-        return best if best and score(best) > 0 else None
+        def text(j: dict) -> set[str]:
+            """The words of the report itself, read once (reports are a few KB)."""
+            if j["file"] not in self._words:
+                try:
+                    body = for_reading((self.cfg.dir / j["file"]).read_text(encoding="utf-8"))
+                except OSError:
+                    body = ""
+                self._words[j["file"]] = set(re.findall(r"\w+", body.lower()))
+            return self._words[j["file"]]
+
+        scored = sorted(((score(j), i, j) for i, j in enumerate(done)), key=lambda x: (-x[0], -x[1]))
+        if not scored or scored[0][0] <= least:
+            return []
+        return [j for s, _, j in scored if s > least and s >= scored[0][0] * CLOSE][:CHOICES]
+
+    def _report(self, words: str, least: float = 0.0) -> dict | None:
+        """The best of _reports, or None."""
+        return next(iter(self._reports(words, least)), None)
+
+    @staticmethod
+    def which(reports: list[dict]) -> str:
+        """What Holly is told when more than one report may be meant."""
+        names = [f"'{j['title']}'" for j in reports]
+        return ("More than one of your reports may be meant: " + ", ".join(names[:-1]) + " or " + names[-1]
+                + ". Ask the crew which one they mean, naming them briefly; then call the research tool again "
+                "with its title.")
 
     def _matching(self, title: str) -> list[dict]:
         """Jobs a title means: 'all', the one called exactly that, else those sharing all its words."""
@@ -476,7 +534,8 @@ class Research:
                                 f"Question: {question}\n\nPage: {r['title']}\n{r['url']}\n\n{text}",
                                 60 * self.cfg.notes)
         notes = [ln.strip()[2:].strip() for ln in reply.splitlines() if ln.strip().startswith(("- ", "* "))]
-        return [n for n in notes if n][: self.cfg.notes]
+        # "- NOTHING" is no note: kept, the report said a source stated "NOTHING".
+        return [n for n in notes if n and n.strip(" .*").upper() != "NOTHING"][: self.cfg.notes]
 
     @staticmethod
     def _source(job: dict, r: dict) -> int:
@@ -561,7 +620,7 @@ class Research:
         return f"summed up: {job['summary']}"
 
     async def _keep(self, job: dict) -> str:
-        """The report to a markdown file, with its sources, and into his archive."""
+        """The report to a markdown file, with its sources."""
         finished = datetime.datetime.now()
         sources = "\n".join(f"{i}. [{s['title']}]({s['url']})" for i, s in enumerate(job["sources"], 1))
         asked = datetime.datetime.fromisoformat(job["asked"])
@@ -570,20 +629,16 @@ class Research:
         name = f"{job['id']}-{slug(job['title'])}.md"
         self.cfg.dir.mkdir(parents=True, exist_ok=True)
         (self.cfg.dir / name).write_text(text, encoding="utf-8")
-        if self.archive:
-            head = f"(Research report: {job['title']}, written {day(finished.date())}) "
-            entries = [(finished.isoformat(timespec="seconds"), head + part[:ENTRY_CHARS])
-                       for part in sections(job["report"])]
-            self.archive.add(entries)
-            try:
-                await asyncio.to_thread(self.archive.embed_missing)
-            except Exception as e:  # recall still finds them by keyword; vectors are made at the next recall
-                print(f"  (couldn't embed the report: {e!r})", flush=True)
         job["file"] = name
         job["finished"] = finished.isoformat(timespec="seconds")
         job["stage"] = "done"
         slim(job)
         return f"report kept: {self.cfg.dir / name}"
+
+
+def telling(words: str) -> set[str]:
+    """The words that say which report: "in" or "what" matched every one."""
+    return {w for w in re.findall(r"\w+", words.lower()) if len(w) > 2} - REPORT_NOISE - STOPWORDS
 
 
 def slim(job: dict) -> bool:
@@ -594,16 +649,8 @@ def slim(job: dict) -> bool:
     return bool(gone)
 
 
-def sections(report: str) -> list[str]:
-    """The report's sections for his archive, source numbers dropped (they mean
-    nothing out of the report): the summary, then each part, under its heading."""
-    title = next((ln.lstrip("# ").strip() for ln in report.splitlines() if ln.startswith("# ")), "")
-    parts = re.split(r"\n(?=## )", "\n" + report)
-    out = []
-    for part in parts:
-        body = CITATION.sub("", part).strip()
-        if not body or body.startswith("# ") and "\n" not in body:
-            continue
-        body = re.sub(r"^#+\s*", "", body, flags=re.MULTILINE)
-        out.append(f"{title}: {body}" if title and not body.startswith(title) else body)
-    return out
+def for_reading(md: str) -> str:
+    """A report's file as Holly reads it: no sources list, footer or source numbers,
+    which mean nothing to say aloud."""
+    md = re.split(r"\n## Sources\s*\n", md)[0]
+    return CITATION.sub("", md).strip()

@@ -130,9 +130,11 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   anyone speaks. He splits the request into questions, searches the web
   (free, through ddgs) and Wikipedia, reads the likeliest pages, keeps notes
   with their sources, and writes a report from the notes. When it's done he
-  speaks up with the gist. The report is saved as markdown, with its sources,
-  in `data/research/`; ask him to show it and he opens it, and recall answers
-  questions about it later. No setup; limits are under `[research]` in
+  says so and asks if you'd like a summary, then whether to open it. The
+  report is saved as markdown, with its sources, in `data/research/`. Any
+  time later, ask him to sum one up, talk you through it, answer a detail
+  from it, or open it; he finds it from your words, and if more than one
+  might be meant, he asks which. No setup; limits are under `[research]` in
   `holly.toml`.
 - **His face.** Ditto animates the still from his voice, in a window that
   scales to any size (F11 or a double-click for full screen). It dozes off

@@ -44,9 +44,8 @@ TOOL = {
         "name": "recall",
         "description": "Search your memory: earlier conversations with the crew, older than what you "
                        "remember word for word (what they told you, asked, planned or decided, what you "
-                       "told them, what you found out), the research reports you've written for them, and "
-                       "the ship's records of Red Dwarf: its crew, what has happened on board, places, "
-                       "creatures and technology.",
+                       "told them, what you found out), and the ship's records of Red Dwarf: its crew, "
+                       "what has happened on board, places, creatures and technology.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -67,8 +66,8 @@ TOOL = {
 JUDGE_PROMPT = """\
 Today is {today}. You are the memory of Holly, the ship's computer from Red Dwarf.
 Below are entries from his past conversations with the crew, each with when it
-was said, from research reports he wrote for them, and from the ship's records
-about Red Dwarf and its crew, then a question about them. Use only what the entries say, never anything else. Reply
+was said, and from the ship's records about Red Dwarf and its crew, then a
+question about them. Use only what the entries say, never anything else. Reply
 in exactly one of these forms:
 
 ANSWER: two or three short, plain sentences that answer the question from the
