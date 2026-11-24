@@ -16,7 +16,7 @@ import re
 CLAIMED_RECALL = re.compile(
     r"\brecall tool\b|\b(?:used|checked|searched|looked (?:through|in)|consulted|scanned|gone through) "
     r"(?:through |in )?(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|"
-    r"memory)\b|\bnot in my (?:records|archives?|files|memory)\b|\b(?:no|any) records? (?:of|about|on)\b",
+    r"memory|notes)\b|\bnot in my (?:records|archives?|files|memory|notes)\b|\b(?:no|any) records? (?:of|about|on)\b",
     re.IGNORECASE)
 # Asked if he remembered something, he said he didn't, without calling recall ("the name's
 # gone a bit foggy", of Queeg; "lovely to meet you", to the crew's own girlfriend), and
@@ -34,7 +34,13 @@ RECALL_ASKED = re.compile(r"\b(?:do|can|could|d'you|don't|didn't) you (?:still |
 FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really |honestly )?(?:remember|recall|"
                     r"place|bring (?:it|that|them|her|him) to mind)\b|\bslipped my mind\b|\bgone (?:a bit )?"
                     r"(?:foggy|fuzzy|blurry|hazy)\b|\bnot sticking\b|\bno idea who\b|\bnever heard of\b|"
-                    r"\bdoesn't ring a bell\b", re.IGNORECASE)
+                    r"\bdoesn't ring a bell\b|"
+                    # Asked about the crew's news, from his notes alone: "I don't have anything in
+                    # my notes about a problem", "I've got nothing on the company". It was in his
+                    # archive.
+                    r"\b(?:don't|didn't|haven't) (?:got |have )?(?:anything|that|it|much) (?:in|on) "
+                    r"(?:my |the )?(?:notes|files|records|archives?|memory)\b|"
+                    r"\bnothing in my (?:notes|files|records)\b|\bgot nothing (?:on|about)\b", re.IGNORECASE)
 # Asked to research something, he promised to without calling the research tool ("I'll get
 # on with that later and come back to you"), and nothing was ever researched. So when the
 # crew ask for research and he promises it, the research tool must have been called.
