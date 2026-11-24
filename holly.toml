@@ -29,8 +29,9 @@ eval_batch_size = 2048
 # Thinking adds 0.5 to 6 seconds before the first word. Holly doesn't think.
 reasoning_effort = "none"
 temperature = 0.8
-# A poem or short story takes 100-250 tokens.
-max_tokens = 300
+# A poem or short story takes 100-250 tokens; a status report (the news round-up,
+# then "Additional...") up to ~400.
+max_tokens = 450
 
 # What each chat model needs, over [llm]: its table is used when it's the model
 # above, or picked with --model. A table may set context_length,

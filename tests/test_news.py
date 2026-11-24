@@ -82,3 +82,17 @@ def test_too_little_from_the_bbc_asks_google_news(feeds, cfg):
 def test_nothing_anywhere(feeds, cfg):
     found = news.news("top", "zzqx", cfg.search, NOW)
     assert found.results == 0 and found.answer.startswith("There's nothing in the news about 'zzqx'")
+
+
+def test_a_status_report_takes_each_subject_once(feeds, cfg):
+    served, _ = feeds
+    story = ("Energy payment explained", "Millions will get it.", NOW - dt.timedelta(hours=3), "https://www.bbc.co.uk/e")
+    served[bbc("top")] = rss(("Big story", "Today.", NOW - dt.timedelta(hours=1), "https://www.bbc.co.uk/b"))
+    served[bbc("business")] = rss(story, story, ("Big story", "Today.", NOW - dt.timedelta(hours=1),
+                                                 "https://www.bbc.co.uk/b"))
+    served[bbc("science")] = rss(("Badgers", "Cull ruled out.", NOW - dt.timedelta(hours=6), "https://www.bbc.co.uk/s"))
+    found = news.roundup(cfg.search, NOW)
+    assert found.answer.count("Energy payment explained") == 1  # listed twice in its feed
+    assert found.answer.count("Big story") == 1  # under top stories, not again under business
+    assert "Business and money:" in found.answer and "Science:" in found.answer and "Sport:" not in found.answer
+    assert found.answer.rstrip().endswith("as your rules say.")

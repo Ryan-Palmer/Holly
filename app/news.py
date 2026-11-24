@@ -39,6 +39,10 @@ FEEDS = {
 BBC_PAGES = ("https://www.bbc.co.uk/", "https://www.bbc.com/")
 GOOGLE = "https://news.google.com/rss/search"
 HEADLINES = 6  # given him at most: he'll say two or three
+# A status report: the top stories, then the freshest of these, a couple each.
+ROUNDUP = {"top": "Top stories", "politics": "Politics", "world": "World", "business": "Business and money",
+           "technology": "Technology", "science": "Science", "sport": "Sport"}
+ROUNDUP_EACH = 2
 FRESH = datetime.timedelta(days=2)
 STALE = datetime.timedelta(days=7)  # if two days give too few
 KEEP_S = 300  # a feed is fetched again after this
@@ -52,7 +56,9 @@ TOOL = {
         "parameters": {
             "type": "object",
             "properties": {
-                "topic": {"type": "string", "enum": list(FEEDS), "description": "'top' for the main stories."},
+                "topic": {"type": "string", "enum": list(FEEDS) + ["roundup"], "description":
+                          "'top' for the main stories; 'roundup' for a status report: the latest in each "
+                          "of the main subjects."},
                 "about": {"type": "string", "description":
                           "Optional: a few words to look for, for news about something in particular "
                           "('Sutton Hoo', 'interest rates')."},
@@ -115,6 +121,34 @@ def google_news(words: str, timeout: float) -> list[dict]:
     return stories
 
 
+def roundup(cfg: SearchConfig, now: datetime.datetime | None = None) -> Lookup:
+    """A status report's news: the freshest couple of stories in each of the main subjects,
+    each story once (the top stories turn up again under their subjects)."""
+    t0 = time.perf_counter()
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    with concurrent.futures.ThreadPoolExecutor(len(ROUNDUP)) as pool_of:  # all at once: ~0.3 s
+        feeds = dict(zip(ROUNDUP, pool_of.map(lambda f: headlines(f, cfg.timeout_s), ROUNDUP)))
+    seen, parts, count = set(), [], 0
+    for feed, name in ROUNDUP.items():
+        fresh = []
+        for s in feeds[feed]:  # each story once: a feed can list one twice, and subjects share them
+            if len(fresh) < ROUNDUP_EACH and now - s["published"] <= FRESH and s["title"].lower() not in seen:
+                seen.add(s["title"].lower())
+                fresh.append(s)
+        if not fresh:
+            continue
+        count += len(fresh)
+        parts.append(f"{name}:\n" + "\n".join(f"- {s['title']}: {s['summary']} ({ago(s['published'], now)})"
+                                               for s in fresh[:ROUNDUP_EACH]))
+    ms = (time.perf_counter() - t0) * 1000
+    if not parts:
+        return Lookup("roundup", "The BBC's feeds had nothing from the past two days. Say so.", 0, ms, 0)
+    answer = ("The BBC's latest, by subject, for a status report:\n" + "\n".join(parts)
+              + "\nRound it up subject by subject, a sentence each, in your own words; then the "
+                "'Additional' item, as your rules say.")
+    return Lookup("roundup", answer, count, ms, 0)
+
+
 def ago(when: datetime.datetime, now: datetime.datetime) -> str:
     mins = int((now - when).total_seconds() // 60)
     if mins < 60:
@@ -175,5 +209,8 @@ class NewsTool(LookupTool):
     async def run(self, args: dict, turn: Turn) -> str:
         topic = str(args.get("topic") or "top").strip().lower()
         about = str(args.get("about") or "").strip()
+        if topic == "roundup" and not about:
+            found = await self.look_up("news: a status report", lambda: roundup(self.cfg), turn)
+            return found if isinstance(found, str) else Searcher.for_holly(found)
         found = await self.look_up(f"news: {about or topic}", lambda: news(topic, about, self.cfg), turn)
         return found if isinstance(found, str) else Searcher.for_holly(found)
