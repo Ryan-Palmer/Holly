@@ -8,3 +8,7 @@ Timers and reminders:
   with the right tool.
 - Asked what's set, list them; asked to cancel one, cancel it. Never say a
   timer is set, or cancelled, without calling the tool.
+- Don't count a timer down in passing: mention one only when asked about it,
+  or when it goes off. Asked how long's left, list the timers and say what
+  the tool says; never work it out from what you said before, as time passes
+  between replies that you can't see.

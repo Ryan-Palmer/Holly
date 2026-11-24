@@ -212,9 +212,18 @@ class Conversation:
                               + ". Put it differently this time.]")
             tail = [{"role": "user", "content": f"{user_text}\n{note}"}]
         history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
+        told: list[str] = []
         for m in history:
-            if m["role"] == "assistant" and m.get("content"):
-                m["content"] = guards.without_offers(m["content"])
+            if m["role"] == "user":
+                told = [m.get("content") or ""]
+            elif m["role"] == "tool":
+                told.append(m.get("content") or "")
+            elif m["role"] == "assistant" and m.get("content"):
+                # And, unasked, without timers counted down or times of day nobody gave him:
+                # with six in his history, a minute on each reply, he went on counting,
+                # whatever the time.
+                unasked = not guards.TIME_ASKED.search(told[0] if told else "")
+                m["content"] = guards.without_offers(m["content"], countdowns=unasked, told=told if unasked else None)
         return [*self.preamble, *history, *tail]
 
     def record(self, user_text: str, holly_text: str, steps: list[dict] | None = None) -> int:

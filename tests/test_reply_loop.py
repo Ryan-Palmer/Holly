@@ -105,6 +105,42 @@ def test_timer(make_holly):
     assert lm.requests[1]["messages"][-1]["content"].startswith("Set: pasta, due")
 
 
+def test_a_timer_counted_down_unasked_isnt_said_and_asked_is_looked_up(make_holly):
+    lm = FakeLm([[("timer", {"action": "set", "label": "pasta", "duration": "10 minutes"})], "Ten minutes.",
+                 "Wholewheat. Six minutes left.",  # unasked, and his guess: not said, nor kept
+                 "Six minutes left.",  # asked, and not looked up: asked again, made to look
+                 [("timer", {"action": "list"})], "Nine minutes."])
+    holly = make_holly(lm)
+    respond(holly, "Set a timer for 10 minutes for the pasta.", "It's wholewheat, by the way.",
+            "How long's left on the pasta?")
+    assert holly.tts.said.count("Six minutes left.") == 0
+    replies = [m["content"] for m in holly.convo.history if m["role"] == "assistant" and m.get("content")]
+    assert replies == ["Ten minutes.", "Wholewheat.", "Nine minutes."]
+    assert lm.requests[2]["tool_choice"] is None and lm.requests[4]["tool_choice"] == "required"
+    assert tools_called(holly) == ["timer", "timer"]
+
+
+def test_a_time_of_day_he_wasnt_given_isnt_said_unasked_and_is_looked_up_asked(make_holly):
+    lm = FakeLm(["Wholewheat. It's 22:15.",  # unasked, nobody gave him that: not said, nor kept
+                 "It's 22:16.",  # asked, unchecked: asked again, made to look
+                 [("clock", {})], "It's ten past ten."])
+    holly = make_holly(lm)
+    respond(holly, "It's wholewheat, by the way.", "What time is it now?")
+    replies = [m["content"] for m in holly.convo.history if m["role"] == "assistant" and m.get("content")]
+    assert replies == ["Wholewheat.", "It's ten past ten."]
+    assert "It's 22:15." not in holly.tts.said and "It's 22:16." not in holly.tts.said
+    assert lm.requests[2]["tool_choice"] == "required" and tools_called(holly) == ["clock"]
+
+
+def test_unasked_countdowns_are_left_out_of_what_he_sees(cfg):
+    from app.persona import Conversation
+    c = Conversation(cfg.persona, "", None)
+    c.record("It's wholewheat.", "Wholewheat. Six minutes left.")
+    c.record("How long left?", "Five minutes left.")  # asked: his answer stays
+    sent = [m["content"] for m in c.messages_for() if m["role"] == "assistant"]
+    assert sent == ["Wholewheat.", "Five minutes left."]
+
+
 def with_jo(holly) -> None:
     holly.archive.add([(dt.datetime(2026, 11, 1, 9).isoformat(), "Crew: My sister Jo is a vet.\nHolly: Noted.")])
 

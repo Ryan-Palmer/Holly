@@ -294,6 +294,7 @@ class Holly:
         steps: list[dict] = []  # his searches and their results, for the history
         last_said: list[str] = []
         spoken: list[str] = []  # the sentences said this turn
+        unasked_countdown = not guards.TIME_ASKED.search(user)  # a timer counted down, if he does, is in passing
         thought = asyncio.Event()
         wait_for_reply = self.cfg.tts.voxcpm.wait_for_reply
         self.player.begin_turn()
@@ -345,10 +346,23 @@ class Holly:
                                            self._last_exchange()):
                     choice = required
 
+            def told() -> list[str]:
+                """What he's been given this turn: the crew's line, and his tools' answers."""
+                return [user] + [m.get("content") or "" for m in messages[asked:] if m["role"] == "tool"]
+
             async def say(sentence: str) -> None:
                 if spoken and guards.OFFER.search(sentence):
                     # "Anything else you need me to dig up?": not said, nor kept (below).
                     print(f"{DIM}[offer not said]{RESET}", end="", flush=True)
+                    return
+                if spoken and unasked_countdown and guards.guessed_time(sentence, told()):
+                    # "It's 22:15", unasked and unchecked: a minute on from his last, each reply.
+                    print(f"{DIM}[guessed time not said]{RESET}", end="", flush=True)
+                    return
+                if spoken and unasked_countdown and guards.COUNTDOWN.search(sentence):
+                    # "Six minutes left", unasked: not said, nor kept (below). It came every reply,
+                    # a minute less each time, whatever the time.
+                    print(f"{DIM}[countdown not said]{RESET}", end="", flush=True)
                     return
                 spoken.append(sentence)
                 times.first_sentence = times.first_sentence or time.perf_counter()
@@ -362,7 +376,9 @@ class Holly:
                                      researched="research" in called, can_recall="recall" in self.toolbox,
                                      can_research="research" in self.toolbox,
                                      answering_choice=turn.answering_choice, clocked="clock" in called,
-                                     can_clock="clock" in self.toolbox)
+                                     can_clock="clock" in self.toolbox,
+                                     counting=bool(self.timers and self.timers.items) and "timer" not in called,
+                                     told=told())
 
             while True:
                 calls: list[dict] = []
@@ -452,11 +468,12 @@ class Holly:
             print()
             times.failed = True
             return times
-        said = guards.without_offers("".join(last_said))
+        this_turn = [user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
+        said = guards.without_offers("".join(last_said), countdowns=unasked_countdown,
+                                     told=this_turn if unasked_countdown else None)
         # What he was told: this turn, and the last few (asked "you mean 24 minutes past
         # midnight?" a turn after the clock said 00:24, his "00:24" was no guess).
-        told = ([user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
-                + [m.get("content") or "" for m in self.convo.history[-12:]])
+        told = this_turn + [m.get("content") or "" for m in self.convo.history[-12:]]
         if guards.guessed_time(said, told):
             said += guards.GUESSED
         dropped = self.convo.record(user, said, steps)

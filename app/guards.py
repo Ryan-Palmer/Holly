@@ -92,27 +92,52 @@ OFFER = re.compile(r"\banything else\b[^.!?]*\?|\banything else (?:you|I can|I c
 SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
 
 
-def without_offers(text: str) -> str:
-    """`text` without its sentences offering more help (OFFER), unless that's all it is."""
+def without_offers(text: str, countdowns: bool = False, told: list[str] | None = None) -> str:
+    """`text` without its sentences offering more help (OFFER); with `countdowns`, those
+    counting a timer down (COUNTDOWN); and given `told`, those with a time of day nobody gave
+    him (guessed_time); unless that's all it is."""
     text = text.strip()
     sentences = SENTENCE_END.split(text)
-    kept = [s for s in sentences if not OFFER.search(s)]
+    kept = [s for s in sentences if not OFFER.search(s) and not (countdowns and COUNTDOWN.search(s))
+            and not (told is not None and guessed_time(s, told))]
     return " ".join(kept) if kept and len(kept) < len(sentences) else text
 
+
+# A timer counted down in passing, "Six minutes left", "Two minutes to go", "about a minute
+# before you're back at it". With a timer set and no tool called, he took a minute off his
+# last count each reply: five replies in one minute, from six minutes to "about a minute",
+# with five to go. He has no clock of his own; the timer tool knows.
+_COUNT = (r"(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|"
+          r"thirty|forty|forty-five|sixty|a couple of|a few|about an?|half an)")
+COUNTDOWN = re.compile(r"\b" + _COUNT + r"\s+(?:more\s+)?(?:minutes?|mins?|seconds?|secs?|hours?)\s+"
+                       r"(?:left|to go|remaining|until|till|before)\b|\b(?:left|remaining) on (?:the|that|your) timer\b",
+                       re.IGNORECASE)
+
+# The crew asking about time or a timer: then a count down is his answer, and must come from
+# the timer tool. Unasked, it's said in passing, and isn't said at all.
+TIME_ASKED = re.compile(r"\b(?:how long|how much (?:time|longer)|time left|what time|when(?:'s| is| will| does)|"
+                        r"timer|alarm|reminder|minutes?|due|left on)\b", re.IGNORECASE)
 
 # Added to a reply that gave a time nobody gave him (never spoken: it's for his history).
 GUESSED = " [That time was a guess, not from the clock: it's probably wrong.]"
 
 
 def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researched: bool, can_recall: bool,
-           can_research: bool, answering_choice: bool, clocked: bool = False, can_clock: bool = False) -> str | None:
+           can_research: bool, answering_choice: bool, clocked: bool = False, can_clock: bool = False,
+           counting: bool = False, told: list[str] | None = None) -> str | None:
     """Why `sentence`, from a reply to `user`, mustn't be said, if it mustn't. `recalled`,
     `researched`, `clocked`: he's called those tools in this reply; `can_...`: he has them;
-    `answering_choice`: the crew are answering his search-or-report question."""
+    `answering_choice`: the crew are answering his search-or-report question; `counting`:
+    a timer's set and he hasn't called the timer tool in this reply, so any count down is
+    his guess; `told`: what he's been given this turn (the crew's line, tools' answers)."""
     if (word := sentence.strip().strip(".!").lower()) in stray:  # Gemma's lone "thought"
         return f"a stray {word!r}"
     if TOOL_MARKUP.search(sentence):
         return "he wrote a tool call out as text"
+    if counting and COUNTDOWN.search(sentence) and TIME_ASKED.search(user):
+        return "he counted a timer down without the timer tool"  # (unasked, it isn't said: speak.py)
+    if told is not None and can_clock and TIME_ASKED.search(user) and guessed_time(sentence, told):
+        return "he gave a time of day without the clock"  # (unasked, it isn't said: speak.py)
     if not clocked and can_clock and NO_CLOCK.search(sentence):
         return "he said he couldn't tell the time without calling the clock"
     if not recalled and can_recall and CLAIMED_RECALL.search(sentence):
@@ -132,12 +157,14 @@ def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researc
 
 def needs_tool(why: str) -> bool:
     """Is a sentence dropped for this reason (from unsaid) redone with a tool required?"""
-    return any(w in why for w in ("recall", "research", "clock", "tool call"))
+    return any(w in why for w in ("recall", "research", "clock", "timer", "tool call"))
 
 
 def guessed_time(said: str, told: list[str]) -> bool:
     """Did he give a time of day that nobody gave him (the clock, the weather's sunset, a
     search, the crew, a timer coming due)? Kept as fact in his history, a guess stuck:
     greeted, he said "10:14 PM" at 7:56, and repeated it four times, asked to use the
-    clock or not."""
-    return bool(CLOCK_TIME.search(said)) and not any(CLOCK_TIME.search(t) for t in told)
+    clock or not. Each time he gave must be one he was given: any time at all, given a
+    turn before, let him count on a minute a reply ("22:15", "22:16", "22:17"), unchecked."""
+    heard = " ".join(told).lower()
+    return any(t.lower() not in heard for t in CLOCK_TIME.findall(said))

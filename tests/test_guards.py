@@ -2,10 +2,14 @@
 
 import pytest
 
-from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
+from app.guards import (CLAIMED_RECALL, CLOCK_TIME, COUNTDOWN, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
                         PROMISED_RESEARCH, REPORT_WANTED, RESEARCH_ASKED, without_offers)
 
 CASES = [
+    (COUNTDOWN, ["Six minutes left.", "Four minutes until you're stirring that pasta.", "Two minutes to go.",
+                 "You've got about a minute before you're back at it.", "Ten minutes left on the timer."],
+     ["Two minutes. Don't let it burn.", "It's due at 22:13.", "It took me a few minutes to work out.",
+      "Bake it in ten minutes."]),
     (OFFER, ["Anything else you need me to dig up?", "Any other bits of info you're after?",
              "Just let me know if you hit a snag.", "I'll be right here if you need anything.",
              "Shall I work out the rest, or are you all set?", "Does that clear things up?", "Is there anything else?",
@@ -55,3 +59,11 @@ def test_without_offers():
     assert without_offers("Up again. Since 2022, mostly. Anything else you need?") == "Up again. Since 2022, mostly."
     assert without_offers("Anything else?") == "Anything else?"  # all there is: kept
     assert without_offers("  Fifteen degrees. Hardly tropical.\n") == "Fifteen degrees. Hardly tropical."
+
+
+def test_a_time_counts_as_given_only_if_it_was():
+    from app.guards import guessed_time
+    assert not guessed_time("It's 22:14.", ["What time is it?", "Here: 22:14 on Tuesday."])
+    assert guessed_time("It's 22:15.", ["Lovely.", "Here: 22:14 on Tuesday."])  # a minute on from what he was told
+    assert not guessed_time("Ready at 7:30 pm.", ["Remind me at 7:30 pm"])
+    assert not guessed_time("Nothing timed.", [])

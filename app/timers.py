@@ -167,7 +167,11 @@ class Timers:
                     f"due {say_when(due, now)}" if due > now else
                     f"came due at {due:%H:%M} and hasn't been announced yet")
 
-            return "Set: " + "; ".join(listed(i) for i in sorted(self.items, key=lambda i: i["due"])) + "."
+            # With the time now, and to say it as given: told "in 5 minutes", he said "about a
+            # minute", counting on from his own guesses a turn before.
+            return ("Set: " + "; ".join(listed(i) for i in sorted(self.items, key=lambda i: i["due"]))
+                    + f". (It's {now:%H:%M} now. Say how long is left exactly as given here; never work it out "
+                    "yourself.)")
         if action == "cancel":
             gone = self._matching(label)
             if not gone:
