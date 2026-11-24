@@ -1,6 +1,7 @@
 """The parts Holly's reply loop is built from: the toolbox, the safety nets' verdicts,
 speaking up, and what he does while he sleeps."""
 
+import pytest
 import asyncio
 import datetime as dt
 
@@ -213,3 +214,12 @@ def test_failed_notes_wait_before_trying_again(cfg):
         assert bg.notes is None
 
     asyncio.run(go())
+
+
+@pytest.mark.parametrize("said", ["Additional. The ship's toaster has resigned.", "Additional: the ship's toaster has resigned.",
+                                  "Additional, the ship's toaster has resigned.", "Additional... the ship's toaster has resigned.",
+                                  "Additional — the ship's toaster has resigned."])
+def test_additional_is_said_with_a_dash(said):
+    from app.speech_text import split_sentences
+    chunks = split_sentences(f"In sport, a draw. {said}")
+    assert chunks[0] == "In sport, a draw." and chunks[1].startswith("Additional — ")  # one breath, a dash's pause

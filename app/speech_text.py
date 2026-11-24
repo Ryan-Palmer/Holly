@@ -13,6 +13,11 @@ _LIST_LINE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+", re.MULTILINE)
 _HEADING = re.compile(r"^\s*#+\s*", re.MULTILINE)
 _MARKDOWN_CHARS = re.compile(r"[*_`#|>~]")
 _URL = re.compile(r"https?://\S+")
+# A status report's "Additional" (app/search.md), however he punctuates it, said with a
+# dash: alone, VoxCPM garbled the word; after a full stop or comma, in the same breath,
+# it ran on with no pause (0 ms, 3 times in 3); with a dash it paused 240-880 ms and said
+# it clearly each time. An ellipsis lost the word.
+_ADDITIONAL = re.compile(r"\bAdditional\s*(?:[.:;,!]|\.\.\.|…|—|–|-)+\s*(?=\w)")
 _SENTENCE_END = re.compile(r"[.!?]+[\"')”’]*(?=\s|$)")
 _CLAUSE_BREAK = re.compile(r"[,;:—–](?=\s)")
 
@@ -52,8 +57,9 @@ class SentenceChunker:
     voice can start sooner. Chunks come back cleaned for speech.
     """
 
-    def __init__(self, first_clause_words: int = 6):
+    def __init__(self, first_clause_words: int = 6, min_words: int = 2):
         self.first_clause_words = first_clause_words
+        self.min_words = min_words  # a shorter sentence goes with the next
         self.buffer = ""
         self.cuts = 0
 
@@ -77,6 +83,11 @@ class SentenceChunker:
             if m.end() >= len(buf):
                 break  # wait for the next character to be sure
             if _NOT_AN_END.search(buf[: m.start() + 1]):
+                continue
+            if len(buf[: m.end()].split()) < self.min_words:
+                # A word alone isn't sent on its own: VoxCPM, given just "Additional.", made
+                # a garbled mumble of it. With the next sentence it says it, and pauses after
+                # the full stop as it does between any two.
                 continue
             return m.end()
         if self.cuts == 0:
@@ -103,4 +114,5 @@ def clean_for_speech(text: str) -> str:
     text = _HEADING.sub("", text)
     text = _LIST_LINE.sub("", text)
     text = _MARKDOWN_CHARS.sub("", text)
+    text = _ADDITIONAL.sub("Additional — ", text)
     return re.sub(r"\s+", " ", text).strip()

@@ -353,19 +353,26 @@ class Holly:
                 return [user] + [m.get("content") or "" for m in messages[asked:] if m["role"] == "tool"]
 
             async def say(sentence: str) -> None:
-                if spoken and guards.OFFER.search(sentence):
-                    # "Anything else you need me to dig up?": not said, nor kept (below).
-                    print(f"{DIM}[offer not said]{RESET}", end="", flush=True)
+                # A chunk can hold more than one sentence (a word alone goes with the next:
+                # app/speech_text.py), so each is looked at in turn; any after something said:
+                kept: list[str] = []
+                for part in guards.SENTENCE_END.split(sentence):
+                    after = bool(spoken or kept)
+                    if after and guards.OFFER.search(part):
+                        # "Anything else you need me to dig up?": not said, nor kept (below).
+                        print(f"{DIM}[offer not said]{RESET}", end="", flush=True)
+                    elif after and unasked_countdown and guards.guessed_time(part, told()):
+                        # "It's 22:15", unasked and unchecked: a minute on from his last, each reply.
+                        print(f"{DIM}[guessed time not said]{RESET}", end="", flush=True)
+                    elif after and unasked_countdown and guards.COUNTDOWN.search(part):
+                        # "Six minutes left", unasked: not said, nor kept (below). It came every
+                        # reply, a minute less each time, whatever the time.
+                        print(f"{DIM}[countdown not said]{RESET}", end="", flush=True)
+                    else:
+                        kept.append(part)
+                if not kept:
                     return
-                if spoken and unasked_countdown and guards.guessed_time(sentence, told()):
-                    # "It's 22:15", unasked and unchecked: a minute on from his last, each reply.
-                    print(f"{DIM}[guessed time not said]{RESET}", end="", flush=True)
-                    return
-                if spoken and unasked_countdown and guards.COUNTDOWN.search(sentence):
-                    # "Six minutes left", unasked: not said, nor kept (below). It came every reply,
-                    # a minute less each time, whatever the time.
-                    print(f"{DIM}[countdown not said]{RESET}", end="", flush=True)
-                    return
+                sentence = " ".join(kept)
                 spoken.append(sentence)
                 times.first_sentence = times.first_sentence or time.perf_counter()
                 await sentences.put(sentence)

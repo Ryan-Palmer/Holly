@@ -24,7 +24,7 @@ def tools_called(holly) -> list[str]:
 def test_a_plain_reply_is_said_and_kept(make_holly):
     holly = make_holly(FakeLm(["Morning. You're up early."]))
     times, = respond(holly, "Morning, Holly.")
-    assert holly.tts.said == ["Morning.", "You're up early."]
+    assert holly.tts.said == ["Morning. You're up early."]  # a word alone goes with the next (speech_text.py)
     assert [m["role"] for m in holly.convo.history] == ["user", "assistant"]
     assert holly.convo.history[-1]["content"] == "Morning. You're up early."
     assert not times.failed and holly.cfg.persona.memory_file.exists()
