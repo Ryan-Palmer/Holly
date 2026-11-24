@@ -187,6 +187,11 @@ class EvalsConfig:
 
 
 @dataclass(frozen=True)
+class CpuConfig:
+    startup: str = "all"  # "efficiency": start up on the efficiency cores only (see app/cpu.py)
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LlmConfig
     tts: TtsConfig
@@ -200,6 +205,7 @@ class Config:
     spotify: SpotifyConfig = SpotifyConfig()
     research: ResearchConfig = ResearchConfig()
     evals: EvalsConfig = EvalsConfig()
+    cpu: CpuConfig = CpuConfig()
 
 
 def load_config(path: Path = DEFAULT_CONFIG) -> Config:
@@ -242,6 +248,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         research=ResearchConfig(**{k: (base / v if k == "dir" else v)
                                    for k, v in raw.get("research", {}).items()}),
         evals=EvalsConfig(**raw.get("evals", {})),
+        cpu=CpuConfig(**raw.get("cpu", {})),
     )
 
 

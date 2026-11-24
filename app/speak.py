@@ -31,7 +31,7 @@ import time
 import numpy as np
 import torch
 
-from . import archive, guards, research, spotify, timers
+from . import archive, cpu, guards, research, spotify, timers
 from .announce import Announcement, pending
 from .background import Background, context_report
 from .clock import ClockTool
@@ -190,6 +190,14 @@ class Holly:
         return "Holly (VoxCPM2 clone)"
 
     async def start(self) -> None:
+        # [cpu] startup = "efficiency": loaded and warmed up on the efficiency cores, a
+        # stopgap for an unstable CPU (app/cpu.py); then on them all.
+        if self.cfg.cpu.startup != "all":
+            print(f"{DIM}Starting up on the {self.cfg.cpu.startup} cores ([cpu] in holly.toml).{RESET}", flush=True)
+        with cpu.starting_on(self.cfg.cpu.startup):
+            await self._start()
+
+    async def _start(self) -> None:
         audio = self.cfg.audio
         quiet_connection_resets(asyncio.get_running_loop())
         print(f"{DIM}Loading {self.model} and the {self.voice_name()} voice...{RESET}", flush=True)
@@ -222,6 +230,7 @@ class Holly:
             print(f"{DIM}Starting Holly's face (log: face/data/server.log)...{RESET}", flush=True)
             face_server = start_server(self.cfg.face, audio.host_api, audio.output_device,
                                        self.cfg.listen.awake_s)
+            cpu.free(face_server)  # not held to Holly's start-up cores
         try:
             await self._start_voice(face_server)
         except BaseException:
