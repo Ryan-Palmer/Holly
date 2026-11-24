@@ -336,4 +336,4 @@ scenario_runs = 3  # runs of each scenario: Gemma varies
 # for an unstable CPU: on an i9-14900K, native crashes while the voice warmed up came
 # 7 times in 8 on its performance cores, once in 8 on its efficiency cores. Slower to
 # start; once he's started, he runs on every core.
-startup = "efficiency"
+startup = "all"
