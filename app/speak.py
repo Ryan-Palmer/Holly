@@ -45,6 +45,7 @@ from .search import SearchTool, Searcher
 from .speech_text import SentenceChunker
 from .tools import Toolbox, Turn
 from .tts_common import Tts, make_tts
+from .news import NewsTool
 from .weather import WeatherTool
 
 __all__ = ["CYAN", "DIM", "RESET", "YELLOW", "stamp", "Holly", "TurnTimes"]  # app/listen.py uses these
@@ -161,6 +162,7 @@ class Holly:
         tools = []
         if self.searcher:
             tools += [SearchTool(self.searcher), ClockTool()] + ([WeatherTool(cfg.search)] if cfg.search.weather else [])
+            tools += [NewsTool(cfg.search)] if cfg.search.news else []
         if self.archive:
             tools.append(archive.RecallTool(self.archive, self.research))
         if self.timers:

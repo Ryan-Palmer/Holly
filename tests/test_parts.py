@@ -44,7 +44,7 @@ def test_toolbox():
 def test_his_toolbox_has_every_rule_once(make_holly):
     holly = make_holly(FakeLm())
     names = [t["function"]["name"] for t in holly.tools]
-    assert names == ["search", "clock", "weather", "recall", "timer", "research"]  # the order the cache relies on
+    assert names == ["search", "clock", "weather", "news", "recall", "timer", "research"]  # the order the cache relies on
     system = holly.convo.messages_for()[0]["content"]
     for md in ("Research:", "Timers"):
         assert system.count(md) >= 1

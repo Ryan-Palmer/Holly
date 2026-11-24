@@ -220,6 +220,10 @@ summary_reasoning = "none"
 # links to weather sites, not forecasts. Places in home_country come first.
 weather = true
 home_country = "GB"
+# And a news tool (app/news.py): the BBC's headlines, from its RSS feeds, free
+# and needing no key. By topic, or about something, newest first; about
+# something the BBC has too little on, Google News's search (headlines only).
+news = true
 # Said while a search runs, when his reply starts with one. Rendered in his
 # voice at startup so they play at once. Write your own.
 fillers = [

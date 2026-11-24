@@ -120,6 +120,7 @@ class SearchConfig:
     context_tokens: int = 2048  # page text brave_context returns per search, in all
     summary_reasoning: str = "none"  # Gemma's thinking when judging results: "none", "low"...
     weather: bool = True  # the weather tool (Open-Meteo), with search
+    news: bool = True  # the news tool (the BBC's headlines), with search
     home_country: str = "GB"  # places here come first in weather lookups
     fillers: tuple[str, ...] = ()
 
