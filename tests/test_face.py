@@ -119,3 +119,16 @@ def test_the_crt_look_reaches_the_face(cfg, tmp_path, monkeypatch, crt):
     monkeypatch.setattr(face_player.subprocess, "Popen", lambda args, **kw: started.append(args))
     face_player.start_server(dataclasses.replace(cfg.face, crt=crt), "WASAPI", "Speakers")
     assert ("--crt" in started[0]) == crt
+
+
+def test_the_case_picture_reaches_the_face(cfg, tmp_path, monkeypatch):
+    import dataclasses
+
+    from app import face_player
+    started = []
+    monkeypatch.setattr(face_player, "ROOT", tmp_path)
+    monkeypatch.setattr(face_player.subprocess, "Popen", lambda args, **kw: started.append(args))
+    face_player.start_server(dataclasses.replace(cfg.face, crt=True, case="face/data/case.png"), "WASAPI", "Out")
+    face_player.start_server(dataclasses.replace(cfg.face, crt=False, case="face/data/case.png"), "WASAPI", "Out")
+    assert started[0][started[0].index("--case") + 1] == str(tmp_path / "face/data/case.png")
+    assert "--case" not in started[1]  # only with the CRT look

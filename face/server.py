@@ -612,6 +612,7 @@ def main():
     p.add_argument("--device", default="", help="output device name (or part of it)")
     p.add_argument("--parent", type=int, default=0, help="Holly's process ID: the face exits when it ends")
     p.add_argument("--crt", action="store_true", help="an old monitor's look (face/screen.py)")
+    p.add_argument("--case", default="", help="with --crt: a picture of the monitor, its screen opening see-through")
     args = p.parse_args()
     if args.parent:
         # First, before Ditto's minute of warm-up: Holly can crash during his own.
@@ -666,7 +667,13 @@ def main():
     window = pygame.Window("Holly", (round(WINDOW_HEIGHT * w / h), WINDOW_HEIGHT), opengl=True, resizable=True)
     face = still.crop(((w - h) // 2, 0, (w + h) // 2, h)).resize((64, 64))
     window.set_icon(pygame.image.frombuffer(face.tobytes(), face.size, "RGB"))
-    screen = Screen(moderngl.create_context(), (fw, fh), crt=args.crt)
+    case = None
+    if args.crt and args.case:
+        if Path(args.case).exists():
+            case = np.asarray(Image.open(args.case).convert("RGBA"))
+        else:  # it's yours, kept out of git: a fresh copy has the plain bezel
+            log(f"No monitor picture at {args.case}: a plain bezel instead")
+    screen = Screen(moderngl.create_context(), (fw, fh), crt=args.crt, case=case)
     winmm = ctypes.windll.winmm if sys.platform == "win32" else None
     if winmm:
         winmm.timeBeginPeriod(1)  # 1 ms sleeps, not Windows' default 15.6 ms ticks

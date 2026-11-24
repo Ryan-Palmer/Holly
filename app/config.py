@@ -102,6 +102,7 @@ class FaceConfig:
     height: int = 0  # 0: the still's own size
     idle_head: float = 0.2
     crt: bool = False  # an old monitor's look: a curved screen, scanlines, a rolling bar
+    case: str = ""  # with crt: a picture of the monitor, its screen opening see-through; "" for a plain bezel
 
 
 @dataclass(frozen=True)
