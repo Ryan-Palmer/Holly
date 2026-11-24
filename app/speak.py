@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
-import json
 import random
 from pathlib import Path
 import shutil
@@ -83,15 +82,6 @@ class TurnTimes:
             + (f", searching {self.search_ms:.0f} ms" if self.search_ms else "")
             + (f", {self.underruns} underruns" if self.underruns else "")
         )
-
-
-def recall_args(search_args: str, user: str) -> str:
-    """A web search's arguments, as recall's: its words, and the crew's question."""
-    try:
-        args = json.loads(search_args or "{}")
-    except json.JSONDecodeError:
-        args = {}
-    return json.dumps({"query": str(args.get("query") or user), "question": user})
 
 
 def quiet_connection_resets(loop: asyncio.AbstractEventLoop) -> None:
@@ -337,11 +327,13 @@ class Holly:
             required = "required" if self.cfg.llm.tool_choice else None
             choice = (required if turn.answering_choice and "research" in self.toolbox
                       and guards.REPORT_WANTED.search(user) else None)
-            memory = False  # asked for something from the past: his first look is recall
+            # Which tool is his to choose: made to call one for a memory, he chose recall every
+            # time (25 of 25 in the evals). A web search turned into recall only ever caught the
+            # news, judged a memory by mistake.
             if required and not choice and "recall" in self.toolbox and not user.startswith("["):
                 if guards.RECALL_ASKED.search(user) or await asyncio.to_thread(
                         archive.about_the_past, self.lm, self.model, user, self._last_exchange()):
-                    choice, memory = required, True
+                    choice = required
 
             async def say(sentence: str) -> None:
                 if spoken and guards.OFFER.search(sentence):
@@ -397,16 +389,6 @@ class Holly:
                 last_said[:] = said
                 if not calls or lookups > self.cfg.search.max_searches:
                     break  # (past the limit, he was told to stop; stop asking him)
-                if memory:
-                    # "Required" lets him pick any tool, and LM Studio refuses a named one; told
-                    # to call one for "what did we cook on Sunday?", he could search the web. So
-                    # his first look, if a web search, is recall, with the same words. (Not a
-                    # timer or the like: "remember to call June at five" is a timer.)
-                    memory = False
-                    for c in calls:
-                        if c["name"] == "search":
-                            c["name"], c["arguments"] = "recall", recall_args(c["arguments"], user)
-                            print(f"\n{DIM}  (a memory: recall, not a web search){RESET}", flush=True)
                 # He wants to look something up. Say anything he wrote first;
                 # if he wrote nothing yet, a stock line covers the wait.
                 for sentence in chunker.flush():

@@ -2,7 +2,6 @@
 runs, and the safety nets that make him redo a reply."""
 
 import asyncio
-import json
 import datetime as dt
 
 import pytest
@@ -247,18 +246,3 @@ def test_the_past_isnt_judged_when_he_must_look_anyway(make_holly):
     lm = FakeLm([[("recall", {"query": "Jo"})], "Your sister."], side=lambda s, u: "")
     respond(make_holly(lm), "Do you remember Jo?")
     assert not [r for r in lm.side_requests if r["system"] == archive.PAST_PROMPT]
-
-
-def test_a_memory_looked_for_on_the_web_is_recalled(make_holly):
-    def side(system, user):
-        if system == archive.PAST_PROMPT:
-            return "PAST" if user.endswith("Sunday?") else "OTHER"
-        return "ANSWER: Lasagne, with Jo." if "Question:" in user else ""
-    lm = FakeLm([[("search", {"query": "what we cooked Sunday"})], "Lasagne. Layers.",
-                 [("search", {"query": "moon distance"})], "Far."], side=side)
-    holly = make_holly(lm)
-    respond(holly, "What did we cook on Sunday?", "How far is the moon?")
-    assert tools_called(holly) == ["recall", "search"]  # the memory recalled; the moon still searched
-    first = next(c for m in holly.convo.history for c in m.get("tool_calls") or [])
-    assert json.loads(first["function"]["arguments"]) == {"query": "what we cooked Sunday",
-                                                          "question": "What did we cook on Sunday?"}
