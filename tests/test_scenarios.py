@@ -26,6 +26,8 @@ def loaded(lmstudio):
 @pytest.mark.parametrize("scenario", scenarios.SCENARIOS, ids=[s.name for s in scenarios.SCENARIOS])
 def test_scenario(loaded, tmp_path, scenario):
     holly = scenarios.quiet_holly(tmp=tmp_path)
+    if scenario.records and not holly.records:
+        pytest.skip("no ship's records here")
     scenarios.seed(holly)
     turns, wrong = asyncio.run(scenarios.run(holly, scenario))
     assert not wrong, f"{wrong}: " + " / ".join(f"{t.said!r} -> {t.reply!r} {t.tools}" for t in turns)

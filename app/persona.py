@@ -104,7 +104,14 @@ API_KEYS = ("role", "content", "tool_calls", "tool_call_id")
 # history, "Don't expect a medal". Next to the crew's line, he heard it.
 IN_CHARACTER = ("[Stay yourself: brief and deadpan, a few words where a few will do. Dry and a bit sardonic: the "
                 "odd dig or understatement, not a speech, and not gloom every time. Plain and kind if they're "
-                "down. No cheer, no offers of more help. Any facts you're given, in full.]")
+                "down. No cheer, and nothing eager: an offer only if it's natural, and grudging. Any facts "
+                "you're given, in full.]")
+# When he speaks up by himself (a timer due, a report finished: a note in brackets, not the
+# crew), the note asks what that note asks: told "no offers" and "a few words" too, he'd be
+# told both to ask about a summary and not to. In character all the same ("pizza" due: don't
+# let it weld itself to the oven).
+SPEAKING_UP = ("[Stay yourself while you do it: dry and deadpan, a dig or an aside if one fits, with what the "
+               "note says kept exactly as given.]")
 
 
 class Conversation:
@@ -199,10 +206,11 @@ class Conversation:
         self._build_preamble()
         tail = []
         if user_text is not None:
+            note = SPEAKING_UP if user_text.startswith("[") else IN_CHARACTER
             if worn := self.worn_phrases():
                 user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
                               + ". Put it differently this time.]")
-            tail = [{"role": "user", "content": f"{user_text}\n{IN_CHARACTER}"}]
+            tail = [{"role": "user", "content": f"{user_text}\n{note}"}]
         history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
         for m in history:
             if m["role"] == "assistant" and m.get("content"):

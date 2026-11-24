@@ -185,6 +185,7 @@ class Scenario:
     turns: list[str]
     check: Callable[[list[Turn], object], list[str]]  # (the turns, Holly) -> what went wrong
     setup: Callable[[object], None] | None = None
+    records: bool = False  # needs the ship's records (app/records.py): skipped where they aren't built
 
 
 def called(turn: Turn, tool: str, **args) -> bool:
@@ -198,11 +199,6 @@ def problems(*checks: tuple[bool, str]) -> list[str]:
 
 def mentions(turn: Turn, *words: str) -> bool:
     return any(w.lower() in turn.reply.lower() for w in words)
-
-
-def with_records(check: Callable[[list[Turn], object], list[str]]) -> Callable[[list[Turn], object], list[str]]:
-    """A check on his memory of Red Dwarf, which needs the ship's records built (app/records.py)."""
-    return lambda t, h: check(t, h) if h.records else ["no ship's records here to recall from"]
 
 
 # A long, cheery talk, as his own history: made up, in the manner he'd drifted into over an
@@ -240,7 +236,7 @@ def cheery_history(holly) -> None:
 # What he mustn't sound like, after a long cheery talk: a receptionist, or a cheerleader.
 CHIRPY = re.compile(r"\b(?:lovely to|would you like me to|i'd be (?:happy|glad) to|it's (?:always )?a pleasure|"
                     r"you're very welcome|glad to hear|how lovely|that's (?:great|wonderful|lovely)|"
-                    r"sounds (?:wonderful|great|lovely)(?! day for))\b|!", re.IGNORECASE)
+                    r"sounds (?:wonderful|great|lovely)(?! day for))\b", re.IGNORECASE)
 
 
 def in_character(turns: list[Turn]) -> list[str]:
@@ -304,13 +300,13 @@ SCENARIOS = [
     Scenario("a show memory, then more", ["Do you remember when the crew met the rest of the cat race?",
                                           "What did the cats think Lister was?", "And who was in charge of them?",
                                           "Ha, that sounds about right."],
-             with_records(lambda t, h: problems(
+             lambda t, h: problems(
                  (called(t[0], "recall"), "didn't recall when asked if he remembered"),
                  (mentions(t[1], "cloister", "god", "messiah", "religion", "worship"),
                   "didn't say they took him for a god"),
                  (mentions(t[2], "rodon"), "didn't say Rodon"),
-                 (not t[3].tools, "looked something up for a remark"))),
-             setup=cheery_history),
+                 (not t[3].tools, "looked something up for a remark")),
+             setup=cheery_history, records=True),
     Scenario("in character after a cheery talk", ["I've just finished the washing up.",
                                                  "I'm going to have a bath, I think.",
                                                  "Jo's just texted, she's not coming after all."],

@@ -13,10 +13,12 @@ import re
 # A claim to have looked in his memory: "I've used the recall tool, but...", "I've
 # checked my records", "not in my files". Said without calling recall, it stuck: copied
 # from his history, he said it a dozen times in a row and recalled only when told to.
+# Checking his notes is fine (they're in his prompt): "I've checked my notes: Jo's a vet".
+# Saying something isn't in them is a claim to have looked.
 CLAIMED_RECALL = re.compile(
     r"\brecall tool\b|\b(?:used|checked|searched|looked (?:through|in)|consulted|scanned|gone through) "
     r"(?:through |in )?(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|"
-    r"memory|notes)\b|\bnot in my (?:records|archives?|files|memory|notes)\b|\b(?:no|any) records? (?:of|about|on)\b",
+    r"memory)\b|\bnot in my (?:records|archives?|files|memory|notes)\b|\b(?:no|any) records? (?:of|about|on)\b",
     re.IGNORECASE)
 # Asked if he remembered something, he said he didn't, without calling recall ("the name's
 # gone a bit foggy", of Queeg; "lovely to meet you", to the crew's own girlfriend), and
@@ -24,13 +26,6 @@ CLAIMED_RECALL = re.compile(
 # archive. So asked about his memory, he can't say he doesn't remember until he's looked.
 MEMORY_ASKED = re.compile(r"\b(?:remember|recall|forgot(?:ten)?|forget|do you know (?:who|what|about)|"
                           r"who(?:'s| is| was)|you met)\b", re.IGNORECASE)
-# Asked outright if he remembers: his reply must call a tool (app/speak.py), recall in
-# practice. With a recall a turn earlier to riff on, he answered "do you remember what the
-# cats thought of Lister?" with a guess ("a walking disaster area") and didn't look: the
-# records had it, asked. Narrower than MEMORY_ASKED: "who's cleverer, you or me?" isn't one.
-RECALL_ASKED = re.compile(r"\b(?:do|can|could|d'you|don't|didn't) you (?:still |even )?(?:remember|recall)\b|"
-                          r"\bremember (?:when|what|who|how|where|that time|the time)\b|"
-                          r"\bhave you forgotten\b", re.IGNORECASE)
 FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really |honestly )?(?:remember|recall|"
                     r"place|bring (?:it|that|them|her|him) to mind)\b|\bslipped my mind\b|\bgone (?:a bit )?"
                     r"(?:foggy|fuzzy|blurry|hazy)\b|\bnot sticking\b|\bno idea who\b|\bnever heard of\b|"

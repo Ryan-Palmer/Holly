@@ -319,11 +319,12 @@ class Holly:
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
             # cracking", "I'll get stuck into it", in ever new words, and started nothing. And
-            # when he's asked for something from the past: "do you remember...?" outright
-            # (guards.RECALL_ASKED), or as the model judges it (archive.about_the_past), for
-            # "what did we do yesterday?" and follow-ups. Asked from his notes alone, he said
-            # "I don't have anything in my notes about a problem", with it in his archive.
-            # (If the model honours it: else a retry is just asked again.)
+            # when he's asked for something from the past, as the model judges it
+            # (archive.about_the_past): "do you remember Jo?", "what did we do yesterday?",
+            # follow-ups. Asked from his notes alone, he said "I don't have anything in my notes
+            # about a problem", with it in his archive; with a recall a turn earlier to riff on,
+            # he guessed what the cats thought of Lister ("a walking disaster area"). (If the
+            # model honours it: else a retry is just asked again.)
             required = "required" if self.cfg.llm.tool_choice else None
             choice = (required if turn.answering_choice and "research" in self.toolbox
                       and guards.REPORT_WANTED.search(user) else None)
@@ -331,8 +332,8 @@ class Holly:
             # time (25 of 25 in the evals). A web search turned into recall only ever caught the
             # news, judged a memory by mistake.
             if required and not choice and "recall" in self.toolbox and not user.startswith("["):
-                if guards.RECALL_ASKED.search(user) or await asyncio.to_thread(
-                        archive.about_the_past, self.lm, self.model, user, self._last_exchange()):
+                if await asyncio.to_thread(archive.about_the_past, self.lm, self.model, user,
+                                           self._last_exchange()):
                     choice = required
 
             async def say(sentence: str) -> None:

@@ -235,9 +235,6 @@ class Timers:
         self.items = []
         self._save()
 
-    def next_due(self) -> datetime.datetime | None:
-        return min((datetime.datetime.fromisoformat(i["due"]) for i in self.items), default=None)
-
 
 def announcement(items: list[dict], now: datetime.datetime | None = None) -> str:
     """What Holly is told, as the crew's turn, when timers or reminders come due."""

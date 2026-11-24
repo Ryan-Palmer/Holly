@@ -213,6 +213,9 @@ async def run_scenarios(model: str | None, runs: int) -> list[dict]:
     for sc in scenarios.SCENARIOS:
         for n in range(runs):
             holly = scenarios.quiet_holly(model, Path(tempfile.mkdtemp(prefix="holly-scenario-")))
+            if sc.records and not holly.records:
+                print(f"  --- {sc.name}: skipped, no ship's records here", flush=True)
+                break
             scenarios.seed(holly)
             turns, wrong = await scenarios.run(holly, sc)
             out.append(dict(name=sc.name, run=n + 1, wrong=wrong,

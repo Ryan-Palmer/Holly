@@ -2,7 +2,7 @@
 
 import json
 
-from app.persona import IN_CHARACTER, Conversation
+from app.persona import IN_CHARACTER, SPEAKING_UP, Conversation
 
 
 def convo(cfg, memory_file=None) -> Conversation:
@@ -27,6 +27,12 @@ def test_in_character_note_in_the_request_only(cfg):
     assert c.messages_for("Again?")[-1]["content"].endswith(IN_CHARACTER)
     assert all(IN_CHARACTER not in (m.get("content") or "") for m in c.messages_for())  # none without a new line
     assert all("Stay yourself" not in (m.get("content") or "") for m in c.history)
+
+
+def test_speaking_up_has_its_own_note(cfg):
+    c = convo(cfg)
+    last = c.messages_for("[The timer 'pizza' is due now. Tell the crew, in a sentence.]")[-1]["content"]
+    assert last.endswith(SPEAKING_UP) and IN_CHARACTER not in last  # not told "no offers" against the note
 
 
 def test_offers_of_more_help_left_out_of_what_he_sees(cfg):

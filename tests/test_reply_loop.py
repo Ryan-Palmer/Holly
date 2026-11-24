@@ -137,8 +137,11 @@ def test_saying_he_looked_without_recall_is_redone_with_recall(make_holly, claim
 
 
 def test_asked_if_he_remembers_he_must_look(make_holly):
-    lm = FakeLm([[("recall", {"query": "Jo"})], "Your sister. The vet.", "Me, obviously."],
-                side=judge_says("ANSWER: A vet."))
+    def side(system, user):
+        if system == archive.PAST_PROMPT:
+            return "PAST" if user.endswith("Do you remember what Jo does?") else "OTHER"
+        return judge_says("ANSWER: A vet.")(system, user)
+    lm = FakeLm([[("recall", {"query": "Jo"})], "Your sister. The vet.", "Me, obviously."], side=side)
     holly = make_holly(lm)
     with_jo(holly)
     respond(holly, "Do you remember what Jo does?", "Who's cleverer, you or me?")
@@ -240,9 +243,3 @@ def test_asked_about_the_past_in_other_words_he_must_look(make_holly):
     judged = [r["user"] for r in lm.side_requests if r["system"] == archive.PAST_PROMPT]
     assert judged[0] == "They say: What did we do yesterday?"
     assert judged[1].startswith("Just before: What did we do yesterday? / Lasagne")  # for follow-ups
-
-
-def test_the_past_isnt_judged_when_he_must_look_anyway(make_holly):
-    lm = FakeLm([[("recall", {"query": "Jo"})], "Your sister."], side=lambda s, u: "")
-    respond(make_holly(lm), "Do you remember Jo?")
-    assert not [r for r in lm.side_requests if r["system"] == archive.PAST_PROMPT]
