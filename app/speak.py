@@ -42,7 +42,7 @@ from .lmstudio import LmStudio, ReplyTiming
 from .persona import Conversation, set_aside, when
 from .player import Player
 from .search import SearchTool, Searcher
-from .speech_text import SentenceChunker
+from .speech_text import SentenceChunker, starts_section
 from .tools import Toolbox, Turn
 from .tts_common import Tts, make_tts
 from .news import NewsTool
@@ -52,6 +52,7 @@ __all__ = ["CYAN", "DIM", "RESET", "YELLOW", "stamp", "Holly", "TurnTimes"]  # a
 
 # Said when a reply fails part-way (LM Studio restarted, a request timed out).
 LOST_THREAD = "Sorry. I seem to have lost my train of thought."
+SECTION_PAUSE_S = 0.6  # before a status report's next section
 
 
 @dataclasses.dataclass
@@ -459,6 +460,11 @@ class Holly:
                     await thought.wait()
                 first = True
                 while (sentence := await sentences.get()) is not None:
+                    if not first and starts_section(sentence):
+                        # A status report's next section ("Politics — ..."): a longer pause
+                        # before it, as between items on the news. Punctuation couldn't
+                        # give one: a dash, two, or a full stop and a dash, ~0.1 s.
+                        self.player.put(np.zeros(int(self.tts.sample_rate * SECTION_PAUSE_S), np.float32))
                     # The first sentence's opening silence is pure latency; later
                     # sentences keep theirs as the pause between sentences.
                     async for audio in self.tts.stream(sentence, trim_lead=first):

@@ -18,6 +18,14 @@ _URL = re.compile(r"https?://\S+")
 # it ran on with no pause (0 ms, 3 times in 3); with a dash it paused 240-880 ms and said
 # it clearly each time. An ellipsis lost the word.
 _ADDITIONAL = re.compile(r"\bAdditional\s*(?:[.:;,!]|\.\.\.|…|—|–|-)+\s*(?=\w)")
+# A heading at the start of a sentence, a status report's "Politics: ministers want...":
+# said with a dash, for the same pause after it.
+# A status report's sections, and their names as he might say them.
+_SECTION_NAMES = ("top stories", "the top stories", "headlines", "politics", "world", "the world", "world news",
+                  "business", "business and money", "money", "the economy", "technology", "tech", "science",
+                  "sport", "sports", "health", "entertainment", "additional")
+_SECTION = re.compile(r"^(?:" + "|".join(re.escape(n) for n in _SECTION_NAMES) + r")\s+—\s", re.IGNORECASE)
+_HEADED = re.compile(r"^([A-Z][\w'&]*(?: (?:and )?[\w'&]+){0,2}):\s+(?=\w)")
 _SENTENCE_END = re.compile(r"[.!?]+[\"')”’]*(?=\s|$)")
 _CLAUSE_BREAK = re.compile(r"[,;:—–](?=\s)")
 
@@ -97,6 +105,12 @@ class SentenceChunker:
         return None
 
 
+def starts_section(chunk: str) -> bool:
+    """Does this chunk start a status report's section, a heading and a dash ("Politics —
+    ...", "Additional — ...")? It's then said after a longer pause."""
+    return bool(_SECTION.match(chunk))
+
+
 def split_sentences(text: str) -> list[str]:
     chunker = SentenceChunker(first_clause_words=10**9)
     return chunker.feed(text) + chunker.flush()
@@ -115,4 +129,5 @@ def clean_for_speech(text: str) -> str:
     text = _LIST_LINE.sub("", text)
     text = _MARKDOWN_CHARS.sub("", text)
     text = _ADDITIONAL.sub("Additional — ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    return _HEADED.sub(r"\1 — ", text)

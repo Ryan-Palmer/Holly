@@ -17,6 +17,7 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import email.utils
+import random
 import re
 import threading
 import time
@@ -43,6 +44,13 @@ HEADLINES = 6  # given him at most: he'll say two or three
 ROUNDUP = {"top": "Top stories", "politics": "Politics", "world": "World", "business": "Business and money",
            "technology": "Technology", "science": "Science", "sport": "Sport"}
 ROUNDUP_EACH = 2
+# The report's "Additional" item, news from the Red Dwarf universe, is about one of these,
+# drawn at random: left to choose, four reports in four had a mechanoid "detained" in some
+# "sector", or the Jupiter Mining Corporation "announcing" something.
+LORE = ("the ship's crew", "the Jupiter Mining Corporation", "the Space Corps", "a rival mining ship",
+        "a hologram", "a mechanoid", "the cat race", "a skutter", "the ship's computer systems",
+        "a vending machine", "a GELF tribe", "an android colony", "a holo-ship", "a deep-space trading post",
+        "the ship's food dispensers", "a space station", "a simulant", "the ship's medical unit")
 FRESH = datetime.timedelta(days=2)
 STALE = datetime.timedelta(days=7)  # if two days give too few
 KEEP_S = 300  # a feed is fetched again after this
@@ -145,7 +153,7 @@ def roundup(cfg: SearchConfig, now: datetime.datetime | None = None) -> Lookup:
         return Lookup("roundup", "The BBC's feeds had nothing from the past two days. Say so.", 0, ms, 0)
     answer = ("The BBC's latest, by subject, for a status report:\n" + "\n".join(parts)
               + "\nRound it up subject by subject, a sentence each, in your own words; then the "
-                "'Additional' item, as your rules say.")
+                f"'Additional' item, as your rules say: today's is news about {random.choice(LORE)}.")
     return Lookup("roundup", answer, count, ms, 0)
 
 

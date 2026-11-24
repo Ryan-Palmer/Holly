@@ -279,3 +279,16 @@ def test_asked_about_the_past_in_other_words_he_must_look(make_holly):
     judged = [r["user"] for r in lm.side_requests if r["system"] == archive.PAST_PROMPT]
     assert judged[0] == "They say: What did we do yesterday?"
     assert judged[1].startswith("Just before: What did we do yesterday? / Lasagne")  # for follow-ups
+
+
+def test_a_status_reports_sections_get_a_longer_pause(make_holly):
+    from app.speak import SECTION_PAUSE_S
+    holly = make_holly(FakeLm(["Right then. Politics: ministers want views. Well — maybe so. "
+                               "Additional. The toaster has resigned."]))
+    played: list[int] = []
+    holly.player.put = lambda audio: played.append(len(audio))
+    respond(holly, "Status report, please.")
+    pause = int(holly.tts.sample_rate * SECTION_PAUSE_S)
+    assert holly.tts.said == ["Right then.", "Politics — ministers want views.", "Well — maybe so.",
+                              "Additional — The toaster has resigned."]
+    assert played.count(pause) == 2  # before "Politics" and "Additional": not the first, nor "Well"
