@@ -14,7 +14,7 @@ git clone --depth 1 https://github.com/antgroup/ditto-talkinghead face/ditto-src
 git -C face/ditto-src apply ../ditto-windows.patch
 py -3.12 -m venv face/.venv
 face\.venv\Scripts\python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-face\.venv\Scripts\python -m pip install onnxruntime-gpu librosa tqdm filetype imageio imageio-ffmpeg opencv-python-headless scikit-image mediapipe colored "numpy>=2" einops huggingface_hub soundfile av pygame-ce
+face\.venv\Scripts\python -m pip install onnxruntime-gpu librosa tqdm filetype imageio imageio-ffmpeg opencv-python-headless scikit-image mediapipe colored "numpy>=2" einops huggingface_hub soundfile av pygame-ce moderngl
 face\.venv\Scripts\python -c "from huggingface_hub import snapshot_download as d; d('digital-avatar/ditto-talkinghead', local_dir='face/checkpoints', allow_patterns=['ditto_pytorch/**', 'ditto_cfg/*'])"
 ```
 

@@ -95,8 +95,8 @@ height = 0
 # while Holly is silent: 0 holds his head still, 1 lets it sway as Ditto
 # drives it. While he speaks it moves fully.
 idle_head = 0.2
-# An old monitor's look (face/crt.py): a curved screen, scanlines, a vignette and
-# a soft bar rolling down every few seconds. On the GPU, ~0.5 ms a frame.
+# An old monitor's look (face/screen.py, an OpenGL shader): curved glass in a bezel,
+# scanlines, a phosphor mask, glow, reflections and a rolling bar. ~1 ms a frame.
 crt = true
 # The face sleeps awake_s (under [listen]) after Holly last spoke: he nods off
 # into the still, eyes closed, and Ditto pauses, sparing the GPU (~40% of the 5090 and ~200 W

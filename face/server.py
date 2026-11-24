@@ -611,7 +611,7 @@ def main():
     p.add_argument("--host-api", default="Windows WASAPI")
     p.add_argument("--device", default="", help="output device name (or part of it)")
     p.add_argument("--parent", type=int, default=0, help="Holly's process ID: the face exits when it ends")
-    p.add_argument("--crt", action="store_true", help="an old monitor's look (face/crt.py)")
+    p.add_argument("--crt", action="store_true", help="an old monitor's look (face/screen.py)")
     args = p.parse_args()
     if args.parent:
         # First, before Ditto's minute of warm-up: Holly can crash during his own.
@@ -643,57 +643,46 @@ def main():
     log(f"Ready on port {args.port}, playing through {sd.query_devices(index)['name']} ({api}), "
         f"lead {args.lead:.2f} s")
 
-    # The window: SDL2's, through pygame. Each frame goes to a GPU texture that the renderer
-    # scales to the largest size that fits the window, centred on black: ~8 ms a frame at
-    # any size, full screen included. Tk's window, scaling in Python, took 47 ms a frame at
-    # 2560x1440 and 97 ms at 4K (past the 40 ms there is). OpenCV's scaled well but showed a
-    # crosshair cursor and left gaps when snapped to a screen edge in Windows 11. pygame's
-    # own SCALED mode only scales by whole numbers (it's made for pixel art): a window
-    # smaller than a frame went black, and one up to twice its size showed it at 1x.
+    # The window: pygame's, drawn with OpenGL (face/screen.py). Each frame goes to a GPU
+    # texture that a shader draws as large as fits the window, centred on black, or, with
+    # --crt, on an old monitor: ~1 ms a frame at any size, full screen included. Tk's
+    # window, scaling in Python, took 47 ms a frame at 2560x1440 and 97 ms at 4K (past the
+    # 40 ms there is). OpenCV's scaled well but showed a crosshair cursor and left gaps when
+    # snapped to a screen edge in Windows 11. pygame's own SCALED mode only scales by whole
+    # numbers. SDL2's 2D renderer scaled well, but can't run a shader: its CRT look was
+    # layers blended over the picture, and its glow read as a halo.
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-    os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")  # smooth (linear) scaling
+    import moderngl
     import pygame
-    from pygame._sdl2.video import Renderer, Texture, Window
+    from screen import Screen
 
     still = Image.open(args.image).convert("RGB")
     w, h = still.size
     fw, fh = (round(args.height * w / h), args.height) if args.height else (w, h)  # Ditto's frames
     pygame.init()
-    window = Window("Holly", size=(round(WINDOW_HEIGHT * w / h), WINDOW_HEIGHT), resizable=True)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
+    pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
+    window = pygame.Window("Holly", (round(WINDOW_HEIGHT * w / h), WINDOW_HEIGHT), opengl=True, resizable=True)
     face = still.crop(((w - h) // 2, 0, (w + h) // 2, h)).resize((64, 64))
     window.set_icon(pygame.image.frombuffer(face.tobytes(), face.size, "RGB"))
-    renderer = Renderer(window, vsync=False)
-    texture = Texture(renderer, (fw, fh), streaming=True)
-    crt = None
-    if args.crt:
-        from crt import Crt  # ~0.5 ms a frame on the GPU; its textures are made once per window size
-        crt = Crt(renderer)
+    screen = Screen(moderngl.create_context(), (fw, fh), crt=args.crt)
     winmm = ctypes.windll.winmm if sys.platform == "win32" else None
     if winmm:
         winmm.timeBeginPeriod(1)  # 1 ms sleeps, not Windows' default 15.6 ms ticks
     shown = {"k": -1, "late": 0, "frames": 0, "skipped": 0, "draw": 0.0, "ahead": [], "made": 0,
-             "report": time.perf_counter(), "click": 0.0, "full": False}
+             "report": time.perf_counter(), "click": 0.0, "full": False, "shown_at": 0.0}
 
-    def show(surface=None):
-        """Draw the texture (updated from `surface` if given), as large as fits, centred."""
-        if surface is not None:
-            texture.update(surface)
-        renderer.draw_color = (0, 0, 0, 255)
-        renderer.clear()
-        box_w, box_h = window.size
-        scale = min(box_w / fw, box_h / fh)
-        dw, dh = max(round(fw * scale), 1), max(round(fh * scale), 1)
-        box = ((box_w - dw) // 2, (box_h - dh) // 2, dw, dh)
-        if crt:
-            crt.draw(texture, box, time.perf_counter())
-        else:
-            renderer.blit(texture, pygame.Rect(*box))
-        renderer.present()
+    def show(img=None):
+        """Draw the frame (updated to `img`, (h, w, 3) RGB, if given), as large as fits."""
+        if img is not None:
+            screen.update(img)
+        screen.draw(window.size, time.perf_counter())
+        window.flip()
         shown["shown_at"] = time.perf_counter()
 
     def draw(img):
-        img = np.ascontiguousarray(img)  # Ditto's frames aren't always laid out in one block
-        show(pygame.image.frombuffer(img, (img.shape[1], img.shape[0]), "RGB"))
+        show(np.ascontiguousarray(img))  # Ditto's frames aren't always laid out in one block
 
     def full_screen(on=None):
         on = not shown["full"] if on is None else on
@@ -703,7 +692,7 @@ def main():
             window.set_windowed()
         shown["full"] = on
 
-    show(pygame.image.frombuffer(still.resize((fw, fh)).tobytes(), (fw, fh), "RGB"))  # until Ditto's first frame
+    show(np.asarray(still.resize((fw, fh))))  # until Ditto's first frame
 
     def handle_events():
         """Returns False once the window is closed."""
@@ -741,7 +730,7 @@ def main():
                 shown["late"] += not on_time
             shown["k"] = k
         now = time.perf_counter()
-        if crt and crt.rolling(now) and now - shown.get("shown_at", 0) > CRT_REDRAW_S:
+        if screen.rolling(now) and now - shown["shown_at"] > CRT_REDRAW_S:
             show()  # the bar rolls on smoothly, between frames and while he sleeps
         if now - shown["report"] > 10:
             n = max(shown["frames"], 1)
