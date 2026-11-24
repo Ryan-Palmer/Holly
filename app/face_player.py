@@ -41,7 +41,7 @@ def start_server(cfg: FaceConfig, host_api: str, device: str, awake_s: float = 3
         [str(ROOT / cfg.python), "-u", str(ROOT / "face" / "server.py"), "--image", str(ROOT / cfg.image),
          "--port", str(cfg.port), "--lead", str(cfg.lead_ms / 1000), "--height", str(cfg.height),
          "--idle-head", str(cfg.idle_head), "--sleep-after", str(awake_s),
-         "--host-api", host_api, "--device", device, "--parent", str(os.getpid())],
+         "--host-api", host_api, "--device", device, "--parent", str(os.getpid())] + (["--crt"] if cfg.crt else []),
         cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
     )
 

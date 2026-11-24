@@ -107,3 +107,15 @@ def test_stalled_face_doesnt_freeze_him(face, monkeypatch):
     asyncio.run(asyncio.wait_for(go(), 20))
     assert fp.fallback is not None and "stopped taking audio" not in fp.device_name
     assert proc.wait(5) is not None
+
+
+@pytest.mark.parametrize("crt", [True, False])
+def test_the_crt_look_reaches_the_face(cfg, tmp_path, monkeypatch, crt):
+    import dataclasses
+
+    from app import face_player
+    started = []
+    monkeypatch.setattr(face_player, "ROOT", tmp_path)  # its log goes here, not over the real one
+    monkeypatch.setattr(face_player.subprocess, "Popen", lambda args, **kw: started.append(args))
+    face_player.start_server(dataclasses.replace(cfg.face, crt=crt), "WASAPI", "Speakers")
+    assert ("--crt" in started[0]) == crt

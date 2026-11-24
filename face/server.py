@@ -64,6 +64,8 @@ POSE_AHEAD = 5  # frames it starts moving before it (as far ahead as is known)
 POSE_STEP = 1 / 12  # ~0.5 s from still to moving
 POSE_OUT_S = 1.5  # back to the idle sway after speaking: slower, or he snapped back to idle
 WINDOW_HEIGHT = 720  # the window opens this tall; it can then be any size
+CRT_REDRAW_S = 1 / 60  # while the CRT look's bar rolls, the picture is redrawn this often, frame or
+# no frame: asleep, redrawn only as each frame came due, it stuttered
 DOZE_S = 1.5  # before sleeping, the face settles to the photo itself for this long
 DOZE_STEP = 1 / 25  # ~1 s to settle into the photo, eyes closing, when dozing off
 WAKE_STEP = 1 / 10  # ~0.4 s to open the eyes and come back to life on waking
@@ -609,6 +611,7 @@ def main():
     p.add_argument("--host-api", default="Windows WASAPI")
     p.add_argument("--device", default="", help="output device name (or part of it)")
     p.add_argument("--parent", type=int, default=0, help="Holly's process ID: the face exits when it ends")
+    p.add_argument("--crt", action="store_true", help="an old monitor's look (face/crt.py)")
     args = p.parse_args()
     if args.parent:
         # First, before Ditto's minute of warm-up: Holly can crash during his own.
@@ -661,6 +664,10 @@ def main():
     window.set_icon(pygame.image.frombuffer(face.tobytes(), face.size, "RGB"))
     renderer = Renderer(window, vsync=False)
     texture = Texture(renderer, (fw, fh), streaming=True)
+    crt = None
+    if args.crt:
+        from crt import Crt  # ~0.5 ms a frame on the GPU; its textures are made once per window size
+        crt = Crt(renderer)
     winmm = ctypes.windll.winmm if sys.platform == "win32" else None
     if winmm:
         winmm.timeBeginPeriod(1)  # 1 ms sleeps, not Windows' default 15.6 ms ticks
@@ -676,8 +683,13 @@ def main():
         box_w, box_h = window.size
         scale = min(box_w / fw, box_h / fh)
         dw, dh = max(round(fw * scale), 1), max(round(fh * scale), 1)
-        renderer.blit(texture, pygame.Rect((box_w - dw) // 2, (box_h - dh) // 2, dw, dh))
+        box = ((box_w - dw) // 2, (box_h - dh) // 2, dw, dh)
+        if crt:
+            crt.draw(texture, box, time.perf_counter())
+        else:
+            renderer.blit(texture, pygame.Rect(*box))
         renderer.present()
+        shown["shown_at"] = time.perf_counter()
 
     def draw(img):
         img = np.ascontiguousarray(img)  # Ditto's frames aren't always laid out in one block
@@ -729,6 +741,8 @@ def main():
                 shown["late"] += not on_time
             shown["k"] = k
         now = time.perf_counter()
+        if crt and crt.rolling(now) and now - shown.get("shown_at", 0) > CRT_REDRAW_S:
+            show()  # the bar rolls on smoothly, between frames and while he sleeps
         if now - shown["report"] > 10:
             n = max(shown["frames"], 1)
             ahead = sorted(shown["ahead"]) or [0]

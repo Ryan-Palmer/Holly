@@ -101,6 +101,7 @@ class FaceConfig:
     lead_ms: int = 600
     height: int = 0  # 0: the still's own size
     idle_head: float = 0.2
+    crt: bool = False  # an old monitor's look: a curved screen, scanlines, a rolling bar
 
 
 @dataclass(frozen=True)
