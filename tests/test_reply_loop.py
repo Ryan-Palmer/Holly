@@ -207,3 +207,10 @@ def test_a_failed_report_announcement_is_tried_again(make_holly):
                                                      lambda ok: holly.research.announced(job, ok))))
     assert holly.research.ready(later + dt.timedelta(hours=1)) is None
     assert "is finished, and the report is written" in holly.convo.history[0]["content"]
+
+
+def test_a_closing_offer_of_help_is_neither_said_nor_kept(make_holly):
+    holly = make_holly(FakeLm(["Fifty-six. Anything else you need me to work out?", "Anything else?"]))
+    respond(holly, "What's seven times eight?", "Thanks.")
+    assert holly.tts.said == ["Fifty-six.", "Anything else?"]  # alone, it's all there is: said
+    assert [m["content"] for m in holly.convo.history if m["role"] == "assistant"] == ["Fifty-six.", "Anything else?"]

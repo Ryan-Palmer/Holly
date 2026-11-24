@@ -10,6 +10,7 @@ import re
 import tomllib
 from pathlib import Path
 
+from . import guards
 from .config import PersonaConfig
 
 CHARS_PER_TOKEN = 4  # roughly, for English
@@ -97,6 +98,14 @@ def set_aside(path: Path, why: str) -> Path:
 # The keys LM Studio is sent; others (a message's time, "at") stay here.
 API_KEYS = ("role", "content", "tool_calls", "tool_call_id")
 
+# After the crew's line, in each request only. Over a long talk his own replies outweighed
+# the system prompt far above them: replayed with an afternoon's history, he answered
+# "it's all cleaned out" with "Well done. That's a productive bit of work", and with no
+# history, "Don't expect a medal". Next to the crew's line, he heard it.
+IN_CHARACTER = ("[Stay yourself: brief and deadpan, a few words where a few will do. Dry and a bit sardonic: the "
+                "odd dig or understatement, not a speech, and not gloom every time. Plain and kind if they're "
+                "down. No cheer, no offers of more help. Any facts you're given, in full.]")
+
 
 class Conversation:
     def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None,
@@ -181,15 +190,23 @@ class Conversation:
     def messages_for(self, user_text: str | None = None) -> list[dict]:
         """The full message list to send for a new user line. The time isn't
         here: he asks the clock tool for it (app/clock.py). Without
-        `user_text`, just the preamble and history. If he's fallen into a rut
-        (worn_phrases), a note says so, in this request only: it isn't kept in
-        his history, and being last, it leaves LM Studio's cache of the rest."""
+        `user_text`, just the preamble and history. After `user_text`, notes:
+        to stay in character (IN_CHARACTER), and if he's fallen into a rut
+        (worn_phrases), that he has. They're in this request only: not kept in
+        his history, and being last, they leave LM Studio's cache of the rest.
+        His replies in the history are sent without their offers of more help
+        (guards.OFFER), so he doesn't copy them, older ones included."""
         self._build_preamble()
-        if user_text is not None and (worn := self.worn_phrases()):
-            user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
-                          + ". Put it differently this time.]")
-        tail = [{"role": "user", "content": user_text}] if user_text is not None else []
+        tail = []
+        if user_text is not None:
+            if worn := self.worn_phrases():
+                user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
+                              + ". Put it differently this time.]")
+            tail = [{"role": "user", "content": f"{user_text}\n{IN_CHARACTER}"}]
         history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
+        for m in history:
+            if m["role"] == "assistant" and m.get("content"):
+                m["content"] = guards.without_offers(m["content"])
         return [*self.preamble, *history, *tail]
 
     def record(self, user_text: str, holly_text: str, steps: list[dict] | None = None) -> int:

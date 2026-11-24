@@ -68,6 +68,25 @@ CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m
 # Matched as written, and as the sentence chunker leaves it (without "|" or "_"):
 # `recall{query:<"Lister<"}<toolcall`.
 TOOL_MARKUP = re.compile(r"<\||\|>|<tool_?call|<\"|\b\w+\{\w+:")
+# A closing offer of more help, a receptionist's: "Anything else you need me to dig up?",
+# "I'll be here if you need anything". At the end of reply after reply it became his
+# voice, and he copied it from his history every turn. Not said, and kept out of what he
+# sees of his history (app/persona.py); not the questions the talk needs, either: "want a
+# summary?", "shall I dig into it while I doze?", "how long for?".
+OFFER = re.compile(r"\b(?:anything else|any other (?:bits|questions|info\w*|data)|is there anything|"
+                   r"let me know if|just let me know|I'll be (?:right )?here if|are you all set|"
+                   r"does that clear)\b", re.IGNORECASE)
+SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
+
+
+def without_offers(text: str) -> str:
+    """`text` without its sentences offering more help (OFFER), unless that's all it is."""
+    text = text.strip()
+    sentences = SENTENCE_END.split(text)
+    kept = [s for s in sentences if not OFFER.search(s)]
+    return " ".join(kept) if kept and len(kept) < len(sentences) else text
+
+
 # Added to a reply that gave a time nobody gave him (never spoken: it's for his history).
 GUESSED = " [That time was a guess, not from the clock: it's probably wrong.]"
 

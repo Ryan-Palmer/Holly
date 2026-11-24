@@ -2,7 +2,7 @@
 
 import json
 
-from app.persona import Conversation
+from app.persona import IN_CHARACTER, Conversation
 
 
 def convo(cfg, memory_file=None) -> Conversation:
@@ -18,7 +18,24 @@ def test_prompt_has_rules_examples_and_date(cfg):
     c = convo(cfg)
     system = c.messages_for("Hello.")[0]["content"]
     assert "Some tool rules." in system and "Examples of how you talk" in system and "Today is " in system
-    assert c.messages_for("Hello.")[-1] == {"role": "user", "content": "Hello."}
+    assert c.messages_for("Hello.")[-1] == {"role": "user", "content": f"Hello.\n{IN_CHARACTER}"}
+
+
+def test_in_character_note_in_the_request_only(cfg):
+    c = convo(cfg)
+    c.record("Hi.", "Hello.")
+    assert c.messages_for("Again?")[-1]["content"].endswith(IN_CHARACTER)
+    assert all(IN_CHARACTER not in (m.get("content") or "") for m in c.messages_for())  # none without a new line
+    assert all("Stay yourself" not in (m.get("content") or "") for m in c.history)
+
+
+def test_offers_of_more_help_left_out_of_what_he_sees(cfg):
+    c = convo(cfg)
+    c.record("Coal prices?", "Up again. Anything else you need me to dig up?")
+    c.record("Thanks.", "Anything else?")  # all there is: kept
+    sent = [m["content"] for m in c.messages_for() if m["role"] == "assistant"]
+    assert sent == ["Up again.", "Anything else?"]
+    assert c.history[1]["content"] == "Up again. Anything else you need me to dig up?"  # his history as it was
 
 
 def test_worn_phrases_noted_in_the_request_only(cfg):

@@ -2,10 +2,15 @@
 
 import pytest
 
-from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFERED_REPORT, PROMISED_RESEARCH,
-                       REPORT_WANTED, RESEARCH_ASKED)
+from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
+                        PROMISED_RESEARCH, REPORT_WANTED, RESEARCH_ASKED, without_offers)
 
 CASES = [
+    (OFFER, ["Anything else you need me to dig up?", "Any other bits of info you're after?",
+             "Just let me know if you hit a snag.", "I'll be right here if you need anything.",
+             "Shall I work out the rest, or are you all set?", "Does that clear things up?", "Is there anything else?"],
+     ["Want a summary?", "Quick search now, or shall I dig into it while I doze?", "How long for?",
+      "Do you want me to open it?", "I'll be here, doing absolutely nothing."]),
     (CLAIMED_RECALL, ["I've used the recall tool, but nothing.", "I've checked my records.", "It's not in my files.",
                       "I have no record of that."],
      ["I remember it well.", "Let me think.", "The record player's broken."]),
@@ -38,3 +43,9 @@ CASES = [
 def test_pattern(pattern, hits, misses):
     assert [h for h in hits if not pattern.search(h)] == []
     assert [m for m in misses if pattern.search(m)] == []
+
+
+def test_without_offers():
+    assert without_offers("Up again. Since 2022, mostly. Anything else you need?") == "Up again. Since 2022, mostly."
+    assert without_offers("Anything else?") == "Anything else?"  # all there is: kept
+    assert without_offers("  Fifteen degrees. Hardly tropical.\n") == "Fifteen degrees. Hardly tropical."

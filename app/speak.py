@@ -284,6 +284,7 @@ class Holly:
         parts: list[str] = []
         steps: list[dict] = []  # his searches and their results, for the history
         last_said: list[str] = []
+        spoken: list[str] = []  # the sentences said this turn
         thought = asyncio.Event()
         wait_for_reply = self.cfg.tts.voxcpm.wait_for_reply
         self.player.begin_turn()
@@ -324,6 +325,11 @@ class Holly:
                       and guards.REPORT_WANTED.search(user) else None)
 
             async def say(sentence: str) -> None:
+                if spoken and guards.OFFER.search(sentence):
+                    # "Anything else you need me to dig up?": not said, nor kept (below).
+                    print(f"{DIM}[offer not said]{RESET}", end="", flush=True)
+                    return
+                spoken.append(sentence)
                 times.first_sentence = times.first_sentence or time.perf_counter()
                 await sentences.put(sentence)
 
@@ -425,7 +431,7 @@ class Holly:
             print()
             times.failed = True
             return times
-        said = "".join(last_said).strip()
+        said = guards.without_offers("".join(last_said))
         # What he was told: this turn, and the last few (asked "you mean 24 minutes past
         # midnight?" a turn after the clock said 00:24, his "00:24" was no guess).
         told = ([user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
