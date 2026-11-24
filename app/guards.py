@@ -24,6 +24,13 @@ CLAIMED_RECALL = re.compile(
 # archive. So asked about his memory, he can't say he doesn't remember until he's looked.
 MEMORY_ASKED = re.compile(r"\b(?:remember|recall|forgot(?:ten)?|forget|do you know (?:who|what|about)|"
                           r"who(?:'s| is| was)|you met)\b", re.IGNORECASE)
+# Asked outright if he remembers: his reply must call a tool (app/speak.py), recall in
+# practice. With a recall a turn earlier to riff on, he answered "do you remember what the
+# cats thought of Lister?" with a guess ("a walking disaster area") and didn't look: the
+# records had it, asked. Narrower than MEMORY_ASKED: "who's cleverer, you or me?" isn't one.
+RECALL_ASKED = re.compile(r"\b(?:do|can|could|d'you|don't|didn't) you (?:still |even )?(?:remember|recall)\b|"
+                          r"\bremember (?:when|what|who|how|where|that time|the time)\b|"
+                          r"\bhave you forgotten\b", re.IGNORECASE)
 FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really |honestly )?(?:remember|recall|"
                     r"place|bring (?:it|that|them|her|him) to mind)\b|\bslipped my mind\b|\bgone (?:a bit )?"
                     r"(?:foggy|fuzzy|blurry|hazy)\b|\bnot sticking\b|\bno idea who\b|\bnever heard of\b|"
@@ -74,7 +81,8 @@ TOOL_MARKUP = re.compile(r"<\||\|>|<tool_?call|<\"|\b\w+\{\w+:")
 # sees of his history (app/persona.py); not the questions the talk needs, either: "want a
 # summary?", "shall I dig into it while I doze?", "how long for?".
 OFFER = re.compile(r"\b(?:anything else|any other (?:bits|questions|info\w*|data)|is there anything|"
-                   r"let me know if|just let me know|I'll be (?:right )?here if|are you all set|"
+                   r"let me know if|just let me know|I'll be (?:right )?here if|are you all set|shout if|"
+                   r"(?:need|want) me to do anything|"
                    r"does that clear)\b", re.IGNORECASE)
 SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
 

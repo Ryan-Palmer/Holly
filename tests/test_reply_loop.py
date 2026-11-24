@@ -136,6 +136,17 @@ def test_saying_he_looked_without_recall_is_redone_with_recall(make_holly, claim
     assert tools_called(holly) == ["recall"] and holly.convo.history[-1]["content"] == "Your sister. The vet."
 
 
+def test_asked_if_he_remembers_he_must_look(make_holly):
+    lm = FakeLm([[("recall", {"query": "Jo"})], "Your sister. The vet.", "Me, obviously."],
+                side=judge_says("ANSWER: A vet."))
+    holly = make_holly(lm)
+    with_jo(holly)
+    respond(holly, "Do you remember what Jo does?", "Who's cleverer, you or me?")
+    assert lm.requests[0]["tool_choice"] == "required" and tools_called(holly) == ["recall"]
+    assert lm.requests[1]["tool_choice"] is None  # once he's looked, he answers
+    assert lm.requests[2]["tool_choice"] is None  # not a memory question
+
+
 def test_forgetting_without_being_asked_about_memory_is_fine(make_holly):
     holly = make_holly(FakeLm(["I don't remember a thing before Tuesday."]))
     respond(holly, "Tell me a story.")

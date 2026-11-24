@@ -2,13 +2,18 @@
 
 import pytest
 
-from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
+from app.guards import (CLAIMED_RECALL, CLOCK_TIME, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, RECALL_ASKED, OFFERED_REPORT,
                         PROMISED_RESEARCH, REPORT_WANTED, RESEARCH_ASKED, without_offers)
 
 CASES = [
+    (RECALL_ASKED, ["Do you remember what they thought of Lister?", "Can you remember using your tools?",
+                    "Do you recall the Cat Fleet?", "Remember when we met the cats?", "Have you forgotten Jo?"],
+     ["Who's cleverer, you or me?", "Remember to call June.", "Do you miss Lister?", "Who is Jo?"]),
     (OFFER, ["Anything else you need me to dig up?", "Any other bits of info you're after?",
              "Just let me know if you hit a snag.", "I'll be right here if you need anything.",
-             "Shall I work out the rest, or are you all set?", "Does that clear things up?", "Is there anything else?"],
+             "Shall I work out the rest, or are you all set?", "Does that clear things up?", "Is there anything else?",
+             "Just give us a shout if you need anything.", "Just shout if you want me to do something else.",
+             "Need me to do anything?"],
      ["Want a summary?", "Quick search now, or shall I dig into it while I doze?", "How long for?",
       "Do you want me to open it?", "I'll be here, doing absolutely nothing."]),
     (CLAIMED_RECALL, ["I've used the recall tool, but nothing.", "I've checked my records.", "It's not in my files.",

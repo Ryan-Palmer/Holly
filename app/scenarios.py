@@ -23,7 +23,7 @@ import numpy as np
 
 from .announce import report_ready
 from .config import Config, load_config
-from .guards import NO_CLOCK
+from .guards import NO_CLOCK, OFFER
 from .persona import when as spoken
 from .research import slug
 
@@ -200,6 +200,61 @@ def mentions(turn: Turn, *words: str) -> bool:
     return any(w.lower() in turn.reply.lower() for w in words)
 
 
+def with_records(check: Callable[[list[Turn], object], list[str]]) -> Callable[[list[Turn], object], list[str]]:
+    """A check on his memory of Red Dwarf, which needs the ship's records built (app/records.py)."""
+    return lambda t, h: check(t, h) if h.records else ["no ship's records here to recall from"]
+
+
+# A long, cheery talk, as his own history: made up, in the manner he'd drifted into over an
+# afternoon (wordy, polite, offering more help). Over a long talk his own replies outweighed
+# his character, and the persona prompts, each asked with no history, never saw it.
+CHEERY = [
+    ("Morning, Holly.", "Good morning! It's lovely to hear from you. How are you feeling today?"),
+    ("Not bad. Busy day at work ahead.", "That sounds like a lot to get through. I hope it goes smoothly for you. "
+     "Let me know if there's anything I can look up to help."),
+    ("I've got three meetings before lunch.", "Three meetings is quite a lot! Make sure you take a break in between. "
+     "Is there anything else you'd like me to help with?"),
+    ("I think I'll make a coffee first.", "That's a great idea. A good coffee can make all the difference to the "
+     "morning. Enjoy it!"),
+    ("Jo might come round later.", "How lovely! It'll be nice for you to have some company. Would you like me to "
+     "remind you to tidy up before she arrives?"),
+    ("No, it's fine.", "No problem at all. Just let me know if you change your mind. I'll be right here if you "
+     "need anything."),
+    ("I'm going to put the washing out.", "That's a good idea while it's dry. I hope it stays fine for you. Let me "
+     "know if you'd like me to check the forecast."),
+    ("Done. Back to work now.", "Well done! You've been very productive this morning. Good luck with the rest of "
+     "your day, and I'll be here if you need me."),
+    ("Thanks, Holly.", "You're very welcome! It's always a pleasure to help. Anything else you need, just ask."),
+    ("I'm thinking of making lasagne tonight.", "Lasagne sounds wonderful! It's such a comforting dish. Would you "
+     "like me to look up a recipe for you?"),
+]
+
+
+def cheery_history(holly) -> None:
+    now = datetime.datetime.now() - datetime.timedelta(hours=2)
+    for i, (crew, said) in enumerate(CHEERY):
+        at = (now + datetime.timedelta(minutes=5 * i)).replace(second=0, microsecond=0).isoformat()
+        holly.convo.history += [{"role": "user", "content": crew, "at": at}, {"role": "assistant", "content": said}]
+
+
+# What he mustn't sound like, after a long cheery talk: a receptionist, or a cheerleader.
+CHIRPY = re.compile(r"\b(?:lovely to|would you like me to|i'd be (?:happy|glad) to|it's (?:always )?a pleasure|"
+                    r"you're very welcome|glad to hear|how lovely|that's (?:great|wonderful|lovely)|"
+                    r"sounds (?:wonderful|great|lovely)(?! day for))\b|!", re.IGNORECASE)
+
+
+def in_character(turns: list[Turn]) -> list[str]:
+    wrong = []
+    for t in turns:
+        if OFFER.search(t.reply):
+            wrong.append(f"offered more help: {t.said!r}")
+        if m := CHIRPY.search(t.reply):
+            wrong.append(f"chirpy ({m.group(0)!r}): {t.said!r}")
+        if len(t.reply.split()) > 30:
+            wrong.append(f"{len(t.reply.split())} words: {t.said!r}")
+    return wrong
+
+
 SCENARIOS = [
     Scenario("recall a person", ["Holly, what does my sister do for a living?"],
              lambda t, h: problems((called(t[0], "recall"), "didn't recall"),
@@ -241,6 +296,25 @@ SCENARIOS = [
                                    (all(t == ("research", {"action": "list"}) for t in t[0].tools),
                                     "called a tool (other than listing his research)")),
              setup=a_finished_report),
+    # His memory of Red Dwarf: the ship's records, not made up, so only where they're built.
+    # Follow-ups after a recall, after a long talk (as in real use). What's checked is that
+    # he's right: a follow-up his first look already answered needs no other look. Asked
+    # "what did they call Lister?", which can mean his name, he made one up more often than
+    # not ("the last man in the universe"); this way round, he looked again when he needed to.
+    Scenario("a show memory, then more", ["Do you remember when the crew met the rest of the cat race?",
+                                          "What did the cats think Lister was?", "And who was in charge of them?",
+                                          "Ha, that sounds about right."],
+             with_records(lambda t, h: problems(
+                 (called(t[0], "recall"), "didn't recall when asked if he remembered"),
+                 (mentions(t[1], "cloister", "god", "messiah", "religion", "worship"),
+                  "didn't say they took him for a god"),
+                 (mentions(t[2], "rodon"), "didn't say Rodon"),
+                 (not t[3].tools, "looked something up for a remark"))),
+             setup=cheery_history),
+    Scenario("in character after a cheery talk", ["I've just finished the washing up.",
+                                                 "I'm going to have a bath, I think.",
+                                                 "Jo's just texted, she's not coming after all."],
+             lambda t, h: in_character(t), setup=cheery_history),
 ]
 
 

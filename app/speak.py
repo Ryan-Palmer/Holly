@@ -318,11 +318,14 @@ class Holly:
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
-            # cracking", "I'll get stuck into it", in ever new words, and started nothing. (If the
+            # cracking", "I'll get stuck into it", in ever new words, and started nothing. And
+            # when he's asked outright if he remembers something (guards.RECALL_ASKED). (If the
             # model honours it: else a retry is just asked again.)
             required = "required" if self.cfg.llm.tool_choice else None
             choice = (required if turn.answering_choice and "research" in self.toolbox
                       and guards.REPORT_WANTED.search(user) else None)
+            if "recall" in self.toolbox and guards.RECALL_ASKED.search(user):
+                choice = required
 
             async def say(sentence: str) -> None:
                 if spoken and guards.OFFER.search(sentence):
