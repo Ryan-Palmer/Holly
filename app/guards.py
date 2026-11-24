@@ -40,7 +40,9 @@ FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really 
                     # archive.
                     r"\b(?:don't|didn't|haven't) (?:got |have )?(?:anything|that|it|much) (?:in|on) "
                     r"(?:my |the )?(?:notes|files|records|archives?|memory)\b|"
-                    r"\bnothing in my (?:notes|files|records)\b|\bgot nothing (?:on|about)\b", re.IGNORECASE)
+                    # His own, not banter: "you've got nothing on me", asked who's cleverer.
+                    r"\bnothing in my (?:notes|files|records)\b|\bI(?:'ve| have)? got nothing (?:on|about)\b",
+                    re.IGNORECASE)
 # Asked to research something, he promised to without calling the research tool ("I'll get
 # on with that later and come back to you"), and nothing was ever researched. So when the
 # crew ask for research and he promises it, the research tool must have been called.
@@ -85,11 +87,13 @@ TOOL_MARKUP = re.compile(r"<\||\|>|<tool_?call|<\"|\b\w+\{\w+:")
 # "I'll be here if you need anything". At the end of reply after reply it became his
 # voice, and he copied it from his history every turn. Not said, and kept out of what he
 # sees of his history (app/persona.py); not the questions the talk needs, either: "want a
-# summary?", "shall I dig into it while I doze?", "how long for?".
-OFFER = re.compile(r"\b(?:anything else|any other (?:bits|questions|info\w*|data)|is there anything|"
-                   r"let me know if|just let me know|I'll be (?:right )?here if|are you all set|shout if|"
-                   r"(?:need|want) me to do anything|"
-                   r"does that clear)\b", re.IGNORECASE)
+# summary?", "shall I dig into it while I doze?", "how long for?". Nor an answer that has
+# the words in it: "It didn't list anything else" is what the report said.
+OFFER = re.compile(r"\banything else\b[^.!?]*\?|\banything else (?:you|I can|I could|for (?:you|me))\b|"
+                   r"\bany other (?:bits|questions|info\w*|data)\b[^.!?]*\?|"
+                   r"\bis there anything (?:else|I can|you need|you'd like)\b|"
+                   r"\b(?:let me know if|just let me know|I'll be (?:right )?here if|are you all set|shout if|"
+                   r"(?:need|want) me to do anything|does that clear)\b", re.IGNORECASE)
 SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
 
 

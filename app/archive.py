@@ -468,6 +468,37 @@ def days_in(text: str, on: datetime.date) -> set[datetime.date]:
     return days
 
 
+# Is the crew's line asking him to remember something? Then his reply must call a tool
+# (app/speak.py), recall in practice. Words alone didn't do: "what did we do yesterday?"
+# is a memory, "what happened in the news yesterday?" isn't. Shown the exchange before (for
+# follow-ups), it took remarks and the news straight after a memory for more of it ("ha,
+# that sounds about right" had him read the clock, being made to call something), till
+# told to judge the line itself. On 49 made-up lines, 49 right, and 16 of 16 it had never
+# seen, in ~85 ms.
+PAST_PROMPT = """\
+You sort what someone says to Holly, the household computer (and the ship's computer from Red Dwarf).
+PAST: they're asking Holly for something from before, which he'd have to remember: what they did, said, \
+decided or told him, people in their life and their news, earlier conversations, reports he wrote, or what \
+happened on Red Dwarf (its crew, places, adventures).
+OTHER: everything else. Things they're telling him now, remarks and reactions, how Holly feels about \
+something, facts about the world, news, weather, the time, sums, requests and chat.
+Judge only what they say now. "Just before" is there so you can tell what a follow-up question refers to \
+("and who was in charge of them?" asks more about that memory: PAST). A remark or reaction ("fair enough", \
+"typical", "ha, that sounds right") is OTHER, and so is a question about the news, weather, time or the \
+world, however soon after a memory it comes.
+Reply with one word: PAST or OTHER."""
+
+
+def about_the_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:
+    """Is `line` asking him for something from the past? `before`: the exchange just before,
+    for follow-ups ("and who was in charge of them?"). False if it can't be asked."""
+    user = (f"Just before: {before}\n" if before else "") + f"They say: {line}"
+    try:
+        return lm.ask(PAST_PROMPT, user, model, max_tokens=4, temperature=0).strip().upper().startswith("PAST")
+    except Exception:  # LM Studio busy or gone: he answers as he would have
+        return False
+
+
 class RecallTool(LookupTool):
     """Recall, which also finds his research reports: they aren't in his archive."""
 

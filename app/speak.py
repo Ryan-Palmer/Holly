@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import json
 import random
 from pathlib import Path
 import shutil
@@ -82,6 +83,15 @@ class TurnTimes:
             + (f", searching {self.search_ms:.0f} ms" if self.search_ms else "")
             + (f", {self.underruns} underruns" if self.underruns else "")
         )
+
+
+def recall_args(search_args: str, user: str) -> str:
+    """A web search's arguments, as recall's: its words, and the crew's question."""
+    try:
+        args = json.loads(search_args or "{}")
+    except json.JSONDecodeError:
+        args = {}
+    return json.dumps({"query": str(args.get("query") or user), "question": user})
 
 
 def quiet_connection_resets(loop: asyncio.AbstractEventLoop) -> None:
@@ -319,13 +329,19 @@ class Holly:
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
             # cracking", "I'll get stuck into it", in ever new words, and started nothing. And
-            # when he's asked outright if he remembers something (guards.RECALL_ASKED). (If the
-            # model honours it: else a retry is just asked again.)
+            # when he's asked for something from the past: "do you remember...?" outright
+            # (guards.RECALL_ASKED), or as the model judges it (archive.about_the_past), for
+            # "what did we do yesterday?" and follow-ups. Asked from his notes alone, he said
+            # "I don't have anything in my notes about a problem", with it in his archive.
+            # (If the model honours it: else a retry is just asked again.)
             required = "required" if self.cfg.llm.tool_choice else None
             choice = (required if turn.answering_choice and "research" in self.toolbox
                       and guards.REPORT_WANTED.search(user) else None)
-            if "recall" in self.toolbox and guards.RECALL_ASKED.search(user):
-                choice = required
+            memory = False  # asked for something from the past: his first look is recall
+            if required and not choice and "recall" in self.toolbox and not user.startswith("["):
+                if guards.RECALL_ASKED.search(user) or await asyncio.to_thread(
+                        archive.about_the_past, self.lm, self.model, user, self._last_exchange()):
+                    choice, memory = required, True
 
             async def say(sentence: str) -> None:
                 if spoken and guards.OFFER.search(sentence):
@@ -381,6 +397,16 @@ class Holly:
                 last_said[:] = said
                 if not calls or lookups > self.cfg.search.max_searches:
                     break  # (past the limit, he was told to stop; stop asking him)
+                if memory:
+                    # "Required" lets him pick any tool, and LM Studio refuses a named one; told
+                    # to call one for "what did we cook on Sunday?", he could search the web. So
+                    # his first look, if a web search, is recall, with the same words. (Not a
+                    # timer or the like: "remember to call June at five" is a timer.)
+                    memory = False
+                    for c in calls:
+                        if c["name"] == "search":
+                            c["name"], c["arguments"] = "recall", recall_args(c["arguments"], user)
+                            print(f"\n{DIM}  (a memory: recall, not a web search){RESET}", flush=True)
                 # He wants to look something up. Say anything he wrote first;
                 # if he wrote nothing yet, a stock line covers the wait.
                 for sentence in chunker.flush():
@@ -460,6 +486,16 @@ class Holly:
         step = self.tts.sample_rate // 10  # 100 ms pieces, like the voice's own stream
         for i in range(0, len(audio), step):
             self.player.put(audio[i:i + step])
+
+    def _last_exchange(self, chars: int = 300) -> str:
+        """The crew's last line and his last reply, for judging a follow-up."""
+        said = {}
+        for m in reversed(self.convo.history):
+            if m["role"] in ("user", "assistant") and m.get("content") and m["role"] not in said:
+                said[m["role"]] = " ".join(m["content"].split())[:chars]
+            if len(said) == 2:
+                break
+        return " / ".join(said[r] for r in ("user", "assistant") if r in said)
 
     def _answering_choice(self) -> bool:
         """Are the crew answering his search-or-report question? Either the research tool
