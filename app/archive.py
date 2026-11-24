@@ -91,6 +91,13 @@ Holly, and "we" Holly and the crew, so "when did you first meet Kryten?" asks
 when Holly and the crew did, as the ship's records tell it. Holly meets people
 by being talked to and told about them: "did I meet Jo?" is answered yes if
 she was there or talked about, and what was said of her.
+Asked about a day, answer with what was said and done in that day's entries, across
+the whole day if the question is broad. Words like "yesterday" or "tonight" count
+from when they were said: the question's from today, an entry's from its own day,
+and the date in square brackets after one says which day it meant. If that's the
+day asked about, it happened then; if it's another day, it's that day's news, only
+mentioned then: "we made lasagne yesterday [Sunday 8 March]", said on Monday,
+happened on Sunday, so it isn't what was done on Monday.
 If the entries mention who or what was asked about but don't answer it exactly,
 say what they do say about them.
 NOTHING: only if none of the entries mentions who or what was asked about."""
@@ -113,6 +120,7 @@ EMBED_BATCH = 32
 # nomic-embed wants to be told which side of a search a text is on.
 DOC_PREFIX, QUERY_PREFIX = "search_document: ", "search_query: "
 DAY_ENTRIES = 20  # at most, for a day asked about
+DAY_PICKED = 12  # of them, at most, matching what was asked: the rest spread across the day
 NAMED_PAGES = 3  # pages of the ship's records found by name, at most
 PAGE_OPENING = 3  # entries from the start of each: what it is, the episode's overview
 PAGE_MATCHES = 3  # and its entries that best fit the other words asked
@@ -196,8 +204,9 @@ class Archive:
                 self.db.commit()
         return len(rows)
 
-    def _by_meaning(self, texts: list[str]) -> list[int]:
-        """Rowids of the entries closest in meaning to any of `texts`, best first."""
+    def _by_meaning(self, texts: list[str], among: set[int] | None = None) -> list[int]:
+        """Rowids of the entries closest in meaning to any of `texts`, best first; only
+        those in `among`, if given (a day's entries)."""
         model = self.cfg.embed_model
         if not model or time.monotonic() < self._embed_retry_at:
             return []
@@ -221,6 +230,8 @@ class Archive:
             return []
         # The closest for any of the texts (the search words, and what was asked).
         sims = (mat @ queries.T).max(axis=1)
+        if among is not None:
+            sims = np.where(np.isin(ids, np.fromiter(among, np.int64, len(among))), sims, -1.0)
         best = np.argsort(-sims)[: self.cfg.meaning_entries]
         return [int(ids[i]) for i in best if sims[i] >= self.cfg.min_similarity]
 
@@ -324,35 +335,41 @@ class Archive:
 
         words = key_words(query)
         found: dict[int, tuple[str | None, str]] = {}
-        with self.lock:
-            # The day may be in either: asked "what did we talk about yesterday?", he
-            # searched for "conversation topics", and yesterday was never looked at.
-            # That day's entries that match the words asked about come first, then the rest
-            # in time order, up to DAY_ENTRIES: taken in time order alone, a busy day (147
-            # entries one Sunday) gave the judge its first hour, and "who came over to make
-            # lasagne yesterday?" was never seen.
-            asked = words + [w for w in key_words(question) if w not in words]
-            for d in sorted(days_in(f"{query} {question}", on)):
-                rows = []
-                if asked:
-                    rows = self.db.execute(
-                        "SELECT rowid, at, text FROM entries WHERE entries MATCH ? AND substr(at, 1, 10) = ? "
-                        "ORDER BY bm25(entries) LIMIT ?",
-                        (" OR ".join(f'"{w}"' for w in asked), d.isoformat(), DAY_ENTRIES)).fetchall()
-                if len(rows) < DAY_ENTRIES:
-                    rows += self.db.execute(
-                        "SELECT rowid, at, text FROM entries WHERE substr(at, 1, 10) = ? ORDER BY at LIMIT ?",
-                        (d.isoformat(), DAY_ENTRIES)).fetchall()
-                day_rows: dict[int, tuple[str | None, str]] = {}
-                for r in rows:
-                    if len(day_rows) == DAY_ENTRIES:
-                        break
-                    day_rows.setdefault(r[0], (r[1], r[2]))
-                found |= day_rows
-            if found:
-                # A day was asked about, and he talked then: that day is the answer. Close
-                # matches from other days made the judge answer "yesterday" with Thursday.
-                return list(found.values())
+        # The day may be in either: asked "what did we talk about yesterday?", he searched
+        # for "conversation topics", and yesterday was never looked at. Of that day's
+        # entries, those matching the words asked about come first, then those closest in
+        # meaning ("music" finds "the album by..."), up to DAY_PICKED; the rest of the
+        # DAY_ENTRIES are spread across the day. Taken in time order, a busy day (136
+        # entries one Monday) gave the judge its first hour, and "what did we do
+        # yesterday?" was answered from twenty minutes of lunchtime.
+        asked = words + [w for w in key_words(question) if w not in words]
+        for d in sorted(days_in(f"{query} {question}", on)):
+            with self.lock:
+                matched = self.db.execute(
+                    "SELECT rowid FROM entries WHERE entries MATCH ? AND substr(at, 1, 10) = ? "
+                    "ORDER BY bm25(entries) LIMIT ?",
+                    (" OR ".join(f'"{w}"' for w in asked), d.isoformat(), DAY_PICKED)).fetchall() if asked else []
+                day = self.db.execute("SELECT rowid, at, text FROM entries WHERE substr(at, 1, 10) = ? ORDER BY at",
+                                      (d.isoformat(),)).fetchall()
+            if not day:
+                continue
+            by_id = {r[0]: (r[1], r[2]) for r in day}
+            picked = [r[0] for r in matched]
+            if len(picked) < DAY_PICKED:
+                # Without the day's words: the day is settled, and "yesterday" in the search
+                # put the entries that said "yesterday" first, ahead of the album asked about.
+                topic = [t for t in (_DATE.sub(" ", _DAY_WORDS.sub(" ", s)).strip() for s in (query, question))
+                         if len(t.split()) > 1 or t and t.lower() not in STOPWORDS]
+                close = self._by_meaning(topic, among=set(by_id)) if topic else []
+                picked += [i for i in close if i not in picked][: DAY_PICKED - len(picked)]
+            rest = [r[0] for r in day if r[0] not in picked]
+            room = min(DAY_ENTRIES - len(picked), len(rest))
+            picked += [rest[i * len(rest) // room] for i in range(room)] if room > 0 else []
+            found |= {i: by_id[i] for i in picked}
+        if found:
+            # A day was asked about, and he talked then: that day is the answer. Close
+            # matches from other days made the judge answer "yesterday" with Thursday.
+            return list(found.values())
         texts = [t for t in (query, question) if t]
         if titles := self._named(texts):
             # The pages named, first: their opening, and their parts that fit the rest.
@@ -399,7 +416,13 @@ class Archive:
             return self._nothing(query, t1 - t0, 0)
         entries = "\n\n".join(text[:ENTRY_CHARS] for _, text in sorted(hits, key=lambda h: h[0] or ""))
         about = f"\n(The question is about {', '.join(day(d) for d in days)}.)" if days else ""
-        text = self._judge(entries, question, query, about)
+        # The question's "yesterday" as its date, for the judge: told the day, and how an
+        # entry's "yesterday" counts from its own, it still matched "what did we do
+        # yesterday?" to Monday's "we had a lovely day yesterday [Sunday]", three times in
+        # three. "On Monday 23 November", it didn't.
+        dated = _DAY_WORDS.sub(lambda m: f"on {day(resolve_day(m.group(1), datetime.date.today(), True))}",
+                               question) if days else question
+        text = self._judge(entries, dated, query, about)
         names = list(dict.fromkeys(named_in(query, hits, keywords=True) + named_in(question, hits)))[:3]
         if text.upper().startswith("NOTHING") and names:
             # "Did I meet Jo yesterday?" got NOTHING every way it was put, with 14 entries

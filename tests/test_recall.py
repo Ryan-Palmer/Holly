@@ -53,6 +53,25 @@ def test_a_day_asked_about_is_the_answer(cfg):
     assert len(hits) == 20
 
 
+def test_a_broad_day_question_sees_the_whole_day(cfg):
+    a = archive(cfg)
+    yesterday = dt.datetime(2026, 11, 17, 8)
+    a.add([entry(yesterday + dt.timedelta(minutes=15 * i), f"Chatter number {i}.") for i in range(60)])  # to 22:45
+    hits = a.search("yesterday", on=dt.date(2026, 11, 18), question="What did we do yesterday?")
+    hours = sorted(int(at[11:13]) for at, _ in hits)
+    assert len(hits) == 20 and hours[0] == 8 and hours[-1] >= 21  # not just its first hours
+
+
+def test_the_judge_is_asked_about_the_date_not_yesterday(cfg):
+    asked = []
+    a = archive(cfg, FakeLm(side=lambda s, u: asked.append(u) or "ANSWER: Lasagne."))
+    yesterday = dt.datetime.combine(dt.date.today() - dt.timedelta(days=1), dt.time(18))
+    a.add([entry(yesterday, "We made lasagne yesterday [an earlier day], and tonight it's soup.")])
+    a.recall("yesterday", "What did we do yesterday?")
+    from app.persona import day
+    assert f"Question: What did we do on {day(yesterday.date())}?" in asked[0]
+
+
 def test_recall_asks_again_about_a_name(cfg):
     asked = []
 
