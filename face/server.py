@@ -82,6 +82,29 @@ def log(*parts):
     print(time.strftime("%H:%M:%S"), *parts, flush=True)
 
 
+def exit_with(pid: int) -> None:
+    """Wait for Holly's process to end (however it ends: a crash runs no cleanup), then exit
+    at once. Left behind, the face stayed on screen holding its VRAM, looking like a frozen
+    Holly."""
+    if sys.platform == "win32":
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE: enough to wait on it
+        if handle:
+            kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0xFFFFFFFF)  # INFINITE
+    else:
+        while True:
+            try:
+                os.kill(pid, 0)  # (on POSIX, signal 0 only checks it's there)
+            except ProcessLookupError:
+                break
+            except PermissionError:
+                pass
+            time.sleep(1)
+    log("Holly has gone: closing the face")
+    os._exit(0)
+
+
 class Decimator:
     """48 kHz to 16 kHz for Ditto, filtered across block boundaries."""
 
@@ -585,7 +608,11 @@ def main():
                    help="seconds after Holly last spoke before Ditto pauses to spare the GPU (0: never)")
     p.add_argument("--host-api", default="Windows WASAPI")
     p.add_argument("--device", default="", help="output device name (or part of it)")
+    p.add_argument("--parent", type=int, default=0, help="Holly's process ID: the face exits when it ends")
     args = p.parse_args()
+    if args.parent:
+        # First, before Ditto's minute of warm-up: Holly can crash during his own.
+        threading.Thread(target=exit_with, args=(args.parent,), daemon=True, name="parent").start()
 
     sdk, setup = build_ditto(Path(args.image).resolve(), args.height or None, args.overlap)
     frames = Frames()
