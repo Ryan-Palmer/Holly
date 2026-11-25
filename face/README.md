@@ -35,10 +35,18 @@ Holly's voice too, so the two stay in step. It can be any size: F11 or a
 double-click goes full screen, and Escape leaves. When Holly dozes off, so
 does his face, until someone speaks. Its log is `face/data/server.log`.
 
+By default he's on an old monitor: curved glass in a bezel, scanlines, a
+phosphor mask, a soft glow round bright parts, reflections and a bar rolling
+down every few seconds, all drawn by one OpenGL shader (`screen.py`) in
+about 1 ms a frame. Put a picture of a monitor at `face/data/monitor.png`,
+its screen opening see-through (a PNG with alpha), and he's shown inside
+it, in 4:3; without one, a plain bezel. `crt = false` gives the plain face.
+
 Settings are under `[face]` in `holly.toml`: `enabled` (to have it on
 without `--face`), how far the audio runs ahead of the face (`lead_ms`), the
-height frames are drawn at, and how much the head moves while he's silent
-(`idle_head`).
+height frames are drawn at, how much the head moves while he's silent
+(`idle_head`), the old-monitor look (`crt`) and the monitor's picture
+(`case`).
 
 To render a clip without Holly, from any audio:
 
@@ -50,7 +58,8 @@ Clips go to `face/data/out/`.
 
 ## Files
 
-- `server.py`: the face window. Plays Holly's audio and Ditto's frames on one clock.
+- `server.py`: the face server. Plays Holly's audio and Ditto's frames on one clock.
+- `screen.py`: the window, through OpenGL (pygame and moderngl): the frame scaled to fit, and the old-monitor look.
 - `fast_ditto.py`: compiles Ditto's models and keeps its frames on the GPU, so it keeps up live.
 - `try_ditto.py`: renders a clip, for trying Ditto on its own.
 - `ditto-windows.patch`: makes Ditto run on Windows.
