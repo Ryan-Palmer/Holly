@@ -165,7 +165,7 @@ class Holly:
         tools = []
         if self.searcher:
             tools += [SearchTool(self.searcher), ClockTool()] + ([WeatherTool(cfg.search)] if cfg.search.weather else [])
-            tools += [NewsTool(cfg.search)] if cfg.search.news else []
+            tools += [NewsTool(cfg.search, self.searcher)] if cfg.search.news else []
         if self.archive:
             tools.append(archive.RecallTool(self.archive, self.research))
         if self.timers:
@@ -350,8 +350,12 @@ class Holly:
             messages = self.convo.messages_for(user)
             asked = len(messages)
             lookups = 0  # slow tools called this reply
+            # Their answer to his search-or-report question (the research tool held a start and
+            # had him ask), or their taking him up on research he offered (research.accepted).
+            held = bool(self.research_tool and self.research_tool.held_turn == self.turns - 1)
+            took_up = await asyncio.to_thread(self._took_up_research, user)
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
-                        self._answering_choice(), self.convo.crew_lines)
+                        held or took_up, self.convo.crew_lines)
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
@@ -363,8 +367,8 @@ class Holly:
             # he guessed what the cats thought of Lister ("a walking disaster area"). (If the
             # model honours it: else a retry is just asked again.)
             required = "required" if self.cfg.llm.tool_choice else None
-            choice = (required if turn.answering_choice and "research" in self.toolbox
-                      and guards.REPORT_WANTED.search(user) else None)
+            choice = (required if "research" in self.toolbox
+                      and (took_up or (held and guards.REPORT_WANTED.search(user))) else None)
             # A status report, with one already in his history: he gave one without the tool,
             # three times in three, made up or the last one again; with none, he called it
             # every time. So he must call a tool, and the earlier reports are stubbed before he
@@ -621,16 +625,17 @@ class Holly:
                 break
         return " / ".join(reversed(said))
 
-    def _answering_choice(self) -> bool:
-        """Are the crew answering his search-or-report question? Either the research tool
-        had him ask it last turn, or he offered it himself, in his own words, as a question
-        ("a quick search now, or shall I dig into it properly while I doze?"). Either way,
-        whatever they answer ("yes, go on") is their choice."""
-        if self.research_tool and self.research_tool.held_turn == self.turns - 1:
-            return True
+    def _took_up_research(self, user: str) -> bool:
+        """Are the crew taking him up on research he offered, in his own words, in his last
+        reply ("I can do a proper research job on it if you want" / "Yes, please")? The model
+        judges (research.accepted), and only if that reply spoke of research or a report
+        (guards.OFFERED_REPORT): a question mark and a word, alone, missed an offer said as
+        a statement."""
+        if not self.research_tool or user.startswith("["):
+            return False
         said = next((m.get("content") or "" for m in reversed(self.convo.history)
                      if m["role"] == "assistant" and m.get("content")), "")
-        return "?" in said and bool(guards.OFFERED_REPORT.search(said))
+        return bool(guards.OFFERED_REPORT.search(said)) and research.accepted(self.lm, self.model, said, user)
 
     # Speaking up by himself -----------------------------------------------------
 

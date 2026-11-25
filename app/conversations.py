@@ -145,6 +145,7 @@ CONVERSATIONS = [
         (TIMER_DUE, ""),
         ("Thanks. How tall is Scafell Pike?", "search"),
         ("Any news today?", "news"),
+        ("Tell me more about the first one.", "news"),  # its article, read
         ("Where's Kryten?", "status"),
         ("I'm thinking of getting a dog.", "-"),
         ("Can you look into the best dog breeds for a small house and write me a report?", "research"),

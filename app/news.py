@@ -10,6 +10,13 @@ few minutes, so a run of questions doesn't fetch them each time.
 Asked about something in particular, the BBC's feeds (a few dozen stories each) often
 had nothing on it: a week-old dig at Sutton Hoo wasn't there. Then Google News's search
 (its UK edition) finds it across publishers: headlines and dates only, no summary.
+
+Asked more about a story he gave ("can you tell me more about the Nasa story?"), he had
+only its headline and a line, and said he couldn't follow links. Each story in the feeds
+has its article's link: with `story` (words from its headline) the tool finds it and reads
+its page, and the same model answers what was asked from it, out of his sight, as web
+search does with a page (search.Searcher.answer_from): he gets a few sentences, not the
+page.
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ import httpx
 
 from .config import SearchConfig
 from .console import note
-from .search import Lookup, Searcher
+from .search import Lookup, Searcher, fetch_page
 from .tools import Lookup as LookupTool, Turn
 
 BBC = "https://feeds.bbci.co.uk"
@@ -66,6 +73,9 @@ TOOL = {
                 "about": {"type": "string", "description":
                           "Optional: a few words to look for, for news about something in particular "
                           "('Sutton Hoo', 'interest rates')."},
+                "story": {"type": "string", "description":
+                          "Optional: words from the headline of a story you've given, to read its whole "
+                          "article, when the crew want more about it ('Nasa spacecraft hit asteroid')."},
             },
         },
     },
@@ -229,16 +239,66 @@ def news(topic: str, about: str, cfg: SearchConfig, now: datetime.datetime | Non
     return Lookup(about or topic, answer, len(recent[:HEADLINES]), ms, 0)
 
 
+def find_story(words: str, cfg: SearchConfig, fetch=None) -> dict | None:
+    """The BBC story `words` (from its headline, as he remembers it) means: the one with the
+    most of them in its headline and line, at least half; the newest of those."""
+    fetch = fetch or headlines
+    wanted = {w for w in re.findall(r"[a-z0-9']+", words.lower()) if len(w) > 2}
+    if not wanted:
+        return None
+    best, best_n = None, 0
+    for stories in _all(fetch, list(FEEDS), cfg.timeout_s):
+        for s in stories:
+            text = f"{s['title']} {s['summary']}".lower()
+            n = sum(bool(re.search(rf"\b{re.escape(w)}", text)) for w in wanted)
+            if n * 2 >= len(wanted) and (n > best_n or (n == best_n and best and s["published"] > best["published"])):
+                best, best_n = s, n
+    return best
+
+
+def read_story(words: str, question: str, cfg: SearchConfig, searcher: Searcher, fetch=None,
+               read_page=fetch_page, now: datetime.datetime | None = None) -> Lookup:
+    """A story's whole article, read, and what was asked answered from it: a few sentences."""
+    t0 = time.perf_counter()
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    if not (s := find_story(words, cfg, fetch)):
+        return Lookup(words, f"None of the BBC's stories matches {words!r}. Say you can't find it; if they "
+                             "want, search the web for it.", 0, (time.perf_counter() - t0) * 1000, 0)
+    page = read_page(s["link"], cfg)
+    read_ms = (time.perf_counter() - t0) * 1000
+    told = f"The BBC's story {s['title']!r} ({ago(s['published'], now)})"
+    if page.startswith("("):  # couldn't be read: what's in the feed is all there is
+        return Lookup(words, f"{told}: its article couldn't be read. All there is: {s['summary']} Say that's "
+                             "all you have; if they want more, search the web for it.", 0, read_ms, 0)
+    t1 = time.perf_counter()
+    answer = searcher.answer_from(s["title"], page, question)
+    summary_ms = (time.perf_counter() - t1) * 1000
+    if not answer:
+        return Lookup(words, f"{told}: its article doesn't say. All there is: {s['summary']} Say so.", 0,
+                      read_ms, summary_ms)
+    # (He then offered "the full article", 12 times in 12, however plainly this said he'd
+    # read it all: his habit of tacking an offer on, not something this can say away.)
+    return Lookup(words, f"{told}, its whole article read: {answer}", 1, read_ms, summary_ms)
+
+
 class NewsTool(LookupTool):
     name, schema = "news", TOOL  # his rules for it are in search.md
 
-    def __init__(self, cfg: SearchConfig):
+    def __init__(self, cfg: SearchConfig, searcher: Searcher | None = None):
         self.cfg = cfg
+        self.searcher = searcher  # reads a story's article (read_story); none, no articles read
         self.fetch = headlines  # a feed's stories: made-up ones in the evals (app/scenarios.py)
+        self.read_page = fetch_page  # a story's page: a made-up one in the evals
 
     async def run(self, args: dict, turn: Turn) -> str:
         topic = str(args.get("topic") or "top").strip().lower()
         about = str(args.get("about") or "").strip()
+        if story := str(args.get("story") or "").strip():
+            if not self.searcher:
+                return "You can't read articles here (web search is off). Say the headline is all you have."
+            found = await self.look_up(f"news: reading {story}", lambda: read_story(
+                story, turn.user, self.cfg, self.searcher, self.fetch, self.read_page), turn)
+            return found if isinstance(found, str) else Searcher.for_holly(found)
         if topic == "roundup" and not about:
             found = await self.look_up("news: a status report", lambda: roundup(self.cfg, fetch=self.fetch), turn)
             return found if isinstance(found, str) else Searcher.for_holly(found)

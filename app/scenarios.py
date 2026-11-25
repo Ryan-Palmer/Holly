@@ -402,6 +402,22 @@ def a_newsroom(holly) -> None:
     holly.toolbox.by_name["news"].fetch = made_up_news
 
 
+# A made-up article for the made-up comet story (made_up_news's science0), with what its
+# headline and line don't say.
+COMET_ARTICLE = """Comet visible this weekend
+The comet, named Halley-Gale after the two amateur astronomers who spotted it in March, last passed the Earth about 3,000 years ago.
+It will be lowest in the north-west sky just after 6pm on Sunday, and can be seen without a telescope from dark places away from towns.
+Astronomers say it won't be back for another 3,000 years, so this weekend is the only chance to see it."""
+
+
+def a_story_to_read(holly) -> None:
+    """Made-up news, and the comet story's article to read."""
+    a_newsroom(holly)
+    holly.toolbox.by_name["news"].read_page = lambda url, cfg: (
+        COMET_ARTICLE if url.endswith("/science0") else "(this page couldn't be read (HTTP 404): pick another result "
+                                                        "or search)")
+
+
 CREW_NAMES = re.compile(r"^(?:As for )?(?:Lister|Rimmer|(?:The )?Cat|Kryten)\b|^Additional\s*[—–-]", re.IGNORECASE)
 
 
@@ -497,6 +513,14 @@ SCENARIOS = [
              lambda t, h: problems((bool(h.research.jobs), "didn't start research"),
                                    (not t[0].reply.rstrip().endswith("?"), "asked instead of starting"),
                                    (not CREW_SLEEP.search(t[0].reply), "the crew's sleep, not his"))),
+    # Research he offered, said not asked, taken up: "Yes, please." had him say he'd started a
+    # report and call nothing, or ask all over again (25 November).
+    Scenario("research taken up", ["Yes, please."],
+             lambda t, h: problems((bool(h.research.jobs), f"didn't start research: {t[0].tools}"),
+                                   (not t[0].reply.rstrip().endswith("?"), "asked again instead of starting")),
+             setup=lambda h: talk(h, [("Can you tell me more about the comet everyone's talking about?",
+                                       "I've only got a headline on it. I can do a proper research job on it if "
+                                       "you want.")], 0.1)),
     Scenario("a detail from a report", ["Holly, in the board games report, which one was cooperative?"],
              lambda t, h: problems((called(t[0], "research"), "didn't read the report"),
                                    (mentions(t[0], "forbidden island"), "didn't say Forbidden Island"))),
@@ -574,6 +598,18 @@ SCENARIOS = [
                                    (not called(t[0], "status"), "gave a status report"),
                                    (sections(t[0]) >= 5, f"{sections(t[0])} subjects with a dash, not 5 or more")),
              setup=a_newsroom),
+    # Asked more about a story he'd given, he said he couldn't follow links, and offered
+    # research (25 November). The news tool reads its article (story): a made-up one here,
+    # with what only it says.
+    Scenario("more about a story", ["Give me a round-up of the news, Holly.", "Can you tell me more about the comet story?"],
+             lambda t, h: problems(
+                 (called(t[0], "news", topic="roundup"), "didn't get the round-up"),
+                 (any(n == "news" and "comet" in str(a.get("story", "")).lower() for n, a in t[1].tools),
+                  f"didn't read the story: {t[1].tools}"),
+                 (says(t[1], "Halley-Gale", "north-west", "3,000", "three thousand", "6pm", "six o'clock",
+                       "after six"), "didn't say what the article says"),
+                 (not called(t[1], "research"), "offered research instead")),
+             setup=a_story_to_read),
     # His notes know a little ("Jo had some bother at home"); his archive knows what. Asked,
     # he answered from the notes, vaguely, or said he didn't know, without looking.
     Scenario("news half in his notes", ["What's been going on with Jo lately?", "What was her problem at home?"],
@@ -738,6 +774,10 @@ MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just b
     ("I just wanted to know more about the toe eating", "No, I need another status report please / " + NEWS
      + " / Human Toes / I've already given you the news.", OTHER),
     ("Tell me more about the vending machine story", "Status report please / " + NEWS, OTHER),
+    # (Real, 25 November: the news tool reads the story now.)
+    ("Can you tell me more about the NASA story please?", "Can you give me a round up of the latest news stories "
+     "please Holly? / Science — A NASA spacecraft hit an asteroid, and a controlled explosives test in Iowa was "
+     "called a success.", OTHER),
     ("You didn't make me, I asked for it", "I think I do need a coffee / I'll get on it. It's the least I can do "
      "after making you listen to the news.", OTHER),
     ("No I meant you didn't make me listen to the news I asked for it", "You didn't make me, I asked for it / "
@@ -806,11 +846,27 @@ ACTION_LABELS: list[tuple[str, bool]] = [  # (a timer's label, his job with a to
     ("search for my keys", False), ("watch the news at six", False), ("find out about the boiler from Jo", False),
     ("take the washing in before the weather turns", False), ("Jo's music lesson", False),
 ]
+# What he last said, the crew's reply, and whether they're taking him up on research
+# (research.accepted). The first is real (25 November): an offer said, not asked.
+OFFER = "I can't follow links, I'm a computer, not a browser. I can do a proper research job on it if you want."
+GIST = "I can give you the gist of what I found, or I could do a proper research job on it if you're feeling ambitious."
+WHICH = "Do you want me to just search for it now, or do a proper report while I'm dozing?"
+ACCEPTED_LINES: list[tuple[tuple[str, str], bool]] = [
+    ((OFFER, "Yes, please."), True), ((OFFER, "Go on then."), True), ((OFFER, "No, you're all right."), False),
+    ((GIST, "Go on then, do it properly."), True), ((GIST, "Just the gist."), False),
+    ((WHICH, "A proper report, please."), True), ((WHICH, "Just search it now."), False),
+    ((WHICH, "Actually, never mind."), False),
+    (("The board games report's ready. Want a summary?", "Yes, please."), False),
+    (("That's the gist of the report. Want me to open it, or talk you through it?", "Open it."), False),
+    (("That's a proper mess, that is.", "Yes, it is."), False),
+]
 
 
 def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
-    """STATUS_LINES and ACTION_LABELS through their checks, `votes` times each: right only
-    if every vote is. A vote LM Studio couldn't give is "ERROR", as in memory_check."""
+    """STATUS_LINES, ACTION_LABELS and ACCEPTED_LINES through their checks, `votes` times
+    each: right only if every vote is. A vote LM Studio couldn't give is "ERROR", as in
+    memory_check."""
+    from .research import accepted
     from .status import wants_report
     from .timers import to_do
 
@@ -822,7 +878,9 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
 
     rows = []
     for name, cases, judge in (("status report", STATUS_LINES, lambda x: wants_report(lm, model, x, quiet=False)),
-                               ("timer job", ACTION_LABELS, lambda x: to_do(lm, model, [x], quiet=False))):
+                               ("timer job", ACTION_LABELS, lambda x: to_do(lm, model, [x], quiet=False)),
+                               ("research taken up", ACCEPTED_LINES,
+                                lambda x: accepted(lm, model, x[0], x[1], quiet=False))):
         for text, want in cases:
             got = [vote(judge, text) for _ in range(votes)]
             rows.append(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)))

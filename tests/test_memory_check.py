@@ -12,8 +12,9 @@ pytestmark = pytest.mark.lmstudio
 @pytest.fixture(scope="module")
 def lm(lmstudio):
     from app.config import load_config
+    from app.evals import alone
 
-    lmstudio.ensure_loaded(load_config().llm.model)
+    alone(load_config().llm.model)  # with anything else unloaded: a judge left from the evals, say
     return lmstudio
 
 

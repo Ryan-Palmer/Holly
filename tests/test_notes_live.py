@@ -18,9 +18,10 @@ pytestmark = pytest.mark.lmstudio
 def lm(lmstudio):
     """A client of its own for each test: its async connections belong to one event loop."""
     from app.config import load_config
+    from app.evals import alone
     from app.lmstudio import LmStudio
 
-    lmstudio.ensure_loaded(load_config().llm.model)
+    alone(load_config().llm.model)  # with anything else unloaded: a judge left from the evals, say
     return LmStudio(load_config().llm)
 
 

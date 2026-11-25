@@ -87,7 +87,9 @@ ACTION_WORDS = re.compile(r"\b(?:play|put on|music|songs?|album|playlist|weather
 # Words that may be a status report asked for: then asked about (status.wants_report), since
 # "my boss wants a status update" isn't one. If it is, the news tool, every time.
 STATUS_ASKED = re.compile(r"\bstatus (?:report|update)s?\b", re.IGNORECASE)
-# His last reply offered the choice in his own words ("shall I dig into it while I doze?").
+# His last reply may have offered research, in his own words ("shall I dig into it while I
+# doze?", "I can do a proper research job on it if you want"): then whether the crew took
+# him up on it is asked of the model (research.accepted, from app/speak.py).
 OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
                             r"dig into|while I(?:'m)? doz|while I sleep)", re.IGNORECASE)
 # Saying he can't tell the time, when he has the clock tool: told in his rules that the time

@@ -237,7 +237,33 @@ def test_asking_isnt_promising(make_holly):
     holly = make_holly(FakeLm(["Shall I have a proper look while I doze?"]))
     respond(holly, "Can you look into chickens?")
     assert holly.tts.said == ["Shall I have a proper look while I doze?"]
-    assert holly._answering_choice()  # his own offer: whatever they say next answers it
+
+
+def test_taking_him_up_on_research_he_offered_starts_it(make_holly):
+    """"I can do a proper research job on it if you want." / "Yes, please.": no question
+    mark, so not taken for an answer; he said he'd started, and called nothing, 5 times in 6.
+    The model judges it now (research.accepted), and a tool must be called."""
+    def side(system, user):
+        return "YES" if system == research.ACCEPTED_PROMPT and user.endswith("They reply: Yes, please.") else ""
+
+    lm = FakeLm(["I can do a proper research job on it if you want.", [START], "It's in hand."], side=side)
+    holly = make_holly(lm)
+    respond(holly, "Tell me more about chickens.", "Yes, please.")
+    assert lm.requests[1]["tool_choice"] == "required"
+    assert [j["title"] for j in holly.research.jobs] == ["Keeping chickens"]  # not held: it's their choice
+    assert [r["user"] for r in lm.side_requests if r["system"] == research.ACCEPTED_PROMPT] == [
+        "Holly said: I can do a proper research job on it if you want.\nThey reply: Yes, please."]
+
+
+def test_turning_research_down_isnt_taking_it_up(make_holly):
+    lm = FakeLm(["I can do a proper research job on it if you want.", "Suit yourself.", "Fifty-six.", "Right."],
+                side=lambda system, user: "NO" if system == research.ACCEPTED_PROMPT else "")
+    holly = make_holly(lm)
+    respond(holly, "Tell me more about chickens.", "No, you're all right.", "What's seven times eight?",
+            "Yes, please.")
+    assert lm.requests[1]["tool_choice"] is None and not holly.research.jobs
+    # Nothing of research in his last reply ("Fifty-six."): nothing to judge.
+    assert len([r for r in lm.side_requests if r["system"] == research.ACCEPTED_PROMPT]) == 1
 
 
 def test_worn_phrases_are_noted_for_one_request(make_holly):

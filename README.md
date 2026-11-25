@@ -117,7 +117,8 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 - **Clock.** The time here or anywhere, and how many days until a day.
 - **News.** The BBC's latest headlines, by subject or on anything you name
   (Google News for a story the BBC hasn't got), or a round-up of the main
-  subjects, a sentence each. No setup.
+  subjects, a sentence each. Ask for more about a story ("tell me more about
+  the Nasa one") and he reads its article on the BBC. No setup.
 - **Status reports.** Ask for a status report and he gives a line each on
   what Lister, Rimmer, the Cat and Kryten have been up to lately, then an
   "Additional" item from the wider Red Dwarf universe, all made up. It's
@@ -142,7 +143,9 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 
 - **Research.** "Holly, can you research heat pumps for an old house?" Ask
   him to look into something without saying which you want, and he asks
-  whether you'd like a quick search now or a report. He works on reports
+  whether you'd like a quick search now or a report; take him up on a
+  report, however you put it ("yes, please", "go on then"), and he starts
+  it. He works on reports
   only while he's asleep, a step at a time, and stops whenever anyone
   speaks. He splits the request into questions, searches the web
   (free, through ddgs) and Wikipedia, reads the likeliest pages, keeps notes

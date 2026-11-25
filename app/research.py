@@ -671,6 +671,34 @@ def for_reading(md: str) -> str:
     return CITATION.sub("", md).strip()
 
 
+# Did the crew just take him up on researching something properly? Told it only by text (a
+# question mark, and a word like "report" in his last reply), "Yes, please." to "I can do a
+# proper research job on it if you want." wasn't taken for one: he said he'd started and
+# called nothing, 5 times in 6, or was held and asked all over again. So the model judges,
+# from what he said and their reply, whatever the wording (accepted).
+ACCEPTED_PROMPT = """\
+Holly, the household computer, can research something properly while he dozes and write a report on it, or \
+search the web for it now. You're given what he last said, and the crew's reply to it.
+YES: they're taking him up on researching it properly or writing a report, or asking him to ("yes, please", \
+"go on then", "a report, please", "do it properly"), where what he said offered that, or asked which they'd \
+like.
+NO: anything else: a quick search now ("just search it"), something else, not now, another question, or yes \
+to something else he asked (a summary, opening a report, reading it out).
+Reply with one word: YES or NO."""
+
+
+def accepted(lm, model: str | None, said: str, reply: str, quiet: bool = True) -> bool:
+    """Are the crew, replying `reply` to his `said`, taking him up on research? If it can't be
+    asked, False (as before), or with `quiet` off (the evals), the error."""
+    try:
+        return lm.ask(ACCEPTED_PROMPT, f"Holly said: {said}\nThey reply: {reply}", model, max_tokens=4,
+                      temperature=0).strip().upper().startswith("YES")
+    except Exception:
+        if not quiet:
+            raise
+        return False
+
+
 class ResearchTool(Tool):
     """Starting research is held unless the crew asked for a report outright, or chose one
     when he asked: then he asks them whether they'd like a quick search now or a report."""

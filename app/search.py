@@ -297,6 +297,12 @@ class Searcher:
                 return self._not_found(queries, "The search results didn't have the answer.",
                                        search_s, summary_s)
 
+    def answer_from(self, title: str, page: str, question: str) -> str:
+        """`question` answered from a page already read (a news story's article: app/news.py),
+        out of his sight like a search: a few sentences, or "" if the page doesn't say."""
+        kind, text = self._judge(question, [f"Page ({title}):\n\n{page}"], True, 1)
+        return text if kind == "ANSWER" else ""
+
     def _judge(self, question: str, found: list[str], last: bool, n_results: int) -> tuple[str, str]:
         """("ANSWER", text), ("READ", result number), ("SEARCH", query) or ("NO ANSWER", "")."""
         thinking = self.cfg.summary_reasoning != "none"

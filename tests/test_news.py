@@ -129,3 +129,79 @@ def test_every_feed_failing_is_an_error(feeds, cfg, monkeypatch):
     monkeypatch.setattr(news.httpx, "get", down)
     with pytest.raises(Broken):
         news.roundup(cfg.search, NOW)
+
+
+
+def stories(feed, timeout):
+    """Made-up feeds for finding a story: the same two everywhere but science."""
+    if feed == "science":
+        return [{"title": "Moment Nasa spacecraft hit asteroid - and what happened next",
+                 "summary": "The crash was like something out of a disaster movie.",
+                 "published": NOW - dt.timedelta(hours=3), "link": "https://www.bbc.co.uk/news/videos/nasa"},
+                {"title": "Nasa delays its Moon mission", "summary": "A fault in the heat shield.",
+                 "published": NOW - dt.timedelta(hours=9), "link": "https://www.bbc.co.uk/news/moon"}]
+    return [{"title": "Rail fares to rise in March", "summary": "Season tickets will cost more.",
+             "published": NOW - dt.timedelta(hours=1), "link": f"https://www.bbc.co.uk/news/{feed}-fares"}]
+
+
+class Reader:
+    """Stands in for search.Searcher: what the same model makes of a page, out of his sight."""
+    def __init__(self, answer="Hera is surveying a crater the size of a stadium."):
+        self.answer, self.asked = answer, []
+
+    def answer_from(self, title, page, question):
+        self.asked.append((title, page, question))
+        return self.answer
+
+
+def test_a_story_is_found_by_words_from_its_headline(cfg):
+    """"Tell me more about the Nasa story": he names it as he remembers it."""
+    assert news.find_story("Nasa spacecraft asteroid", cfg.search, stories)["link"].endswith("/nasa")
+    assert news.find_story("the asteroid one", cfg.search, stories)["link"].endswith("/nasa")
+    assert news.find_story("Nasa", cfg.search, stories)["link"].endswith("/nasa")  # both: the newest
+    assert news.find_story("heat shield Moon", cfg.search, stories)["link"].endswith("/moon")
+    assert news.find_story("interest rates", cfg.search, stories) is None
+
+
+def test_a_storys_article_is_read_and_what_was_asked_answered(cfg):
+    """He said he couldn't follow links: the article's read, and he's given a few sentences."""
+    reader = Reader()
+    pages = {"https://www.bbc.co.uk/news/videos/nasa": "The first images of the asteroid Nasa crashed into..."}
+    found = news.read_story("Nasa asteroid", "Can you tell me more about the Nasa story?", cfg.search, reader,
+                            stories, lambda url, c: pages[url], NOW)
+    assert found.results == 1
+    assert found.answer == ("The BBC's story 'Moment Nasa spacecraft hit asteroid - and what happened next' "
+                            "(3 hours ago), its whole article read: Hera is surveying a crater the size of a stadium.")
+    assert reader.asked == [("Moment Nasa spacecraft hit asteroid - and what happened next",
+                             "The first images of the asteroid Nasa crashed into...",
+                             "Can you tell me more about the Nasa story?")]
+
+
+def test_an_article_that_cant_be_read_leaves_its_line(cfg):
+    found = news.read_story("Nasa asteroid", "More?", cfg.search, Reader(), stories,
+                            lambda url, c: "(this page couldn't be read (HTTP 403): pick another result or search)",
+                            NOW)
+    assert found.results == 0 and "couldn't be read" in found.answer
+    assert "like something out of a disaster movie" in found.answer  # all there is
+    found = news.read_story("Nasa asteroid", "More?", cfg.search, Reader(answer=""), stories,
+                            lambda url, c: "Some page.", NOW)
+    assert found.results == 0 and "doesn't say" in found.answer
+
+
+def test_a_story_nobody_had_isnt_made_up(cfg):
+    found = news.read_story("interest rates", "More?", cfg.search, Reader(), stories, lambda url, c: "", NOW)
+    assert found.results == 0 and "can't find it" in found.answer
+
+
+def test_the_tool_reads_a_story_when_given_one(cfg):
+    import asyncio
+    from app.tools import Turn
+
+    tool = news.NewsTool(cfg.search, Reader())
+    tool.fetch, tool.read_page = stories, lambda url, c: "The article."
+    from types import SimpleNamespace
+
+    turn = Turn("Tell me more about the Nasa one.", 1, SimpleNamespace(search_ms=0.0))
+    said = asyncio.run(tool.run({"story": "Nasa spacecraft asteroid"}, turn))
+    assert "its whole article read: Hera is surveying" in said and "These facts are right" in said
+    assert "headline is all you have" in asyncio.run(news.NewsTool(cfg.search).run({"story": "Nasa"}, turn))
