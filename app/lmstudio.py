@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -30,6 +32,7 @@ class LmStudio:
         self.http = httpx.Client(base_url=cfg.base_url, timeout=300)
         self.openai = OpenAI(base_url=f"{cfg.base_url}/v1", api_key="lm-studio")
         self.aopenai = AsyncOpenAI(base_url=f"{cfg.base_url}/v1", api_key="lm-studio")
+        self._loading = threading.Lock()  # a reply's check and a background job's, not both loading
 
     # Model management -------------------------------------------------
 
@@ -76,15 +79,28 @@ class LmStudio:
         want = {"context_length": context_length or self.cfg.context_length}
         if chat:
             want |= {"parallel": self.cfg.parallel, "eval_batch_size": self.cfg.eval_batch_size}
-        instances = self.loaded_instances(model)
-        if not fresh and any(all(i["config"].get(k) == v for k, v in want.items()) for i in instances):
-            return False
-        if instances:
-            self.unload(model)
-        self.http.post(
-            "/api/v1/models/load", json={"model": model, **want, **({"flash_attention": True} if chat else {})}
-        ).raise_for_status()
-        return True
+        with self._loading:
+            instances = self.loaded_instances(model)
+            if not fresh and any(all(i["config"].get(k) == v for k, v in want.items()) for i in instances):
+                return False
+            if instances:
+                self.unload(model)
+            self.http.post(
+                "/api/v1/models/load", json={"model": model, **want, **({"flash_attention": True} if chat else {})}
+            ).raise_for_status()
+            return True
+
+    async def keep_loaded(self, model: str | None = None) -> bool:
+        """The chat model, still loaded as Holly loaded it: checked before each reply and
+        background job (~2 ms), and loaded again if not (~10 s). True if it was.
+
+        When LM Studio's engine crashes, its next request loads the model again, with LM
+        Studio's defaults: on 25 November, four slots of 8,192 tokens, not one of 30,208.
+        Every prompt longer than that was cut down to fit, with no error. He lost the
+        crew's question, and the forecasts he'd just looked up, and answered the day's
+        first "Hey Holly" instead ("I'm here. What's up?"), turn after turn, for the
+        rest of the afternoon."""
+        return await asyncio.to_thread(self.ensure_loaded, model)
 
     # Chat ------------------------------------------------------------
 
@@ -177,9 +193,22 @@ class LmStudio:
     def ask(self, system: str, user: str, model: str | None = None, max_tokens: int = 200,
             temperature: float = 0.2, reasoning: str = "none") -> str:
         """A whole reply, blocking: call it from a worker thread."""
-        reply = self.openai.chat.completions.create(
-            **self._side_args(system, user, model, max_tokens, temperature, reasoning))
+        try:
+            reply = self.openai.chat.completions.create(
+                **self._side_args(system, user, model, max_tokens, temperature, reasoning))
+        except Exception:
+            self._load_after_failure(model)
+            raise
         return (reply.choices[0].message.content or "").strip()
+
+    def _load_after_failure(self, model: str | None) -> None:
+        """A request failed: LM Studio's engine may have crashed. The model's loaded again
+        now, as he loads it, before any other request (a retry, his reply after a side task
+        that failed quietly) has LM Studio load it with its defaults (see keep_loaded)."""
+        try:
+            self.ensure_loaded(model)
+        except Exception:
+            pass  # LM Studio's gone: the request's own error says why
 
     async def aask(self, system: str, user: str, model: str | None = None, max_tokens: int = 800,
                    temperature: float = 0.2, reasoning: str = "none") -> tuple[str, bool]:
@@ -187,16 +216,20 @@ class LmStudio:
         (text, cut): cut if it ran out of tokens."""
         parts: list[str] = []
         cut = False
-        stream = await self.aopenai.chat.completions.create(
-            **self._side_args(system, user, model, max_tokens, temperature, reasoning), stream=True)
         try:
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                parts.append(chunk.choices[0].delta.content or "")
-                cut = cut or chunk.choices[0].finish_reason == "length"
-        finally:
-            await stream.close()
+            stream = await self.aopenai.chat.completions.create(
+                **self._side_args(system, user, model, max_tokens, temperature, reasoning), stream=True)
+            try:
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    parts.append(chunk.choices[0].delta.content or "")
+                    cut = cut or chunk.choices[0].finish_reason == "length"
+            finally:
+                await stream.close()
+        except Exception:
+            await asyncio.to_thread(self._load_after_failure, model)
+            raise
         return "".join(parts).strip(), cut
 
     async def prewarm(self, messages: list[dict], model: str | None = None,
@@ -235,5 +268,8 @@ class LmStudio:
                     calls.extend(gathered[i] for i in sorted(gathered))
                 if got_text or gathered:
                     return
+        except Exception:
+            await asyncio.to_thread(self._load_after_failure, model)
+            raise
         finally:
             timing.total_ms = (time.perf_counter() - t0) * 1000

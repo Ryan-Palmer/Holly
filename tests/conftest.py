@@ -47,6 +47,8 @@ class FakeLm:
         self.requests: list[dict] = []  # each reply's request: messages, tools, tool_choice
         self.side_requests: list[dict] = []
         self.prewarms = 0
+        self.checks = 0  # keep_loaded: before each reply and background job
+        self.reloads = 0  # of them, how many should find LM Studio had loaded it its own way
 
     async def astream_reply(self, messages, timing, model=None, tools=None, calls=None, tool_choice=None):
         self.requests.append(dict(messages=messages, tools=tools, tool_choice=tool_choice))
@@ -69,6 +71,13 @@ class FakeLm:
 
     async def aask(self, system, user, model=None, max_tokens=800, temperature=0.2, reasoning="none"):
         return self.ask(system, user, model, max_tokens, temperature, reasoning), False
+
+    async def keep_loaded(self, model=None):
+        self.checks += 1
+        if self.reloads:
+            self.reloads -= 1
+            return True
+        return False
 
     async def prewarm(self, messages, model=None, tools=None):
         self.prewarms += 1

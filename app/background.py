@@ -84,6 +84,7 @@ class Background:
 
     async def _sleep_work(self) -> bool:
         """False if the notes couldn't be written."""
+        await self.keep_loaded()
         ok = True
         if self.convo.needs_compacting():
             ok = await self.compact()
@@ -163,8 +164,16 @@ class Background:
         self.researching = asyncio.create_task(self._research())
         self.researching.add_done_callback(self._researched)
 
+    async def keep_loaded(self) -> None:
+        """His model, still as he loaded it (app/lmstudio.py's keep_loaded): research
+        prompts cut to LM Studio's default size would make for a muddled report."""
+        if await self.lm.keep_loaded(self.model):
+            note("LM Studio had loaded his model again with its own settings (its engine crashed?): "
+                 "loaded again with his. Restart Holly when you can: loaded beside the voice, it may be slower")
+
     async def _research(self) -> None:
         while self.research.has_work() and not self.notes_due():
+            await self.keep_loaded()  # each step: a crash may come in the middle of a job
             note(f"research {await self.research.step()}")
         if not self.research.has_work():
             # All done: his own prompt back into LM Studio's cache, for his next reply.

@@ -301,6 +301,18 @@ def test_a_status_reports_sections_get_a_longer_pause(make_holly, monkeypatch):
     assert played.count(pause) == 0  # no news this turn: sentences like these aren't sections
 
 
+def test_each_reply_checks_his_model_is_loaded_his_way_first(make_holly):
+    """Before anything's asked of LM Studio: had its engine crashed and loaded the model
+    again by itself, every prompt longer than its default context was cut, silently."""
+    lm = FakeLm(["Yes?", "Drizzle."])
+    holly = make_holly(lm)
+    lm.reloads = 1
+    respond(holly, "Hey Holly")
+    assert lm.checks == 1
+    respond(holly, "What's the weather doing?")
+    assert lm.checks == 2 and holly.convo.history[-1]["content"] == "Drizzle."
+
+
 def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
     from app import news
     from app.search import Lookup
@@ -319,3 +331,22 @@ def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
     assert first not in contents and contents.count(news.EARLIER) == 2  # the old news, and what he said
     assert contents[-1].startswith(news.REPORT)  # the new report's news is there
     assert any(m.get("content") == first for m in holly.convo.history)  # still in his history
+
+
+def test_the_memory_check_sees_the_last_two_exchanges():
+    """"I just wanted to know more about the toe eating", after "Human Toes" / "I've already
+    given you the news", was taken for a memory: the toe eating was his own news, a turn
+    before. A long reply keeps its start and its end."""
+    from types import SimpleNamespace
+    from app.speak import Holly
+    report = "Politics — a bill. " + "Sport — a match. " * 60 + "Additional — a vending machine eats toes."
+    history = [{"role": "user", "content": "Guess what I want"}, {"role": "assistant", "content": "A nap."},
+               {"role": "user", "content": "Status report"},
+               {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
+               {"role": "tool", "tool_call_id": "1", "content": "The BBC's latest..."},
+               {"role": "assistant", "content": report},
+               {"role": "user", "content": "Human Toes"}, {"role": "assistant", "content": "I gave you the news."}]
+    before = Holly._last_exchange(SimpleNamespace(convo=SimpleNamespace(history=history)))
+    assert before.startswith("Status report / Politics — a bill.")
+    assert before.endswith("a vending machine eats toes. / Human Toes / I gave you the news.")
+    assert "A nap" not in before and "The BBC" not in before and " ... " in before

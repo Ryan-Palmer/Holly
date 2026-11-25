@@ -497,7 +497,12 @@ def days_in(text: str, on: datetime.date) -> set[datetime.date]:
 # follow-ups), it took remarks and the news straight after a memory for more of it ("ha,
 # that sounds about right" had him read the clock, being made to call something), till
 # told to judge the line itself. On 49 made-up lines, 49 right, and 16 of 16 it had never
-# seen, in ~85 ms.
+# seen, in ~85 ms. Live, though, it took what had just been said for memories, and made
+# him call something: a correction ("no, I meant you didn't make me listen to the news")
+# had him read the clock, and more about his own made-up news, search the BBC for it. Told
+# that what's just been said is in front of him, and shown the last two exchanges (app/
+# speak.py), a day's 52 real lines had 8 taken for memories, not 15 (two of them new: a
+# forecast and a game's lore, each looked up, which did no harm); the 49 and 16 still right.
 PAST_PROMPT = """\
 You sort what someone says to Holly, the household computer (and the ship's computer from Red Dwarf).
 PAST: they're asking Holly for something from before, which he'd have to remember: what they did, said, \
@@ -507,8 +512,11 @@ OTHER: everything else. Things they're telling him now, remarks and reactions, h
 something, facts about the world, news, weather, the time, sums, requests and chat.
 Judge only what they say now. "Just before" is there so you can tell what a follow-up question refers to \
 ("and who was in charge of them?" asks more about that memory: PAST). A remark or reaction ("fair enough", \
-"typical", "ha, that sounds right") is OTHER, and so is a question about the news, weather, time or the \
-world, however soon after a memory it comes.
+"typical", "ha, that sounds right") is OTHER, and so is a question or remark about the news, weather, time \
+or the world (what was said in Parliament, at a match), however soon after a memory it comes.
+What's just been said in this conversation is in front of him, with nothing to remember: asking about \
+something he's just said (what he meant, more of a story or a news item he's just told), correcting him \
+("no, I meant..."), or answering him is OTHER.
 Reply with one word: PAST or OTHER."""
 
 

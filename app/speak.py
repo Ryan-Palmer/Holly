@@ -320,6 +320,11 @@ class Holly:
                 thought.set()
 
         async def think_through() -> None:
+            # Before anything's asked of it: his model, still as he loaded it (see keep_loaded).
+            if await self.lm.keep_loaded(self.model):
+                note("LM Studio had loaded his model again with its own settings (its engine crashed?): "
+                     "loaded again with his. Restart Holly when you can: loaded beside the voice, "
+                     "it may be slower", YELLOW)
             chunker = SentenceChunker()
             timing = ReplyTiming()
             print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
@@ -513,15 +518,22 @@ class Holly:
         for i in range(0, len(audio), step):
             self.player.put(audio[i:i + step])
 
-    def _last_exchange(self, chars: int = 300) -> str:
-        """The crew's last line and his last reply, for judging a follow-up."""
-        said = {}
+    def _last_exchange(self, exchanges: int = 2, chars: int = 600) -> str:
+        """The last couple of exchanges, the crew's lines and his replies, for judging a
+        follow-up. Two, not one: after "Human Toes" / "I've already given you the news",
+        "I just wanted to know more about the toe eating" was taken for a memory, the toe
+        eating being his own made-up news a turn earlier. A long reply keeps its start and
+        its end, where that story was."""
+        said: list[str] = []
+        users = 0
         for m in reversed(self.convo.history):
-            if m["role"] in ("user", "assistant") and m.get("content") and m["role"] not in said:
-                said[m["role"]] = " ".join(m["content"].split())[:chars]
-            if len(said) == 2:
+            if m["role"] not in ("user", "assistant") or not m.get("content"):
+                continue
+            text = " ".join(m["content"].split())
+            said.append(text if len(text) <= chars else f"{text[:chars // 2]} ... {text[-chars // 2:]}")
+            if m["role"] == "user" and (users := users + 1) == exchanges:
                 break
-        return " / ".join(said[r] for r in ("user", "assistant") if r in said)
+        return " / ".join(reversed(said))
 
     def _answering_choice(self) -> bool:
         """Are the crew answering his search-or-report question? Either the research tool
