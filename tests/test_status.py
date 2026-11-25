@@ -165,3 +165,12 @@ def test_the_crew_are_said_in_sentences_and_additional_is_a_heading():
     assert status.items(said) == {"Lister": "lost a bet.", "Cat": "slept.", "Kryten": "his heads walked out.",
                                   "Additional": "A recall."}
     assert status.items("Rimmer — Filed a complaint.") == {"Rimmer": "Filed a complaint."}  # as written, too
+
+
+def test_finding_one_of_them_has_its_own_stock_line():
+    """"Hang on, I'll check the monitors" fits "where's Rimmer?", not a status report."""
+    from app.tools import Toolbox
+    box = Toolbox([status.StatusTool(FakeLm(), "m")], 3)
+    assert box.filler([{"name": "status", "arguments": "{}"}]) == "status"
+    assert box.filler([{"name": "status", "arguments": '{"who": "Rimmer"}'}]) == "crew"
+    assert box.filler(["status"]) == "status"

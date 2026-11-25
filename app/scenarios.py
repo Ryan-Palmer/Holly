@@ -405,6 +405,9 @@ SCENARIOS = [
     Scenario("remembering isn't forgetting", ["Do you remember my sister Jo?"],
              lambda t, h: problems((called(t[0], "recall"), "didn't recall"),
                                    (mentions(t[0], "vet", "keswick", "lasagne", "stay"), "said nothing about her"))),
+    # "Hey Holly" got "Yeah?", his whole reply, and the voice garbled a word alone.
+    Scenario("greeted", ["Hey Holly"],
+             lambda t, h: problems((len(t[0].reply.split()) > 1, f"a word alone: {t[0].reply!r}"))),
     Scenario("the clock", ["Holly, what time is it?"],
              lambda t, h: problems((called(t[0], "clock"), "didn't ask the clock"))),
     Scenario("tomorrow's day", ["What day is it tomorrow, Holly?"],

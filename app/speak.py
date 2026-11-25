@@ -186,7 +186,8 @@ class Holly:
                                      self.research)
         # Stock lines in his voice for while a tool works, by kind: "search" (web
         # search and weather), "recall" (his archive) and "spotify" (its app opening).
-        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": [], "status": []}
+        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": [], "status": [],
+                                                     "crew": []}
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
@@ -271,7 +272,8 @@ class Holly:
         lines = {"search": self.cfg.search.fillers if self.searcher else (),
                  "recall": self.cfg.recall.fillers if self.archive else (),
                  "spotify": self.cfg.spotify.fillers if self.spotify else (),
-                 "status": self.cfg.status.fillers if self.cfg.status.enabled else ()}
+                 "status": self.cfg.status.fillers if self.cfg.status.enabled else (),
+                 "crew": self.cfg.status.crew_fillers if self.cfg.status.enabled else ()}
         for kind, said in lines.items():
             for line in said:
                 chunks = [a async for a in self.tts.stream(line, trim_lead=True)]
@@ -433,8 +435,18 @@ class Holly:
                 if redo:
                     calls.clear()  # whatever it went on to ask for, it's asked again
                 if not redo and not calls:  # the end of the reply: its last words
-                    for sentence in chunker.flush():
+                    last = chunker.flush()
+                    lone = not retried and not spoken and len(last) == 1 and len(last[0].split()) == 1
+                    for sentence in last:
                         if redo := dropped(sentence):
+                            break
+                        if lone:
+                            # A word alone, his whole reply ("Yeah?", to "Hey Holly"): the voice garbled
+                            # it. Asked again, for a few words; a word again, it's said.
+                            redo = "a word alone"
+                            messages = [*messages[:asked - 1], {**messages[asked - 1], "content": (
+                                messages[asked - 1]["content"] + "\n[A word alone doesn't come out right in "
+                                "your voice: say a few words.]")}, *messages[asked:]]
                             break
                         await say(sentence)
                 if redo:
@@ -452,7 +464,7 @@ class Holly:
                 # if he wrote nothing yet, a stock line covers the wait.
                 for sentence in chunker.flush():
                     await say(sentence)
-                if not parts and (kind := self.toolbox.filler([c["name"] for c in calls])):
+                if not parts and (kind := self.toolbox.filler(calls)):
                     self._say_filler(times, kind)
                 self.player.expect_gap()
                 messages = [*messages, {

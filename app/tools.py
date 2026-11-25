@@ -43,6 +43,10 @@ class Tool:
     local = False  # instant (no stock line), and not counted among the lookups a reply may make
     filler = "search"  # the stock line, by kind, that covers a slow one's wait
 
+    def filler_for(self, args: dict) -> str:
+        """The stock line, by kind, for this call: `filler`, unless what's asked changes it."""
+        return self.filler
+
     async def run(self, args: dict, turn: Turn) -> str:
         """Do it; returns what goes back to the model."""
         raise NotImplementedError
@@ -85,13 +89,23 @@ class Toolbox:
     def local(self, name: str) -> bool:
         return name in self.by_name and self.by_name[name].local
 
-    def filler(self, names: list[str]) -> str | None:
-        """The stock line for a step calling these tools: none if they're all instant; the
-        recall line if they're all recalls; else the search line."""
-        slow = [self.by_name[n] for n in names if n in self.by_name and not self.by_name[n].local]
-        if not slow:
+    def filler(self, calls: list) -> str | None:
+        """The stock line for a step making these calls (each {"name", "arguments"}, or just a
+        name): none if they're all instant; the recall line if they're all recalls; one kind
+        if they're all of it (the status tool's depends on what's asked); else the search line."""
+        kinds = []
+        for call in calls:
+            name = call if isinstance(call, str) else call.get("name", "")
+            if name not in self.by_name or self.by_name[name].local:
+                continue
+            try:
+                args = {} if isinstance(call, str) else json.loads(call.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            kinds.append(self.by_name[name].filler_for(args if isinstance(args, dict) else {}))
+        if not kinds:
             return None
-        return slow[0].filler if all(t.filler == slow[0].filler for t in slow) else "search"
+        return kinds[0] if all(k == kinds[0] for k in kinds) else "search"
 
     async def run(self, call: dict, turn: Turn, lookups: int) -> str:
         """Run one tool call ({"name", "arguments"}); `lookups`: slow ones so far this reply,

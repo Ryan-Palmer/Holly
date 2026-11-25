@@ -185,7 +185,8 @@ class ResearchConfig:
 class StatusConfig:
     enabled: bool = True  # the status report (app/status.py): the crew's doings, made up
     file: Path = ROOT / "data/status.json"  # the last few reports, to write something different from
-    fillers: tuple[str, ...] = ()  # said while it's written
+    fillers: tuple[str, ...] = ()  # said while a report's written
+    crew_fillers: tuple[str, ...] = ()  # said while an answer about one of them is ("where's Kryten?")
 
 
 @dataclass(frozen=True)
@@ -256,7 +257,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
                                  for k, v in raw.get("spotify", {}).items()}),
         research=ResearchConfig(**{k: (base / v if k == "dir" else v)
                                    for k, v in raw.get("research", {}).items()}),
-        status=StatusConfig(**{k: (base / v if k == "file" else tuple(v) if k == "fillers" else v)
+        status=StatusConfig(**{k: (base / v if k == "file" else tuple(v) if k.endswith("fillers") else v)
                                for k, v in raw.get("status", {}).items()}),
         evals=EvalsConfig(**raw.get("evals", {})),
         cpu=CpuConfig(**raw.get("cpu", {})),

@@ -335,9 +335,14 @@ max_errors = 5  # failed steps in a row before a job is given up
 # news, ask for the news. The last few reports are kept in `file`, to steer clear of.
 enabled = true
 file = "data/status.json"
+# While a report's written; and while an answer about one of them is ("where's Kryten?").
 fillers = [
+    "One moment. I'll pull the logs.",
+    "Right. Let's see what they've been up to.",
+]
+crew_fillers = [
     "Hang on. I'll check the monitors.",
-    "One moment. Let's see what they've been up to.",
+    "One moment. I'll track him down.",
 ]
 
 [evals]

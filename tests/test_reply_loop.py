@@ -281,6 +281,30 @@ def test_a_failed_report_announcement_is_tried_again(make_holly):
     assert "is finished, and the report is written" in holly.convo.history[0]["content"]
 
 
+def test_a_word_alone_is_asked_again(make_holly):
+    """"Yeah?", his whole reply to "Hey Holly": the voice garbled a word alone."""
+    lm = FakeLm(["Yeah?", "Yeah? What is it?"])
+    holly = make_holly(lm)
+    respond(holly, "Hey Holly")
+    assert holly.tts.said == ["Yeah? What is it?"] and holly.convo.history[-1]["content"] == "Yeah? What is it?"
+    assert "say a few words" in lm.requests[1]["messages"][-1]["content"]
+    assert "say a few words" not in lm.requests[0]["messages"][-1]["content"]
+
+
+def test_a_word_alone_again_is_said(make_holly):
+    lm = FakeLm(["Yeah?", "Yes?"])
+    holly = make_holly(lm)
+    respond(holly, "Hey Holly")
+    assert holly.tts.said == ["Yes?"] and len(lm.requests) == 2  # asked once, not forever
+
+
+def test_a_word_then_more_is_said_as_it_is(make_holly):
+    lm = FakeLm(["Thursday. Not that it matters."])
+    holly = make_holly(lm)
+    respond(holly, "What day is it tomorrow?")
+    assert len(lm.requests) == 1 and " ".join(holly.tts.said) == "Thursday. Not that it matters."
+
+
 def test_a_closing_offer_of_help_is_neither_said_nor_kept(make_holly):
     holly = make_holly(FakeLm(["Fifty-six. Anything else you need me to work out?", "Anything else?"]))
     respond(holly, "What's seven times eight?", "Thanks.")
@@ -326,13 +350,13 @@ def test_a_status_reports_sections_get_a_longer_pause(make_holly, monkeypatch):
 def test_each_reply_checks_his_model_is_loaded_his_way_first(make_holly):
     """Before anything's asked of LM Studio: had its engine crashed and loaded the model
     again by itself, every prompt longer than its default context was cut, silently."""
-    lm = FakeLm(["Yes?", "Drizzle."])
+    lm = FakeLm(["Yes? What is it?", "Drizzle, mostly."])
     holly = make_holly(lm)
     lm.reloads = 1
     respond(holly, "Hey Holly")
     assert lm.checks == 1
     respond(holly, "What's the weather doing?")
-    assert lm.checks == 2 and holly.convo.history[-1]["content"] == "Drizzle."
+    assert lm.checks == 2 and holly.convo.history[-1]["content"] == "Drizzle, mostly."
 
 
 REPORT_LINES = ("Lister — Lost a bet.\nRimmer — Filed a complaint.\nCat — Slept.\nKryten — Ironed socks.\n"

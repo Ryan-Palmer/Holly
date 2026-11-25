@@ -318,6 +318,10 @@ class StatusTool(Tool):
 
     name, schema, rules, filler = "status", TOOL, "status", "status"
 
+    def filler_for(self, args: dict) -> str:
+        """"Hang on, I'll check the monitors" fits finding one of them, not a whole report."""
+        return "crew" if who(args.get("who")) else "status"
+
     def __init__(self, lm, model: str, records=None, file: Path | None = None):
         """`file`: the last few reports, kept from one session to the next (data/status.json),
         so tomorrow's isn't today's again."""
