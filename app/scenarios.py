@@ -201,6 +201,28 @@ def mentions(turn: Turn, *words: str) -> bool:
     return any(w.lower() in turn.reply.lower() for w in words)
 
 
+def says(turn: Turn, *words: str) -> bool:
+    """Any of `words` as a whole word: "2" isn't in "12"."""
+    return any(re.search(rf"\b{re.escape(w)}\b", turn.reply, re.IGNORECASE) for w in words)
+
+
+def ahead(days: int) -> str:
+    return (datetime.date.today() + datetime.timedelta(days=days)).strftime("%A")
+
+
+def a_named_crew(holly) -> None:
+    """Notes that know the crew by name, as his real ones do, and a lunch on the day
+    before: "last night" is the lasagne, at 18:30, not the sandwich."""
+    holly.convo.memory = "About the crew: Sam lives at home with a cat called Biscuit. Sam's sister Jo is a vet."
+    lunch = datetime.datetime.combine(datetime.date.today() - datetime.timedelta(days=1), datetime.time(12, 30))
+    holly.archive.add([(lunch.isoformat(), f"(said on {spoken(lunch)})\nCrew: Just had a cheese sandwich for "
+                                           "lunch.\nHolly: Living the dream.")])
+    try:
+        holly.archive.embed_missing()
+    except Exception:
+        pass
+
+
 # A long, cheery talk, as his own history: made up, in the manner he'd drifted into over an
 # afternoon (wordy, polite, offering more help). Over a long talk his own replies outweighed
 # his character, and the persona prompts, each asked with no history, never saw it.
@@ -267,6 +289,25 @@ SCENARIOS = [
              lambda t, h: problems((mentions(t[0], (datetime.date.today() + datetime.timedelta(days=1)).strftime("%A")),
                                     "didn't say tomorrow's day"),
                                    (not NO_CLOCK.search(t[0].reply), "said he can't tell the time"))),
+    # Asked on a Wednesday "how many days until Friday?", he said "one day", sixteen times in
+    # sixteen: the days in between, or counting from tomorrow. With the week ahead counted
+    # in his prompt (persona.week_around), 15 in 16 were right. This doesn't catch the old
+    # miss, which needed that afternoon's own talk (after this talk, the end of a working
+    # day, he counted right without the week too); tests/test_dates.py guards the fix. It's
+    # here so a model or prompt that loses count shows.
+    Scenario("days until a weekday", ["Well, at least the work day's done now.", f"How many days until {ahead(2)}?",
+                                      f"And how many until {ahead(3)}?"],
+             lambda t, h: problems((says(t[1], "two", "2"), f"didn't say two days to {ahead(2)}"),
+                                   (says(t[2], "three", "3"), f"didn't say three days to {ahead(3)}")),
+             setup=cheery_history),
+    # His notes know the crew by name, so he asked his memory what Sam had last night; his
+    # memory says "Crew", and "last night" wasn't a day: "I don't know", nine times in nine
+    # on the real archive. Now the evening is searched, and the crew's own words tried.
+    Scenario("last night's food, known by name", ["Holly, do you remember what I had for food last night?"],
+             lambda t, h: problems((called(t[0], "recall"), "didn't recall"),
+                                   (mentions(t[0], "lasagne", "lasagna"), "didn't say lasagne"),
+                                   (not mentions(t[0], "sandwich"), "gave the lunch, not the evening")),
+             setup=a_named_crew),
     Scenario("a timer", ["Holly, set a timer for twenty minutes for the pasta."],
              lambda t, h: problems((called(t[0], "timer", action="set"), "didn't set a timer"),
                                    (bool(h.timers.items), "nothing set"))),

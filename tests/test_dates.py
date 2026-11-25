@@ -4,8 +4,8 @@ import datetime as dt
 
 import pytest
 
-from app.archive import days_in
-from app.persona import date_days, day, resolve_day, when
+from app.archive import days_in, spans_in
+from app.persona import date_days, day, resolve_day, week_around, when
 from app.timers import parse_duration, parse_when, say_when
 
 WED = dt.date(2026, 11, 18)  # a Wednesday
@@ -21,6 +21,7 @@ def test_day_and_when():
     ("today", False, WED),
     ("tonight", False, WED),
     ("yesterday", False, dt.date(2026, 11, 17)),
+    ("last night", False, dt.date(2026, 11, 17)),
     ("tomorrow", False, dt.date(2026, 11, 19)),
     ("the day after tomorrow", False, dt.date(2026, 11, 20)),
     ("next Tuesday", False, dt.date(2026, 11, 24)),
@@ -94,3 +95,26 @@ def test_days_in_looks_back():
     assert days_in("on 21 November", WED) == {dt.date(2025, 11, 21)}  # still to come this year
     assert days_in("on 2 November", WED) == {dt.date(2026, 11, 2)}
     assert days_in("what's on tomorrow?", WED) == set()
+    # Asked "what I had for food last night", recall searched every day, and missed the tea.
+    assert days_in("what did I have for food last night?", WED) == {dt.date(2026, 11, 17)}
+
+
+def test_last_night_is_the_evening_then_its_day():
+    night = ("2026-11-17T17:00:00", "2026-11-18T05:00:00")
+    day_ = ("2026-11-17T00:00:00", "2026-11-18T00:00:00")
+    assert spans_in("what did I have for food last night?", WED) == [[night, day_]]
+    assert spans_in("what did we do yesterday?", WED) == [[day_]]
+    assert spans_in("yesterday, and last night?", WED) == [[day_]]  # the day asked about outright: all of it
+    assert spans_in("what did I have for tea tonight?", WED)[0][0] == ("2026-11-18T17:00:00", "2026-11-19T05:00:00")
+
+
+def test_the_week_around_today_counts_the_days():
+    """Told only the date, "how many days until Friday?" on a Wednesday got "one day",
+    sixteen times in sixteen: the days in between, or counting from tomorrow."""
+    week = week_around(WED)
+    assert week.startswith("Yesterday was Tuesday 17 November.")
+    assert "Thursday 19 November (in 1 day, tomorrow)" in week
+    assert "Friday 20 November (in 2 days)" in week
+    assert "Saturday 21 November (in 3 days)" in week
+    assert "Wednesday 25 November (in 7 days, a week today)" in week
+    assert "1 December" in week_around(dt.date(2026, 11, 29))  # into the next month

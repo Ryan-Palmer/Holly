@@ -55,11 +55,13 @@ TOOL = {
                 "query": {"type": "string", "description":
                     "Key words for what to remember: names as they're spelt, things, places, and the "
                     "day if it was asked about ('lasagne Jo', 'boiler service', 'what we talked "
-                    "about yesterday', 'Rimmer hologram death', 'Kryten first meeting', 'Better Than "
-                    "Life')."},
+                    "about yesterday', 'what the crew had for tea last night', 'Rimmer hologram "
+                    "death', 'Kryten first meeting', 'Better Than Life'). Whoever you're talking "
+                    "to is 'the crew' here, never their name: that's what your memory calls them."},
                 "question": {"type": "string", "description":
                     "The question to answer from what's found, in full: 'When did the crew first "
-                    "meet Kryten?', 'What happened in Better Than Life?'"},
+                    "meet Kryten?', 'What did the crew have for tea last night?', 'What happened "
+                    "in Better Than Life?'"},
             },
             "required": ["query", "question"],
         },
@@ -108,7 +110,8 @@ a an and are as at be been but by can could did do does for from had has have he
 is it its me my of on or our she so that the their them then there they this to was we were what when
 where which who why will with would you your about tell remember recall said say talk talked told
 holly ago last time conversation conversations earlier before again know did do any some
-""".split()) | set(WEEKDAYS) | {"today", "tonight", "yesterday", "tomorrow"}
+crew
+""".split()) | set(WEEKDAYS) | {"today", "tonight", "yesterday", "tomorrow"}  # every entry says "Crew:"
 
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
           "october", "november", "december"]
@@ -324,8 +327,10 @@ class Archive:
             # A month is left out only as part of a date ("21 November"): April, May and
             # June are names too, and a search for one alone had no words left.
             # "may", without its capital, is the verb.
+            # Day words too ("last night", "until Monday"): the day is found by days_in, and
+            # "night" as a word to match would pick that day's "good night" first.
             out = []
-            for w in re.findall(r"[A-Za-z0-9']+", _DATE.sub(" ", text)):
+            for w in re.findall(r"[A-Za-z0-9']+", _DATE.sub(" ", _DAY_WORDS.sub(" ", text))):
                 if w == "may":
                     continue
                 w = w.lower().removesuffix("'s").strip("'")
@@ -341,16 +346,21 @@ class Archive:
         # meaning ("music" finds "the album by..."), up to DAY_PICKED; the rest of the
         # DAY_ENTRIES are spread across the day. Taken in time order, a busy day (136
         # entries one Monday) gave the judge its first hour, and "what did we do
-        # yesterday?" was answered from twenty minutes of lunchtime.
+        # yesterday?" was answered from twenty minutes of lunchtime. "Last night" is the
+        # evening (spans_in): "what did I have for food last night?" missed the tea, said at
+        # 9:39 pm, among a day of 223 entries; among the evening's 109, it came first.
         asked = words + [w for w in key_words(question) if w not in words]
-        for d in sorted(days_in(f"{query} {question}", on)):
+        for spans in spans_in(f"{query} {question}", on):
             with self.lock:
+                for start, end in spans:  # the night asked about, or if nothing was said then, its day
+                    day = self.db.execute("SELECT rowid, at, text FROM entries WHERE at >= ? AND at < ? ORDER BY at",
+                                          (start, end)).fetchall()
+                    if day:
+                        break
                 matched = self.db.execute(
-                    "SELECT rowid FROM entries WHERE entries MATCH ? AND substr(at, 1, 10) = ? "
+                    "SELECT rowid FROM entries WHERE entries MATCH ? AND at >= ? AND at < ? "
                     "ORDER BY bm25(entries) LIMIT ?",
-                    (" OR ".join(f'"{w}"' for w in asked), d.isoformat(), DAY_PICKED)).fetchall() if asked else []
-                day = self.db.execute("SELECT rowid, at, text FROM entries WHERE substr(at, 1, 10) = ? ORDER BY at",
-                                      (d.isoformat(),)).fetchall()
+                    (" OR ".join(f'"{w}"' for w in asked), start, end, DAY_PICKED)).fetchall() if asked and day else []
             if not day:
                 continue
             by_id = {r[0]: (r[1], r[2]) for r in day}
@@ -395,35 +405,37 @@ class Archive:
             found |= {r[0]: (r[1], r[2]) for r in rows}
         return list(found.values())
 
-    def recall(self, query: str, question: str, said: str = "") -> Lookup:
+    def recall(self, query: str, question: str, said: str = "", asked: str = "") -> Lookup:
         """Look `query` up, and answer `question` (what Holly asks, or failing that
         what the crew said) from what's found, and from `said`: the crew's lines
-        still in his history (Conversation.crew_lines), which aren't archived yet."""
+        still in his history (Conversation.crew_lines), which aren't archived yet.
+        `asked`: the crew's own words, tried too if his question finds nothing."""
         t0 = time.perf_counter()
         query, question = MISHEARD.sub("Kryten", query), MISHEARD.sub("Kryten", question)
         # "The Cat's name in the episode Gunmen of the Apocalypse?" got NOTHING from the
         # judge, taking it as the Cat's own name ("no name other than The Cat"); without
         # "the episode", "The Riviera Kid".
         question = THE_EPISODE.sub(" ", question).replace("  ", " ")
-        hits = self.search(query, question=question)
-        days = sorted(days_in(f"{query} {question}", datetime.date.today()))
-        if self.records and not days:  # a day asked about is about a conversation
-            hits += self.records.search(query, question=question)
-        if said:
-            hits.insert(0, (None, f"(Said in this conversation, by the crew:)\n{said}"))
+        hits, entries, about, dated = self._found(query, question, said)
         t1 = time.perf_counter()
         if not hits:
             return self._nothing(query, t1 - t0, 0)
-        entries = "\n\n".join(text[:ENTRY_CHARS] for _, text in sorted(hits, key=lambda h: h[0] or ""))
-        about = f"\n(The question is about {', '.join(day(d) for d in days)}.)" if days else ""
-        # The question's "yesterday" as its date, for the judge: told the day, and how an
-        # entry's "yesterday" counts from its own, it still matched "what did we do
-        # yesterday?" to Monday's "we had a lovely day yesterday [Sunday]", three times in
-        # three. "On Monday 23 November", it didn't.
-        dated = _DAY_WORDS.sub(lambda m: f"on {day(resolve_day(m.group(1), datetime.date.today(), True))}",
-                               question) if days else question
         text = self._judge(entries, dated, query, about)
+        if text.upper().startswith("NOTHING") and asked and added_names(f"{query} {question}", asked):
+            # His notes know the crew by name, and he put it in: "do you remember what I had
+            # for food last night?" became "what did Sam have for food last night?". His
+            # memory says "Crew", never the name, so the tea was missed, or worse, the name
+            # found where Holly had used it, and some other story told. The crew's own words,
+            # "I" as the crew, found it. Only after a miss: his question is usually better
+            # ("what was it called?" names what "it" is).
+            own = in_their_words(asked)
+            found = self._found(own, own, said)
+            if found[0] and not (again := self._judge(found[1], found[3], own, found[2])).upper().startswith(
+                    "NOTHING"):
+                hits, text = found[0], again
         names = list(dict.fromkeys(named_in(query, hits, keywords=True) + named_in(question, hits)))[:3]
+        if asked:  # names the crew used: one he added may be the crew's own (see above)
+            names = [n for n in names if re.search(rf"\b{n}\b", asked, re.IGNORECASE)]
         if text.upper().startswith("NOTHING") and names:
             # "Did I meet Jo yesterday?" got NOTHING every way it was put, with 14 entries
             # about her; "who is Jo?" got a full answer. Yes-or-no questions about someone
@@ -435,6 +447,28 @@ class Archive:
             return self._nothing(query, t1 - t0, t2 - t1, len(hits))
         answer = rest.strip() if head.strip().upper() == "ANSWER" else text
         return Lookup(query, answer, len(hits), (t1 - t0) * 1000, (t2 - t1) * 1000, [query])
+
+    def _found(self, query: str, question: str, said: str) -> tuple[list[tuple[str | None, str]], str, str, str]:
+        """What a search finds, and how the judge is shown it: (the hits, the entries
+        as text, which days it's about, and the question with its days as dates)."""
+        hits = self.search(query, question=question)
+        days = sorted(days_in(f"{query} {question}", datetime.date.today()))
+        if self.records and not days:  # a day asked about is about a conversation
+            hits += self.records.search(query, question=question)
+        if said:
+            hits.insert(0, (None, f"(Said in this conversation, by the crew:)\n{said}"))
+        entries = "\n\n".join(text[:ENTRY_CHARS] for _, text in sorted(hits, key=lambda h: h[0] or ""))
+        about = f"\n(The question is about {', '.join(day(d) for d in days)}.)" if days else ""
+
+        # The question's "yesterday" as its date, for the judge: told the day, and how an
+        # entry's "yesterday" counts from its own, it still matched "what did we do
+        # yesterday?" to Monday's "we had a lovely day yesterday [Sunday]", three times in
+        # three. "On Monday 23 November", it didn't.
+        def on(m: re.Match) -> str:
+            night = "the night of " if m.group(1).lower() in NIGHT_WORDS else ""
+            return f"on {night}{day(resolve_day(m.group(1), datetime.date.today(), True))}"
+
+        return hits, entries, about, _DAY_WORDS.sub(on, question) if days else question
 
     def _judge(self, entries: str, question: str, query: str, about: str) -> str:
         return self.lm.ask(JUDGE_PROMPT.format(today=today()),
@@ -474,6 +508,31 @@ def named_in(text: str, hits: list[tuple[str | None, str]], keywords: bool = Fal
     return [w for w in words if any(re.search(rf"\b{w}\b", t) for _, t in hits)][:3]
 
 
+def added_names(text: str, asked: str) -> list[str]:
+    """Names (capitalised words, bar question words and days) in `text`, Holly's search,
+    that aren't in `asked`, the crew's own words."""
+    words = re.findall(r"\b([A-Z][a-z]+)\b", text)
+    return [w for w in dict.fromkeys(words) if w.lower() not in STOPWORDS | NOT_NAMES | set(MONTHS)
+            and not re.search(rf"\b{w}\b", asked, re.IGNORECASE)]
+
+
+# The crew's words as a question to Holly's memory, which calls them "Crew": "I", "me"
+# and "my" are the crew. "You" is Holly, as the judge takes it anyway.
+_THEIRS = [(re.compile(p), said) for p, said in (
+    (r"\bI'm\b", "the crew is"), (r"\bI've\b", "the crew has"), (r"\bI'd\b", "the crew would"),
+    (r"\bI'll\b", "the crew will"), (r"\bI\b", "the crew"), (r"(?i)\b(?:me|myself)\b", "the crew"),
+    (r"(?i)\b(?:my|mine)\b", "the crew's"))]
+_HAILED = re.compile(r"^\W*(?:(?:hey|hi|oi|ok|okay|oh|so),?\s+)?holly\b\W*", re.IGNORECASE)
+
+
+def in_their_words(line: str) -> str:
+    """"Hey Holly, do you remember what I had for tea?" -> "do you remember what the crew had for tea?"."""
+    line = _HAILED.sub("", line)
+    for pattern, said in _THEIRS:
+        line = pattern.sub(said, line)
+    return line.strip()
+
+
 def days_in(text: str, on: datetime.date) -> set[datetime.date]:
     """The days `text` names, looking back from `on`: "yesterday", "on Tuesday" (the last
     one), "21 November" (this year's, or last year's if that's still to come)."""
@@ -489,6 +548,34 @@ def days_in(text: str, on: datetime.date) -> set[datetime.date]:
             continue
         days.add(d if d <= on else d.replace(year=on.year - 1))
     return days
+
+
+NIGHT_WORDS = ("last night", "tonight")
+NIGHT = (datetime.time(17), datetime.time(5))  # an evening, and the small hours after it
+
+
+def spans_in(text: str, on: datetime.date) -> list[list[tuple[str, str]]]:
+    """For each day `text` names (days_in), the times to look in, as ISO strings, narrowest
+    first: a night asked about ("last night", "tonight"), then its whole day; a day, just the
+    day. A day asked about outright ("yesterday") as well as its night means the whole day."""
+    nights = {resolve_day(m.group(1), on, past=True) for m in _DAY_WORDS.finditer(text)
+              if m.group(1).lower() in NIGHT_WORDS}
+    days = {resolve_day(m.group(1), on, past=True) for m in _DAY_WORDS.finditer(text)
+            if m.group(1).lower() not in NIGHT_WORDS and "tomorrow" not in m.group(1).lower()}
+
+    def span(start: datetime.datetime, end: datetime.datetime) -> tuple[str, str]:
+        return start.isoformat(timespec="seconds"), end.isoformat(timespec="seconds")
+
+    out = []
+    for d in sorted(days_in(text, on)):
+        whole = span(datetime.datetime.combine(d, datetime.time()),
+                     datetime.datetime.combine(d + datetime.timedelta(days=1), datetime.time()))
+        if d in nights and d not in days:
+            out.append([span(datetime.datetime.combine(d, NIGHT[0]),
+                             datetime.datetime.combine(d + datetime.timedelta(days=1), NIGHT[1])), whole])
+        else:
+            out.append([whole])
+    return out
 
 
 # Is the crew's line asking him to remember something? Then his reply must call a tool
@@ -557,7 +644,7 @@ class RecallTool(LookupTool):
             print(f"{DIM}  (recalling a report: reading '{reports[0]['title']}' instead){RESET}", flush=True)
             return research.handle({"action": "read", "title": reports[0]["title"]})
         said = turn.crew_lines()
-        found = await self.look_up(f"recalling: {query}", lambda: self.archive.recall(query, question, said), turn)
+        found = await self.look_up(f"recalling: {query}", lambda: self.archive.recall(query, question, said, turn.user), turn)
         if isinstance(found, str):
             return found
         if found.results:

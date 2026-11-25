@@ -136,3 +136,11 @@ def test_the_date_in_his_prompt_moves_on_at_midnight(cfg, monkeypatch):
     assert "Today is Monday 23 November 2026." in c.messages_for("Hello.")[0]["content"]
     monkeypatch.setattr(persona, "today", lambda: "Tuesday 24 November 2026")  # past midnight, same session
     assert "Today is Tuesday 24 November 2026." in c.messages_for("Still up?")[0]["content"]
+
+
+def test_his_prompt_has_the_week_around_today(cfg):
+    """The days ahead, each with how far off it is: he counted them a day short himself."""
+    import datetime as dt
+    from app.persona import today, week_around
+
+    assert f"Today is {today()}. {week_around(dt.date.today())}" in convo(cfg).messages_for("Hi.")[0]["content"]

@@ -25,6 +25,19 @@ def day(d: datetime.date) -> str:
     return d.strftime("%A %d %B %Y").replace(" 0", " ")
 
 
+def week_around(d: datetime.date) -> str:
+    """Yesterday, and the week ahead with how far off each day is, for his system prompt.
+    Told only today's date, Gemma counted from the wrong day: asked on a Wednesday, "how
+    many days until Friday?" got "one day" sixteen times in sixteen, and Saturday, Monday
+    and Tuesday were each a day short too."""
+    def short(x: datetime.date) -> str:
+        return f"{x:%A} {x.day} {x:%B}"
+
+    ahead = [f"{short(d + datetime.timedelta(days=n))} (in {n} day{'s' if n > 1 else ''}"
+             f"{', tomorrow' if n == 1 else ', a week today' if n == 7 else ''})" for n in range(1, 8)]
+    return f"Yesterday was {short(d - datetime.timedelta(days=1))}. The days ahead: {', '.join(ahead)}."
+
+
 def when(t: datetime.datetime) -> str:
     """Like "Friday 21 November 2026 at 9:40 pm"."""
     return f"{day(t.date())} at {t.strftime('%I:%M %p').lstrip('0').lower()}"
@@ -32,7 +45,7 @@ def when(t: datetime.datetime) -> str:
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 _DAY_WORDS = re.compile(
-    r"\b(the day after tomorrow|day after tomorrow|tomorrow|tonight|today|yesterday|"
+    r"\b(the day after tomorrow|day after tomorrow|tomorrow|tonight|today|yesterday|last night|"
     r"(?:(?:next|this|on|by|until|till|coming|last)\s+)?(?:" + "|".join(WEEKDAYS) + r"))\b",
     re.IGNORECASE)
 # Whether a sentence is about the past or the future, for a bare weekday in it ("I went
@@ -55,7 +68,7 @@ def resolve_day(words: str, said: datetime.date, past: bool = False) -> datetime
     w = words.lower()
     if w in ("today", "tonight"):
         return said
-    if w == "yesterday":
+    if w in ("yesterday", "last night"):
         return said - datetime.timedelta(days=1)
     if w == "tomorrow":
         return said + datetime.timedelta(days=1)
@@ -162,7 +175,7 @@ class Conversation:
         key = (today(), self.memory, self.previous_end, tuple(self.reminders))
         if self._made_for != key:
             self._made_for = key
-            content = f"{self.system_prompt}\n\nToday is {key[0]}."
+            content = f"{self.system_prompt}\n\nToday is {key[0]}. {week_around(datetime.date.today())}"
             if self.previous_end:
                 content += (f" You last talked with the crew on {when(self.previous_end)}, "
                             "before you were last switched off.")
