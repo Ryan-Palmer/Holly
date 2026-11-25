@@ -96,3 +96,36 @@ def test_a_status_report_takes_each_subject_once(feeds, cfg):
     assert found.answer.count("Big story") == 1  # under top stories, not again under business
     assert "Business and money:" in found.answer and "Science:" in found.answer and "Sport:" not in found.answer
     assert any(found.answer.rstrip().endswith(f"today's is news about {lore}.") for lore in news.LORE)
+
+
+class Broken(Exception):
+    pass
+
+
+def test_a_feed_that_fails_leaves_the_rest(feeds, cfg, monkeypatch):
+    """One feed timing out (or a 503) failed the whole status report, the six that answered
+    with it; a Google News failure, the BBC's own stories."""
+    served, _ = feeds
+    served[bbc("top")] = rss(("Big story", "Today.", NOW - dt.timedelta(hours=1), "https://www.bbc.co.uk/b"))
+    served[bbc("science")] = rss(("Sutton Hoo grave", "Sand.", NOW - dt.timedelta(hours=2), "https://www.bbc.co.uk/s"))
+    get = news.httpx.get
+
+    def flaky(url, params=None, **kw):
+        if url in (bbc("sport"), news.GOOGLE):
+            raise Broken("timed out")
+        return get(url, params, **kw)
+
+    monkeypatch.setattr(news.httpx, "get", flaky)
+    found = news.roundup(cfg.search, NOW)
+    assert "Big story" in found.answer and "Sport:" not in found.answer
+    found = news.news("top", "Sutton Hoo", cfg.search, NOW)  # too little from the BBC: Google, which fails
+    assert "Sutton Hoo grave" in found.answer
+
+
+def test_every_feed_failing_is_an_error(feeds, cfg, monkeypatch):
+    def down(url, params=None, **kw):
+        raise Broken("no network")
+
+    monkeypatch.setattr(news.httpx, "get", down)
+    with pytest.raises(Broken):
+        news.roundup(cfg.search, NOW)

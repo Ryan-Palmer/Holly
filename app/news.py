@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from .config import SearchConfig
+from .console import note
 from .search import Lookup, Searcher
 from .tools import Lookup as LookupTool, Turn
 
@@ -132,6 +133,24 @@ def google_news(words: str, timeout: float) -> list[dict]:
     return stories
 
 
+def _all(fetch, names: list[str], timeout: float) -> list[list[dict]]:
+    """Each feed's stories, fetched all at once (~0.3 s, not ~3). A feed that fails gives
+    none: one that timed out or answered 503 failed the whole status report, the other
+    six with it. If every one fails, the first one's error is raised."""
+    def one(name: str) -> tuple[list[dict], Exception | None]:
+        try:
+            return fetch(name, timeout), None
+        except Exception as e:
+            note(f"news: the {name} feed failed: {e!r}")
+            return [], e
+
+    with concurrent.futures.ThreadPoolExecutor(len(names)) as pool_of:
+        got = list(pool_of.map(one, names))
+    if all(error for _, error in got):
+        raise got[0][1]
+    return [stories for stories, _ in got]
+
+
 def roundup(cfg: SearchConfig, now: datetime.datetime | None = None, fetch=None) -> Lookup:
     """A status report's news: the freshest couple of stories in each of the main subjects,
     each story once (the top stories turn up again under their subjects). `fetch`: how a
@@ -139,8 +158,7 @@ def roundup(cfg: SearchConfig, now: datetime.datetime | None = None, fetch=None)
     fetch = fetch or headlines
     t0 = time.perf_counter()
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    with concurrent.futures.ThreadPoolExecutor(len(ROUNDUP)) as pool_of:  # all at once: ~0.3 s
-        feeds = dict(zip(ROUNDUP, pool_of.map(lambda f: fetch(f, cfg.timeout_s), ROUNDUP)))
+    feeds = dict(zip(ROUNDUP, _all(fetch, list(ROUNDUP), cfg.timeout_s)))
     seen, parts, count = set(), [], 0
     for feed, name in ROUNDUP.items():
         fresh = []
@@ -163,6 +181,31 @@ def roundup(cfg: SearchConfig, now: datetime.datetime | None = None, fetch=None)
                 "its name and a dash ('Politics — ministers want...'); then the 'Additional' item, as your "
                 f"rules say: today's is news about {random.choice(LORE)}.")
     return Lookup("roundup", answer, count, ms, 0)
+
+
+# Is the crew's line asking for a status report? Asked only when it says "status report" or
+# "status update" (guards.STATUS_ASKED): words alone took "my boss wants a status update
+# by five" for one, and he'd have been made to give the news.
+REPORT_PROMPT = """\
+You sort what someone says to Holly, the household computer. He gives a "status report" when asked: a round-up \
+of today's news, subject by subject.
+YES: they're asking him for one now ("status report, please", "give me a status update, Holly", "another status \
+report", "what's the status report today?").
+NO: anything else: a status report or update of their own or someone else's ("I've got a status report to \
+write", "my boss wants a status update by five"), or a remark about one he's given.
+Reply with one word: YES or NO."""
+
+
+def wants_report(lm, model: str | None, line: str, quiet: bool = True) -> bool:
+    """Is `line` asking him for a status report? If it can't be asked, False (he answers as
+    he would have), or with `quiet` off (the evals), the error."""
+    try:
+        return lm.ask(REPORT_PROMPT, f"They say: {line}", model, max_tokens=4,
+                      temperature=0).strip().upper().startswith("YES")
+    except Exception:
+        if not quiet:
+            raise
+        return False
 
 
 def without_earlier_reports(messages: list[dict], before: int) -> list[dict]:
@@ -201,9 +244,7 @@ def news(topic: str, about: str, cfg: SearchConfig, now: datetime.datetime | Non
     words = [w for w in re.findall(r"[a-z0-9']+", about.lower()) if len(w) > 2]
     if words:
         pool, seen = [], set()
-        with concurrent.futures.ThreadPoolExecutor(len(FEEDS)) as pool_of:  # all at once: ~0.3 s, not ~3
-            feeds = list(pool_of.map(lambda f: fetch(f, cfg.timeout_s), FEEDS))
-        for stories in feeds:
+        for stories in _all(fetch, list(FEEDS), cfg.timeout_s):
             for s in stories:
                 text = f"{s['title']} {s['summary']}".lower()
                 if s["link"] not in seen and all(re.search(rf"\b{re.escape(w)}", text) for w in words):
@@ -213,7 +254,12 @@ def news(topic: str, about: str, cfg: SearchConfig, now: datetime.datetime | Non
             # Too little in the BBC's feeds: Google News's search, each story once (the BBC's
             # own turn up there too, under the same headline).
             titles = {s["title"].lower() for s in pool}
-            pool += [s for s in google_news(about.strip(), cfg.timeout_s)[:10] if s["title"].lower() not in titles]
+            try:
+                more = google_news(about.strip(), cfg.timeout_s)[:10]
+            except Exception as e:  # what the BBC had still stands
+                note(f"news: Google News failed: {e!r}")
+                more = []
+            pool += [s for s in more if s["title"].lower() not in titles]
         pool.sort(key=lambda s: s["published"], reverse=True)
         what = f"about {about.strip()!r}"
     else:

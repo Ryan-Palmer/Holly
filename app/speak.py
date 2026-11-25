@@ -147,7 +147,7 @@ class Holly:
                       f"({', '.join(a.name for a in asides)}); he starts afresh.{RESET}")
         # The ship's records (app/records.py), if they've been built: searched by recall, and a
         # few, fitting what's been said, put in his prompt while he sleeps to bring up now and then.
-        self.records = (archive.Archive(cfg.recall, self.lm, self.model, cfg.recall.records_file)
+        self.records = (archive.Archive(cfg.recall, self.lm, self.model, cfg.recall.records_file, talk=False)
                         if cfg.recall.enabled and cfg.recall.records_file.exists() else None)
         self.archive = (archive.Archive(cfg.recall, self.lm, self.model, records=self.records)
                         if cfg.recall.enabled else None)
@@ -350,10 +350,14 @@ class Holly:
             # tool, three times in three, made up ("ministers are arguing about taxes") or the
             # last one again; with none, he called it every time. So he must call a tool, and
             # the earlier reports are stubbed before he sees them, not only once he's called it.
-            if guards.STATUS_ASKED.search(user) and "news" in self.toolbox:
+            if (not user.startswith("[") and "news" in self.toolbox and guards.STATUS_ASKED.search(user)
+                    and await asyncio.to_thread(news.wants_report, self.lm, self.model, user)):
                 messages = news.without_earlier_reports(messages, asked - 1)
                 choice = choice or required
-            if user.startswith("[") and guards.DUE_ACTION.search(user):  # a timer to do something
+            # A timer to do something with a tool ("check the weather in Keswick"), not just say.
+            if (user.startswith("[") and (labels := [label for label in guards.DUE_LABEL.findall(user)
+                                                     if guards.ACTION_WORDS.search(label)])
+                    and await asyncio.to_thread(timers.to_do, self.lm, self.model, labels)):
                 choice = choice or required
             # Which tool is his to choose: made to call one for a memory, he chose recall every
             # time (25 of 25 in the evals). A web search turned into recall only ever caught the

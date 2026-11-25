@@ -61,12 +61,17 @@ PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on(?:to| wi
 REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|write it (?:all )?up|in depth|in detail|properly|"
                            r"proper (?:look|one|job)|full one|long one|while you doze|while you sleep|later)\b",
                            re.IGNORECASE)
-# A timer or reminder come due whose label is a tool's job (timers.announcement's note):
-# told in the note to do it with the tool, he announced "check the weather in Keswick"
-# and didn't, one time in four. Then his reply must call one (app/speak.py).
-DUE_ACTION = re.compile(r"\bThe (?:timer|reminder) '[^']*\b(?:play|put on|music|songs?|album|playlist|weather|"
-                        r"forecast|news|headlines|the time|look up|search|find out)\b[^']*'", re.IGNORECASE)
-# A status report asked for: the news tool, every time (app/speak.py).
+# Timers and reminders come due, in timers.announcement's note: each label, however it's
+# punctuated ("Jo's playlist").
+DUE_LABEL = re.compile(r"\bThe (?:timer|reminder) '(.*?)': it(?:'s due now| came due)")
+# A label that may be a tool's job: told in the note to do it with the tool, he announced
+# "check the weather in Keswick" and didn't, one time in four. Words alone took "go to Jo's
+# school play" and "search for my keys" for jobs too, so these are only asked about
+# (timers.to_do); if the model says so, his reply must call a tool (app/speak.py).
+ACTION_WORDS = re.compile(r"\b(?:play|put on|music|songs?|album|playlist|weather|forecast|news|headlines|"
+                          r"time|look up|search|find out)\b", re.IGNORECASE)
+# Words that may be a status report asked for: then asked about (news.wants_report), since
+# "my boss wants a status update" isn't one. If it is, the news tool, every time.
 STATUS_ASKED = re.compile(r"\bstatus (?:report|update)s?\b", re.IGNORECASE)
 # His last reply offered the choice in his own words ("shall I dig into it while I doze?").
 OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
@@ -77,9 +82,12 @@ OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|pro
 NO_CLOCK = re.compile(r"\b(?:no|not got a|haven't (?:got )?a|don't have a|without a) (?:clock|watch)\b|"
                       r"\bcan(?:'t|not) (?:tell|see|know) (?:you )?(?:the|what) time\b|"
                       r"\bno (?:idea|way of knowing) what time\b", re.IGNORECASE)
-# A time of day in a reply: "10:14", "10 pm", "ten o'clock". Not "12.50": that's money.
-CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)|"
-                        r"\bo'clock\b", re.IGNORECASE)
+# A time of day in a reply: "10:14", "10:14 pm", "10 pm", "ten o'clock". Not "12.50": money.
+_HOURS = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve")
+_AMPM = r"\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)"
+CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}(?:" + _AMPM + r"|\b)|\b\d{1,2}" + _AMPM + r"|\b(?:\d{1,2}|"
+                        + "|".join(_HOURS) + r")\s+o'clock\b", re.IGNORECASE)
+NEAR_MIN = 15  # an hour alone ("4 pm", "five o'clock") is said of a time this close to it
 # A tool call written out as text, in the model's own markup: asked "Do you miss Lister?",
 # Gemma's reply was `recall{query:<|"|>Lister<|"|>,...}<tool_call|>`, to be read aloud.
 # Matched as written, and as the sentence chunker leaves it (without "|" or "_"):
@@ -167,11 +175,37 @@ def needs_tool(why: str) -> bool:
     return any(w in why for w in ("recall", "research", "clock", "timer", "tool call"))
 
 
+def minutes(time: str) -> tuple[set[int], bool]:
+    """The times of day a CLOCK_TIME match can mean, in minutes past midnight, and whether
+    it's to the minute: "17:05" {1025}; "5:05" {305, 1025}; "4 pm" {960}, not to the minute."""
+    t = time.lower().replace(".", "")
+    m = re.match(r"(\d{1,2}|[a-z]+)(?::(\d{2}))?\s*(am|pm|o'clock)?", t)
+    hour = int(m[1]) if m[1].isdigit() else _HOURS.index(m[1]) + 1
+    mins = int(m[2] or 0)
+    if m[3] in ("am", "pm"):
+        return {(hour % 12 + (12 if m[3] == "pm" else 0)) * 60 + mins}, m[2] is not None
+    if hour > 12 or (len(m[1]) == 2 and m[1].startswith("0")):  # the 24-hour clock: "17:05", "07:45"
+        return {hour * 60 + mins}, m[2] is not None
+    return {(hour % 12) * 60 + mins, (hour % 12 + 12) * 60 + mins}, m[2] is not None
+
+
 def guessed_time(said: str, told: list[str]) -> bool:
     """Did he give a time of day that nobody gave him (the clock, the weather's sunset, a
     search, the crew, a timer coming due)? Kept as fact in his history, a guess stuck:
     greeted, he said "10:14 PM" at 7:56, and repeated it four times, asked to use the
     clock or not. Each time he gave must be one he was given: any time at all, given a
-    turn before, let him count on a minute a reply ("22:15", "22:16", "22:17"), unchecked."""
-    heard = " ".join(told).lower()
-    return any(t.lower() not in heard for t in CLOCK_TIME.findall(said))
+    turn before, let him count on a minute a reply ("22:15", "22:16", "22:17"), unchecked.
+    Given as he'd say it, though: told "17:05" by the clock, or "sunset 16:02", his "5:05
+    pm", "five o'clock" and "just after 4 pm" were taken for guesses, and not said, or
+    redone and kept marked as wrong. So times are compared as times of day: to the minute
+    exactly, an hour alone within NEAR_MIN."""
+    heard: set[int] = set()
+    for t in CLOCK_TIME.findall(" ".join(told)):
+        heard |= minutes(t)[0]
+    for t in CLOCK_TIME.findall(said):
+        times, exact = minutes(t)
+        if exact and not times & heard:
+            return True
+        if not exact and not any(min(abs(a - b), 1440 - abs(a - b)) <= NEAR_MIN for a in times for b in heard):
+            return True
+    return False

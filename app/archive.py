@@ -110,8 +110,11 @@ a an and are as at be been but by can could did do does for from had has have he
 is it its me my of on or our she so that the their them then there they this to was we were what when
 where which who why will with would you your about tell remember recall said say talk talked told
 holly ago last time conversation conversations earlier before again know did do any some
-crew
-""".split()) | set(WEEKDAYS) | {"today", "tonight", "yesterday", "tomorrow"}  # every entry says "Crew:"
+""".split()) | set(WEEKDAYS) | {"today", "tonight", "yesterday", "tomorrow"}
+# And in his conversations, where every entry says "Crew:" (not in the ship's records, where
+# "crew" is a word worth finding, nor in reports.py, which shares STOPWORDS).
+TALK_STOPWORDS = STOPWORDS | {"crew"}
+EARLIER_PICKED = 4  # lines said earlier on a day about "tonight", for a question about that night
 
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
           "october", "november", "december"]
@@ -136,14 +139,15 @@ EMBED_RETRY_S = 60.0  # after the embedding model failed (LM Studio restarting, 
 
 class Archive:
     def __init__(self, cfg: RecallConfig, lm: LmStudio, model: str, file: Path | None = None,
-                 records: Archive | None = None):
+                 records: Archive | None = None, talk: bool = True):
         """His conversations' archive (`cfg.file`), or another store of entries
-        with `file` (the ship's records, app/records.py). `records`, if given, is
-        searched by recall too."""
+        with `file` (the ship's records, app/records.py: `talk` False). `records`,
+        if given, is searched by recall too."""
         self.cfg = cfg
         self.lm = lm
         self.model = model
         self.records = records
+        self.stopwords = TALK_STOPWORDS if talk else STOPWORDS
         file = file or cfg.file
         file.parent.mkdir(parents=True, exist_ok=True)
         # Written from the event loop (as history is folded), searched from a worker
@@ -334,7 +338,7 @@ class Archive:
                 if w == "may":
                     continue
                 w = w.lower().removesuffix("'s").strip("'")
-                if len(w) > 1 and w not in STOPWORDS and w not in out:
+                if len(w) > 1 and w not in self.stopwords and w not in out:
                     out.append(w)
             return out
 
@@ -348,28 +352,34 @@ class Archive:
         # entries one Monday) gave the judge its first hour, and "what did we do
         # yesterday?" was answered from twenty minutes of lunchtime. "Last night" is the
         # evening (spans_in): "what did I have for food last night?" missed the tea, said at
-        # 9:39 pm, among a day of 223 entries; among the evening's 109, it came first.
+        # 9:39 pm, among a day of 223 entries; among the evening's 109, it came first. What
+        # was said earlier that day about "tonight" goes with it ("fish pie tonight", at 4:30).
         asked = words + [w for w in key_words(question) if w not in words]
         for spans in spans_in(f"{query} {question}", on):
+            earlier = []
             with self.lock:
                 for start, end in spans:  # the night asked about, or if nothing was said then, its day
                     day = self.db.execute("SELECT rowid, at, text FROM entries WHERE at >= ? AND at < ? ORDER BY at",
                                           (start, end)).fetchall()
                     if day:
                         break
+                if day and len(spans) > 1 and (start, end) == spans[0]:
+                    earlier = self.db.execute(
+                        "SELECT rowid, at, text FROM entries WHERE entries MATCH '\"tonight\"' AND at >= ? AND at < ? "
+                        "ORDER BY at DESC LIMIT ?", (spans[1][0], start, EARLIER_PICKED)).fetchall()
                 matched = self.db.execute(
                     "SELECT rowid FROM entries WHERE entries MATCH ? AND at >= ? AND at < ? "
                     "ORDER BY bm25(entries) LIMIT ?",
                     (" OR ".join(f'"{w}"' for w in asked), start, end, DAY_PICKED)).fetchall() if asked and day else []
             if not day:
                 continue
-            by_id = {r[0]: (r[1], r[2]) for r in day}
-            picked = [r[0] for r in matched]
+            by_id = {r[0]: (r[1], r[2]) for r in day + earlier}
+            picked = [r[0] for r in earlier] + [r[0] for r in matched]
             if len(picked) < DAY_PICKED:
                 # Without the day's words: the day is settled, and "yesterday" in the search
                 # put the entries that said "yesterday" first, ahead of the album asked about.
                 topic = [t for t in (_DATE.sub(" ", _DAY_WORDS.sub(" ", s)).strip() for s in (query, question))
-                         if len(t.split()) > 1 or t and t.lower() not in STOPWORDS]
+                         if len(t.split()) > 1 or t and t.lower() not in self.stopwords]
                 close = self._by_meaning(topic, among=set(by_id)) if topic else []
                 picked += [i for i in close if i not in picked][: DAY_PICKED - len(picked)]
             rest = [r[0] for r in day if r[0] not in picked]
@@ -421,7 +431,11 @@ class Archive:
         if not hits:
             return self._nothing(query, t1 - t0, 0)
         text = self._judge(entries, dated, query, about)
-        if text.upper().startswith("NOTHING") and asked and added_names(f"{query} {question}", asked):
+        missed = text.upper().startswith("NOTHING") and bool(asked)
+        # Words of the ship's records' pages he names ("Red Dwarf"): not names he added.
+        known = ({w.lower() for t in self.records._named([f"{query} {question}"]) for w in re.findall(r"[A-Za-z]+", t)}
+                 if missed and self.records else set())
+        if missed and added_names(query, question, asked, known):
             # His notes know the crew by name, and he put it in: "do you remember what I had
             # for food last night?" became "what did Sam have for food last night?". His
             # memory says "Crew", never the name, so the tea was missed, or worse, the name
@@ -434,7 +448,10 @@ class Archive:
                     "NOTHING"):
                 hits, text = found[0], again
         names = list(dict.fromkeys(named_in(query, hits, keywords=True) + named_in(question, hits)))[:3]
-        if asked:  # names the crew used: one he added may be the crew's own (see above)
+        if asked and not THIRD_PERSON.search(asked):
+            # A name he added, with nobody in the crew's words it could stand for, is theirs,
+            # from his notes (see above): asked about it, the judge told some other story.
+            # "Did I meet her yesterday?", as "Did the crew meet Jo yesterday?", keeps Jo.
             names = [n for n in names if re.search(rf"\b{n}\b", asked, re.IGNORECASE)]
         if text.upper().startswith("NOTHING") and names:
             # "Did I meet Jo yesterday?" got NOTHING every way it was put, with 14 entries
@@ -508,21 +525,28 @@ def named_in(text: str, hits: list[tuple[str | None, str]], keywords: bool = Fal
     return [w for w in words if any(re.search(rf"\b{w}\b", t) for _, t in hits)][:3]
 
 
-def added_names(text: str, asked: str) -> list[str]:
-    """Names (capitalised words, bar question words and days) in `text`, Holly's search,
-    that aren't in `asked`, the crew's own words."""
-    words = re.findall(r"\b([A-Z][a-z]+)\b", text)
-    return [w for w in dict.fromkeys(words) if w.lower() not in STOPWORDS | NOT_NAMES | set(MONTHS)
+def added_names(query: str, question: str, asked: str, known: set[str] = frozenset()) -> list[str]:
+    """Names in Holly's search that aren't in `asked`, the crew's own words: capitalised
+    words, in his query (words, so its first counts) or his question (not a sentence's
+    first), bar question words, days, months and `known` (the records' page words)."""
+    words = (re.findall(r"\b([A-Z][a-z]+)\b", query)
+             + re.findall(r"(?<![.?!]\s)(?<!^)\b([A-Z][a-z]+)\b", question))
+    return [w for w in dict.fromkeys(words) if w.lower() not in TALK_STOPWORDS | NOT_NAMES | set(MONTHS) | known
             and not re.search(rf"\b{w}\b", asked, re.IGNORECASE)]
 
 
+# Someone the crew's words point at without naming: a name he puts for it isn't theirs.
+THIRD_PERSON = re.compile(r"\b(?:he|him|his|she|her|hers|they|them|their|theirs)\b", re.IGNORECASE)
+
 # The crew's words as a question to Holly's memory, which calls them "Crew": "I", "me"
-# and "my" are the crew. "You" is Holly, as the judge takes it anyway.
+# and "my" are the crew. "You" is Holly, as the judge takes it anyway. ("Mine" isn't:
+# "the mine" is a place.)
 _THEIRS = [(re.compile(p), said) for p, said in (
     (r"\bI'm\b", "the crew is"), (r"\bI've\b", "the crew has"), (r"\bI'd\b", "the crew would"),
     (r"\bI'll\b", "the crew will"), (r"\bI\b", "the crew"), (r"(?i)\b(?:me|myself)\b", "the crew"),
-    (r"(?i)\b(?:my|mine)\b", "the crew's"))]
-_HAILED = re.compile(r"^\W*(?:(?:hey|hi|oi|ok|okay|oh|so),?\s+)?holly\b\W*", re.IGNORECASE)
+    (r"(?i)\bmy\b", "the crew's"))]
+# "Hey Holly," before what they asked; not "Holly's" ("Holly's memory's shot, ...").
+_HAILED = re.compile(r"^\W*(?:(?:hey|hi|oi|ok|okay|oh|so),?\s+)?holly\b(?!['’]s)\W*", re.IGNORECASE)
 
 
 def in_their_words(line: str) -> str:
@@ -611,13 +635,18 @@ something he's just said (what he meant, more of a story or a news item he's jus
 Reply with one word: PAST or OTHER."""
 
 
-def about_the_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:
+def judged_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:
     """Is `line` asking him for something from the past? `before`: the exchange just before,
-    for follow-ups ("and who was in charge of them?"). False if it can't be asked."""
+    for follow-ups ("and who was in charge of them?"). Raises if LM Studio can't answer."""
     user = (f"Just before: {before}\n" if before else "") + f"They say: {line}"
+    return lm.ask(PAST_PROMPT, user, model, max_tokens=4, temperature=0).strip().upper().startswith("PAST")
+
+
+def about_the_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:
+    """judged_past, or False if it can't be asked: he answers as he would have."""
     try:
-        return lm.ask(PAST_PROMPT, user, model, max_tokens=4, temperature=0).strip().upper().startswith("PAST")
-    except Exception:  # LM Studio busy or gone: he answers as he would have
+        return judged_past(lm, model, line, before)
+    except Exception:  # LM Studio busy or gone
         return False
 
 

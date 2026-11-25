@@ -225,7 +225,7 @@ def build() -> None:
     path = cfg.recall.records_file
     if path.exists():
         path.unlink()
-    records = Archive(cfg.recall, lm, cfg.llm.model, path)
+    records = Archive(cfg.recall, lm, cfg.llm.model, path, talk=False)
     records.add(entries)
     print(f"{len(entries)} entries from {pages} pages; embedding...", flush=True)
     t = time.perf_counter()

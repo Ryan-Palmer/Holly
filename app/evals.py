@@ -17,7 +17,9 @@ temporary folder, and Spotify off:
 - scenarios: conversations with made-up memories (app/scenarios.py), each run --runs
   times (Gemma varies), checked for the tools and facts they need.
 - memory: the memory check (app/archive.py's about_the_past), which decides whether a
-  line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES).
+  line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES); and
+  the other side checks, whether a line asks for a status report and whether a timer
+  come due is a job for a tool (scenarios.STATUS_LINES, ACTION_LABELS).
 
 The judge is one fixed model ([evals] judge in holly.toml), whatever model is under
 test, so scores compare between runs; it's loaded after every reply has been written,
@@ -270,6 +272,8 @@ def summary(card: dict) -> list[str]:
         lines.append(f"Scenarios passed: {s['passed']} of {s['runs']}")
     if m := card.get("memory_check"):
         lines.append(f"Memory check right: {m['right']} of {m['of']}")
+    if c := card.get("side_checks"):
+        lines.append(f"Side checks right (status reports, timer jobs): {c['right']} of {c['of']}")
     lines.append("Used more than once, in all his replies: "
                  + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
@@ -293,6 +297,9 @@ def write(card: dict) -> Path:
         md += ["## Memory check", "", f"{m['right']} of {m['of']} right."] + [
             f"- wanted {r['want']}, got {'/'.join(r['got'])}: {r['line']!r}"
             + (f" (after: {r['before'][:80]!r})" if r["before"] else "") for r in m["wrong"]] + [""]
+    if c := card.get("side_checks"):
+        md += ["## Side checks", "", f"{c['right']} of {c['of']} right."] + [
+            f"- {r['check']}: wanted {r['want']}, got {r['got']}: {r['text']!r}" for r in c["wrong"]] + [""]
     if card["persona"]:
         md += ["## Persona", ""]
         for r in card["persona_rows"]:
@@ -342,11 +349,13 @@ async def run(args) -> dict:
     if args.only in (None, "scenarios"):
         print(f"Scenarios, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
         scenario_rows = await run_scenarios(model, args.runs)
-    memory_rows = []
+    memory_rows, side_rows = [], []
     if args.only in (None, "memory"):
         print(f"Memory check, {len(scenarios.MEMORY_LINES)} lines, on {model}:", flush=True)
         memory_rows = await asyncio.to_thread(scenarios.memory_check, lm, model)
         print(f"  {sum(r['right'] for r in memory_rows)} of {len(memory_rows)} right", flush=True)
+        side_rows = await asyncio.to_thread(scenarios.side_checks, lm, model)
+        print(f"Side checks: {sum(r['right'] for r in side_rows)} of {len(side_rows)} right", flush=True)
     if judge_model and persona_rows:
         print(f"Judging, on {judge_model}...", flush=True)
         judge_all(persona_rows, judge_model)
@@ -355,6 +364,8 @@ async def run(args) -> dict:
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
                 memory_check=dict(right=sum(r["right"] for r in memory_rows), of=len(memory_rows),
                                   wrong=[r for r in memory_rows if not r["right"]]) if memory_rows else {},
+                side_checks=dict(right=sum(r["right"] for r in side_rows), of=len(side_rows),
+                                 wrong=[r for r in side_rows if not r["right"]]) if side_rows else {},
                 # Across both parts: "right you are" opened eight scenario replies, unnoticed. Each
                 # scenario's first run only: its later runs say the same things, rightly.
                 repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows if r["run"] == 1

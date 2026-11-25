@@ -135,9 +135,51 @@ def test_in_their_words_and_added_names():
         "do you remember what the crew had for food last night?"
     assert in_their_words("Holly, did I tell you about my mum? I'm sure I did.") == \
         "did the crew tell you about the crew's mum? the crew is sure the crew did."
-    assert added_names("what Sam had for tea What did Sam have for tea on Tuesday?", "what I had for tea") == ["Sam"]
-    assert added_names("Jo tea What did Jo have?", "What did jo have?") == []
-    assert added_names("When did Holly meet Kryten in November?", "when did you meet kryten") == []
+    assert added_names("what Sam had for tea", "What did Sam have for tea on Tuesday?", "what I had for tea") == ["Sam"]
+    assert added_names("Jo tea", "What did Jo have?", "What did jo have?") == []
+    assert added_names("Kryten", "When did Holly meet Kryten in November?", "when did you meet kryten") == []
+    # Not a sentence's first word, nor the ship's records' words: no second try for those.
+    assert added_names("cat race", "Lasagne aside. When did the crew of Red Dwarf meet the cat race?",
+                       "do you remember the cat race?", known={"red", "dwarf"}) == []
+    # "Holly's" isn't him being hailed; "the mine" isn't the crew's.
+    assert in_their_words("Holly's memory's shot, what did I eat?") == "Holly's memory's shot, what did the crew eat?"
+    assert in_their_words("What did I find in the mine?") == "What did the crew find in the mine?"
+
+
+def test_a_name_for_someone_they_didnt_name_is_still_asked_about(cfg):
+    """"Did I meet her yesterday?", put as "Did the crew meet Jo yesterday?": Jo isn't in
+    the crew's words, but "her" is, so Jo isn't the crew, and is asked about plainly."""
+    asked = []
+
+    def judge(system, user):
+        asked.append(user)
+        return "ANSWER: Jo came round." if "say about Jo" in user else "NOTHING"
+
+    a = archive(cfg, FakeLm(side=judge))
+    a.add([entry(dt.datetime(2026, 11, 1, 9), "My sister Jo is a vet.")])
+    found = a.recall("Jo", "Did the crew meet Jo yesterday?", asked="Did I meet her yesterday?")
+    assert found.answer == "Jo came round." and "What do these entries say about Jo?" in asked[-1]
+
+
+def test_tonight_said_earlier_that_day_is_last_night(cfg):
+    """"I'm having fish pie tonight", said at 4:30, and the evening's own talk: asked about
+    last night, the evening's talk alone missed it."""
+    a = archive(cfg)
+    a.add([entry(dt.datetime(2026, 11, 17, 16, 30), "I'm having fish pie tonight.")])
+    a.add([entry(dt.datetime(2026, 11, 17, 21, 0), "Night, Holly.")])
+    a.add([entry(dt.datetime(2026, 11, 17, 11, 0), "Nice morning for it.")])
+    texts = " ".join(t for _, t in a.search("what I had for tea last night", on=dt.date(2026, 11, 18),
+                                            question="What did I have for tea last night?"))
+    assert "fish pie tonight" in texts and "Night, Holly" in texts and "morning" not in texts
+
+
+def test_crew_is_a_word_worth_finding_in_the_records(cfg):
+    """Every conversation entry says "Crew:", so it's no keyword there; in the ship's
+    records ("Starbug's crew"), and in the reports' words, it is."""
+    from app import archive as archive_module
+    assert "crew" in archive(cfg).stopwords
+    assert "crew" not in Archive(cfg.recall, FakeLm(), "m", cfg.recall.records_file, talk=False).stopwords
+    assert "crew" not in archive_module.STOPWORDS
 
 
 def test_recall_nothing(cfg):

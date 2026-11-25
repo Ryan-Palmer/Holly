@@ -21,7 +21,7 @@ def lm(lmstudio):
                          ids=[f"{'PAST' if p else 'OTHER'}: {line[:50]}" + (" (after talk)" if b else "")
                               for line, b, p in scenarios.MEMORY_LINES])
 def test_memory_check(lm, line, before, past):
-    from app.archive import about_the_past
+    from app.archive import judged_past  # an LM Studio error fails it, not just the PAST lines
 
-    got = [about_the_past(lm, lm.cfg.model, line, before) for _ in range(2)]
+    got = [judged_past(lm, lm.cfg.model, line, before) for _ in range(2)]
     assert got == [past, past], f"wanted {'PAST' if past else 'OTHER'}, got {got}"

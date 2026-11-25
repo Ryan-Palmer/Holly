@@ -259,6 +259,30 @@ def announcement(items: list[dict], now: datetime.datetime | None = None) -> str
             "Nobody has spoken: you're speaking up by yourself.]")
 
 
+# Is a label come due a job for one of his tools? Asked only of labels with a tool's word in
+# them (guards.ACTION_WORDS): words alone took "go to Jo's school play" for music.
+TO_DO_PROMPT = """\
+A timer or reminder the crew set has come due. Holly, the household computer, has tools: music on Spotify, the \
+weather, the news, the clock and web search.
+DO: the label is something for Holly himself to do now with one of those ("play some Metallica", "put my liked \
+songs on", "check the weather in Keswick", "read me the headlines", "tell me the time").
+SAY: anything else: something for the crew to do or be reminded of ("pasta", "go to Jo's school play", "play \
+football with Sam", "search for my keys", "watch the news at six").
+Reply with one word: DO or SAY."""
+
+
+def to_do(lm, model: str | None, labels: list[str], quiet: bool = True) -> bool:
+    """Is any of these labels something he does with a tool? If it can't be asked, False
+    (the note still tells him to do it, as before), or with `quiet` off (the evals), the error."""
+    try:
+        return any(lm.ask(TO_DO_PROMPT, f"The label: {label}", model, max_tokens=4,
+                          temperature=0).strip().upper().startswith("DO") for label in labels)
+    except Exception:
+        if not quiet:
+            raise
+        return False
+
+
 class TimerTool(Tool):
     name, schema, rules, local = "timer", TOOL, "timers", True
 

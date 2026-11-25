@@ -183,7 +183,7 @@ class Turn:
 @dataclasses.dataclass
 class Scenario:
     name: str
-    turns: list[str]
+    turns: list[str] | Callable[[], list[str]]  # or made as it runs (a weekday two days from now)
     check: Callable[[list[Turn], object], list[str]]  # (the turns, Holly) -> what went wrong
     setup: Callable[[object], None] | None = None
     records: bool = False  # needs the ship's records (app/records.py): skipped where they aren't built
@@ -370,7 +370,7 @@ def a_failed_search(holly) -> None:
     holly.searcher._search = lambda query: ([], "ddgs failed: TimeoutError")
 
 
-NUMBERS = re.compile(r"\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|"
+NUMBERS = re.compile(r"\d|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|"
                      r"fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b", re.IGNORECASE)
 CREW_SLEEP = re.compile(r"\b(?:while|when|as) you(?:'re| are)? (?:asleep|sleep(?:ing)?)\b", re.IGNORECASE)
 SHOW_TALK = re.compile(r"\b(?:episodes?|series|novels?|actors?|the show)\b", re.IGNORECASE)
@@ -399,8 +399,8 @@ SCENARIOS = [
     # miss, which needed that afternoon's own talk (after this talk, the end of a working
     # day, he counted right without the week too); tests/test_dates.py guards the fix. It's
     # here so a model or prompt that loses count shows.
-    Scenario("days until a weekday", ["Well, at least the work day's done now.", f"How many days until {ahead(2)}?",
-                                      f"And how many until {ahead(3)}?"],
+    Scenario("days until a weekday", lambda: ["Well, at least the work day's done now.",
+                                              f"How many days until {ahead(2)}?", f"And how many until {ahead(3)}?"],
              lambda t, h: problems((says(t[1], "two", "2"), f"didn't say two days to {ahead(2)}"),
                                    (says(t[2], "three", "3"), f"didn't say three days to {ahead(3)}")),
              setup=cheery_history),
@@ -537,13 +537,19 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
     if scenario.setup:
         scenario.setup(holly)
     turns = []
-    for said in scenario.turns:
+    for said in scenario.turns() if callable(scenario.turns) else scenario.turns:
         before = len(holly.convo.history)
         if said == ANNOUNCE:
             await holly.announce(report_ready(holly.research))
         elif said == TIMER_DUE:
-            await asyncio.sleep(1.5)  # the timers set in a second
-            await holly.announce(timers_due(holly.timers))
+            due = None
+            for _ in range(50):  # the timers set come due in a second or so
+                await asyncio.sleep(0.1)
+                if due := timers_due(holly.timers):
+                    break
+            if not due:
+                return turns, ["no timer came due"]
+            await holly.announce(due)
         else:
             await holly.respond(said)
         new = holly.convo.history[before:]
@@ -647,12 +653,63 @@ MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just b
 
 def memory_check(lm, model: str | None, votes: int = 2) -> list[dict]:
     """Each of MEMORY_LINES through the memory check, `votes` times (at temperature 0, but
-    not always the same): right only if every vote is."""
-    from .archive import about_the_past
+    not always the same): right only if every vote is. A vote LM Studio couldn't give is
+    "ERROR", not OTHER: about_the_past's answer then, which passed every OTHER line."""
+    from .archive import judged_past
+
+    def vote(line: str, before: str) -> str:
+        try:
+            return "PAST" if judged_past(lm, model, line, before) else "OTHER"
+        except Exception:
+            return "ERROR"
 
     rows = []
     for line, before, past in MEMORY_LINES:
-        got = [about_the_past(lm, model, line, before) for _ in range(votes)]
-        rows.append(dict(line=line, before=before, want="PAST" if past else "OTHER",
-                         got=["PAST" if g else "OTHER" for g in got], right=all(g == past for g in got)))
+        got = [vote(line, before) for _ in range(votes)]
+        rows.append(dict(line=line, before=before, want="PAST" if past else "OTHER", got=got,
+                         right=all(g == ("PAST" if past else "OTHER") for g in got)))
+    return rows
+
+
+# The other side checks: whether a line asks for a status report (news.wants_report), and
+# whether a timer or reminder come due is a job for one of his tools (timers.to_do). Each
+# asked only when words suggest it (guards.STATUS_ASKED, guards.ACTION_WORDS), so these are
+# all lines with those words in. Made up, after live ones.
+STATUS_LINES: list[tuple[str, bool]] = [  # (what they say, asking him for one?)
+    ("Status report, please.", True), ("Holly, give me a status report.", True),
+    ("Could I have a status update please, Holly?", True), ("No, I need another status report please", True),
+    ("What's the status report today?", True), ("Status update?", True), ("Morning Holly, status report.", True),
+    ("Go on then, let's have a status report.", True),
+    ("I've got a status report to write for work.", False), ("Ugh, my boss wants a status update by five.", False),
+    ("That status report was a bit grim.", False), ("The project status report is due on Friday.", False),
+    ("I sent the status update to Jo already.", False), ("Do you think my status report is too long?", False),
+]
+ACTION_LABELS: list[tuple[str, bool]] = [  # (a timer's label, his job with a tool?)
+    ("play some Metallica", True), ("check the weather in Keswick", True), ("tell me the time", True),
+    ("read me the headlines", True), ("put my liked songs on", True), ("play the album Remain in Light", True),
+    ("look up the football scores", True), ("what's the weather doing tomorrow", True),
+    ("pasta", False), ("go to Jo's school play", False), ("play football with Sam", False),
+    ("search for my keys", False), ("watch the news at six", False), ("find out about the boiler from Jo", False),
+    ("take the washing in before the weather turns", False), ("Jo's music lesson", False),
+]
+
+
+def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
+    """STATUS_LINES and ACTION_LABELS through their checks, `votes` times each: right only
+    if every vote is. A vote LM Studio couldn't give is "ERROR", as in memory_check."""
+    from .news import wants_report
+    from .timers import to_do
+
+    def vote(judge, text: str):
+        try:
+            return judge(text)
+        except Exception:
+            return "ERROR"
+
+    rows = []
+    for name, cases, judge in (("status report", STATUS_LINES, lambda x: wants_report(lm, model, x, quiet=False)),
+                               ("timer job", ACTION_LABELS, lambda x: to_do(lm, model, [x], quiet=False))):
+        for text, want in cases:
+            got = [vote(judge, text) for _ in range(votes)]
+            rows.append(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)))
     return rows

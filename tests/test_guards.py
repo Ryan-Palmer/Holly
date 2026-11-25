@@ -44,7 +44,7 @@ CASES = [
     (NO_CLOCK, ["I've no clock of my own.", "I can't tell you the time.", "No idea what time it is.",
                 "I haven't got a watch."],
      ["It's Tuesday.", "The clock's broken in the galley.", "Casino watch."]),
-    (CLOCK_TIME, ["It's 10:14.", "About 10 pm.", "Ten o'clock.", "At 7:30 a.m. sharp"],
+    (CLOCK_TIME, ["It's 10:14.", "About 10 pm.", "Ten o'clock.", "At 7:30 a.m. sharp", "It's 5:05 pm."],
      ["That's £12.50.", "Ten minutes.", "Two pmegs."]),
 ]
 
@@ -67,3 +67,42 @@ def test_a_time_counts_as_given_only_if_it_was():
     assert guessed_time("It's 22:15.", ["Lovely.", "Here: 22:14 on Tuesday."])  # a minute on from what he was told
     assert not guessed_time("Ready at 7:30 pm.", ["Remind me at 7:30 pm"])
     assert not guessed_time("Nothing timed.", [])
+
+
+def test_a_time_is_given_however_hes_put_it():
+    """Told "17:05" by the clock, or "sunset 16:02", his "5:05 pm", "five o'clock" and "just
+    after 4 pm" were taken for guesses: not said, or redone and kept marked as wrong."""
+    from app.guards import guessed_time
+    clock = ["What time is it?", "Here: 17:05 on Wednesday 25 November 2026 (UTC+0)."]
+    assert not guessed_time("It's 5:05 pm.", clock)
+    assert not guessed_time("It's 5:05.", clock)
+    assert not guessed_time("It's 17:05.", clock)
+    assert not guessed_time("Five o'clock, near enough.", clock)
+    assert not guessed_time("Sunset's just after 4 pm.", ["Tomorrow: sunrise 07:45, sunset 16:02."])
+    assert not guessed_time("Ready at 19:30.", ["Remind me at 7:30"])
+    assert guessed_time("It's 5:15.", clock)  # to the minute: not what he was told
+    assert guessed_time("About 10 pm.", clock)  # an hour alone, nowhere near
+
+
+def test_minutes():
+    from app.guards import minutes
+    assert minutes("17:05") == ({1025}, True)
+    assert minutes("5:05") == ({305, 1025}, True)
+    assert minutes("07:45") == ({465}, True)
+    assert minutes("7:30 a.m.") == ({450}, True)
+    assert minutes("4 pm") == ({960}, False)
+    assert minutes("12 am") == ({0}, False)
+    assert minutes("Ten o'clock") == ({600, 1320}, False)
+
+
+def test_due_labels_however_theyre_punctuated():
+    """A label with an apostrophe before its tool's word ("Jo's playlist") wasn't seen."""
+    import datetime as dt
+
+    from app.guards import ACTION_WORDS, DUE_LABEL
+    from app.timers import announcement
+    note = announcement([{"label": "Jo's playlist", "due": "2026-11-25T18:00:00", "kind": "timer"},
+                         {"label": "pasta", "due": "2026-11-25T18:00:00", "kind": "reminder"}],
+                        now=dt.datetime(2026, 11, 25, 18, 0, 30))
+    assert DUE_LABEL.findall(note) == ["Jo's playlist", "pasta"]
+    assert [label for label in DUE_LABEL.findall(note) if ACTION_WORDS.search(label)] == ["Jo's playlist"]

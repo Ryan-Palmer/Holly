@@ -183,7 +183,9 @@ temporary folder:
   run three times, since the model varies.
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
-  (`MEMORY_LINES` in `app/scenarios.py`), each asked twice.
+  (`MEMORY_LINES` in `app/scenarios.py`), each asked twice; and the other
+  side checks, whether a line asks for a status report and whether a timer
+  come due is a job for one of his tools.
 
 Every problem found by talking to him, once fixed, gets a check: a unit
 test if the fix is plain code, or a scenario or labelled line here if it

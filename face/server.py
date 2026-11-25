@@ -89,11 +89,16 @@ def exit_with(pid: int) -> None:
     at once. Left behind, the face stayed on screen holding its VRAM, looking like a frozen
     Holly."""
     if sys.platform == "win32":
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenProcess.restype = ctypes.c_void_p
         handle = kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE: enough to wait on it
         if handle:
             kernel32.WaitForSingleObject(ctypes.c_void_p(handle), 0xFFFFFFFF)  # INFINITE
+        elif (error := ctypes.get_last_error()) != 87:  # 87, ERROR_INVALID_PARAMETER: no such process
+            # Couldn't watch it (access denied, say): Holly may well be running, so the face
+            # stays, closed with him as before (when his socket goes) or by hand.
+            log(f"Can't watch Holly's process (error {error}): the face won't close by itself if he crashes")
+            return
     else:
         while True:
             try:
@@ -655,7 +660,7 @@ def main():
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     import moderngl
     import pygame
-    from screen import Screen
+    from screen import Screen, opening
 
     still = Image.open(args.image).convert("RGB")
     w, h = still.size
@@ -671,6 +676,11 @@ def main():
     if args.crt and args.case:
         if Path(args.case).exists():
             case = np.asarray(Image.open(args.case).convert("RGBA"))
+            try:
+                opening(case)
+            except ValueError as e:  # a JPEG, or a PNG without its screen cut out: it took the face down
+                log(f"Can't use the monitor picture ({e}): a plain bezel instead")
+                case = None
         else:  # it's yours, kept out of git: a fresh copy has the plain bezel
             log(f"No monitor picture at {args.case}: a plain bezel instead")
     screen = Screen(moderngl.create_context(), (fw, fh), crt=args.crt, case=case)

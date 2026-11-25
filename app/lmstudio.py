@@ -14,6 +14,9 @@ from openai import AsyncOpenAI, OpenAI
 from .config import LlmConfig
 
 
+CHECK_TIMEOUT_S = 5.0  # for LM Studio to say what's loaded (~2 ms when it's well)
+
+
 @dataclass
 class ReplyTiming:
     """Milliseconds from sending the request."""
@@ -36,8 +39,10 @@ class LmStudio:
 
     # Model management -------------------------------------------------
 
-    def loaded_instances(self, model: str) -> list[dict]:
-        resp = self.http.get("/api/v1/models")
+    def loaded_instances(self, model: str, timeout: float | None = None) -> list[dict]:
+        """`timeout`: seconds to wait for LM Studio to answer, if not the client's 300 (made
+        for loading a model)."""
+        resp = self.http.get("/api/v1/models", **({"timeout": timeout} if timeout else {}))
         resp.raise_for_status()
         for m in resp.json()["models"]:
             if m["key"] == model:
@@ -56,7 +61,8 @@ class LmStudio:
             self.http.post("/api/v1/models/unload", json={"instance_id": inst["id"]}).raise_for_status()
 
     def ensure_loaded(
-        self, model: str | None = None, context_length: int | None = None, fresh: bool = False
+        self, model: str | None = None, context_length: int | None = None, fresh: bool = False,
+        check_timeout: float | None = None,
     ) -> bool:
         """Load the model with our settings unless it already is.
 
@@ -72,7 +78,8 @@ class LmStudio:
         reported config doesn't show the split. An instance loaded while
         another model held the GPU read prompts 6x slower than a clean load
         (640 against 3,700 tokens/s), with settings that looked identical.
-        Returns True if a load happened.
+        Returns True if a load happened. `check_timeout`: how long to wait for LM Studio to
+        say what's loaded (CHECK_TIMEOUT_S for the checks before a reply and after a failure).
         """
         chat = context_length is None
         model = model or self.cfg.model
@@ -80,7 +87,7 @@ class LmStudio:
         if chat:
             want |= {"parallel": self.cfg.parallel, "eval_batch_size": self.cfg.eval_batch_size}
         with self._loading:
-            instances = self.loaded_instances(model)
+            instances = self.loaded_instances(model, check_timeout)
             if not fresh and any(all(i["config"].get(k) == v for k, v in want.items()) for i in instances):
                 return False
             if instances:
@@ -100,7 +107,7 @@ class LmStudio:
         crew's question, and the forecasts he'd just looked up, and answered the day's
         first "Hey Holly" instead ("I'm here. What's up?"), turn after turn, for the
         rest of the afternoon."""
-        return await asyncio.to_thread(self.ensure_loaded, model)
+        return await asyncio.to_thread(self.ensure_loaded, model, None, False, CHECK_TIMEOUT_S)
 
     # Chat ------------------------------------------------------------
 
@@ -204,11 +211,13 @@ class LmStudio:
     def _load_after_failure(self, model: str | None) -> None:
         """A request failed: LM Studio's engine may have crashed. The model's loaded again
         now, as he loads it, before any other request (a retry, his reply after a side task
-        that failed quietly) has LM Studio load it with its defaults (see keep_loaded)."""
+        that failed quietly) has LM Studio load it with its defaults (see keep_loaded). Asked
+        with a short timeout: a hung LM Studio had him wait its 300 s more before saying the
+        reply had failed."""
         try:
-            self.ensure_loaded(model)
+            self.ensure_loaded(model, check_timeout=CHECK_TIMEOUT_S)
         except Exception:
-            pass  # LM Studio's gone: the request's own error says why
+            pass  # LM Studio's gone, or not answering: the request's own error says why
 
     async def aask(self, system: str, user: str, model: str | None = None, max_tokens: int = 800,
                    temperature: float = 0.2, reasoning: str = "none") -> tuple[str, bool]:

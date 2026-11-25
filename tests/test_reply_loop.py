@@ -247,7 +247,9 @@ def test_a_failed_timer_announcement_keeps_the_timer(make_holly):
 def test_a_timer_to_do_something_must_call_a_tool(make_holly):
     """"Check the weather in Keswick" came due, and he announced it without checking, one
     time in four, though the note told him to use the tool. A "pasta" timer is just said."""
-    lm = FakeLm([[("weather", {"place": "Keswick"})], "Six degrees and drizzle.", "Pasta's done."])
+    from app import timers
+    lm = FakeLm([[("weather", {"place": "Keswick"})], "Six degrees and drizzle.", "Pasta's done.", "Off you go."],
+                side=lambda system, user: ("DO" if "weather" in user else "SAY") if system == timers.TO_DO_PROMPT else "")
     holly = make_holly(lm)
     due = (dt.datetime.now() - dt.timedelta(seconds=5)).isoformat(timespec="seconds")
     holly.timers.items = [{"label": "check the weather in Keswick", "due": due, "kind": "timer"}]
@@ -256,6 +258,12 @@ def test_a_timer_to_do_something_must_call_a_tool(make_holly):
     holly.timers.items = [{"label": "pasta", "due": due, "kind": "timer"}]
     asyncio.run(holly.announce(announce.timers_due(holly.timers)))
     assert lm.requests[2]["tool_choice"] is None
+    # "Play" in a reminder for the crew: the words alone took it for music. The model says no.
+    holly.timers.items = [{"label": "go to Jo's school play", "due": due, "kind": "reminder"}]
+    asyncio.run(holly.announce(announce.timers_due(holly.timers)))
+    assert lm.requests[3]["tool_choice"] is None
+    asked = [r["user"] for r in lm.side_requests if r["system"] == timers.TO_DO_PROMPT]
+    assert asked == ["The label: check the weather in Keswick", "The label: go to Jo's school play"]  # not pasta
 
 
 def test_a_failed_report_announcement_is_tried_again(make_holly):
@@ -333,7 +341,8 @@ def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
     monkeypatch.setattr(news, "roundup", lambda cfg, **kw: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
     first = "Politics' got a bill. Additional — a skutter has gone missing."
     lm = FakeLm([[("news", {"topic": "roundup"})], first, "Science is overrated.",
-                 [("news", {"topic": "roundup"})], "Politics — a bill."])
+                 [("news", {"topic": "roundup"})], "Politics — a bill."],
+                side=lambda system, user: "YES" if system == news.REPORT_PROMPT else "")
     holly = make_holly(lm)
     respond(holly, "Status report, please.")
     respond(holly, "Thoughts on science?")
@@ -348,6 +357,24 @@ def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
     assert contents[-1].startswith(news.REPORT)  # the new report's news is there
     assert lm.requests[4]["tool_choice"] is None  # once he has it, he says it
     assert any(m.get("content") == first for m in holly.convo.history)  # still in his history
+
+
+def test_a_status_report_mentioned_isnt_one_asked_for(make_holly, monkeypatch):
+    """"My boss wants a status update by five" had him made to give the news: the words
+    are only a reason to ask the model."""
+    from app import news
+    from app.search import Lookup
+    monkeypatch.setattr(news, "roundup", lambda cfg, **kw: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
+    first = "Politics — a bill."
+    lm = FakeLm([[("news", {"topic": "roundup"})], first, "Deadlines. Lovely."],
+                side=lambda system, user: "YES" if "please" in user else "NO")
+    holly = make_holly(lm)
+    respond(holly, "Status report, please.")
+    respond(holly, "Ugh, my boss wants a status update by five.")
+    asked = lm.requests[2]
+    assert asked["tool_choice"] is None and first in [m.get("content") for m in asked["messages"]]
+    assert [r["user"] for r in lm.side_requests if r["system"] == news.REPORT_PROMPT] == [
+        "They say: Status report, please.", "They say: Ugh, my boss wants a status update by five."]
 
 
 def test_the_memory_check_sees_the_last_two_exchanges():

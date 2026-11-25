@@ -87,3 +87,31 @@ def test_a_failed_side_task_has_the_model_loaded_again_too(monkeypatch):
     with pytest.raises(RuntimeError):
         lm.ask("Sort this.", "They say: hello")
     assert [path for path, _ in asked] == ["/api/v1/models/unload", "/api/v1/models/load"]
+
+
+def test_what_is_loaded_is_asked_with_a_short_timeout():
+    """A hung LM Studio had him wait the client's 300 s more, after a reply had failed,
+    before saying so: the checks before a reply and after a failure wait CHECK_TIMEOUT_S."""
+    from app.lmstudio import CHECK_TIMEOUT_S
+    waits: list[float] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        waits.append(request.extensions["timeout"]["read"])
+        instances = [{"id": "gemma:0", "config": dict(OURS)}]
+        return httpx.Response(200, json={"models": [{"key": "gemma", "loaded_instances": instances}]})
+
+    lm = LmStudio(CFG)
+    lm.http = httpx.Client(base_url=CFG.base_url, timeout=300, transport=httpx.MockTransport(handle))
+    asyncio.run(lm.keep_loaded())
+    lm._load_after_failure(None)
+    lm.ensure_loaded()  # at startup: the client's own
+    assert waits == [CHECK_TIMEOUT_S, CHECK_TIMEOUT_S, 300]
+
+
+def test_a_hung_lm_studio_after_a_failure_is_left_be():
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("no answer", request=request)
+
+    lm = LmStudio(CFG)
+    lm.http = httpx.Client(base_url=CFG.base_url, transport=httpx.MockTransport(handle))
+    lm._load_after_failure(None)  # no exception: the request's own error says why
