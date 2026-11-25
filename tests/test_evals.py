@@ -1,6 +1,6 @@
 """The evals' checks and scorecards, without a model."""
 
-from app import evals
+from app import conversations, evals
 
 EXAMPLES = ["Morning. You're up early, the sun's barely had a cup of tea."]
 
@@ -34,16 +34,35 @@ def test_scorecard_and_compare(tmp_path, monkeypatch):
             dict(name="a timer", run=2, wrong=["nothing set"], turns=[dict(said="x", reply="y", tools=[])])]
     scen = evals.scenario_scores(runs)
     assert (scen["passed"], scen["runs"], scen["by_name"]["a timer"]) == (1, 2, (1, 2))
-    card = dict(model="google/some-model", judge="google/judge", label="try", commit="abc123", when="2026-11-23T23:00",
-                session=False, persona=persona, scenarios=scen, persona_rows=rows, scenario_runs=runs,
+    replies = ["Evening.", "Green. The Cat's convinced the hangers are judging him."]
+    talk = dict(name="after the reports", run=1, wrong=[], transcript="1. Crew: Evening.\n   Holly: Evening.",
+                replies=replies, turns=[dict(said="Evening.", reply="Evening.", tools=[])], verdicts=[
+                    dict(judge="google/judge", overall=4, **{k: v for k, v in conversations.verdict(
+                        "UNASKED: PASS", replies).items() if k != "overall"}),
+                    dict(judge="qwen/judge", overall=2, **{k: v for k, v in conversations.verdict(
+                        'UNASKED: FAIL - "The Cat\'s convinced the hangers" - the Cat, unasked', replies).items()
+                        if k != "overall"})])
+    card = dict(model="google/some-model", judges=["google/judge", "qwen/judge"], label="try", commit="abc123",
+                when="2026-11-23T23:00", session=False, persona=persona, scenarios=scen, persona_rows=rows,
+                scenario_runs=runs, conversations=conversations.scores([talk]), conversation_runs=[talk],
                 repeated=evals.openings(rows + [dict(reply="Right you are. Done."), dict(reply="Right you are. Set.")]))
     path = evals.write(card)
     md = path.with_suffix(".md").read_text(encoding="utf-8")
     assert "| a timer | 1 of 2 |" in md and "nothing set" in md and "Late." in md
     assert "opens 'right you are' x2" in md
+    assert "### after the reports, run 1: passed (flagged by one judge: UNASKED (judge))" in md and "- UNASKED: FAIL \"The Cat's convinced" in md
+    assert "Conversations passed: 1 of 1" in "\n".join(evals.summary(card))
     table = evals.compare().splitlines()
     assert table[0].split()[:3] == ["when", "label", "model"]
-    assert "some-model" in table[1] and "1/2" in table[1] and "3.00" in table[1]
+    assert "some-model" in table[1] and "1/2" in table[1] and "3.00" in table[1] and "1/1" in table[1]
+
+
+def test_two_judges_scores_are_averaged_and_each_kept():
+    rows = [dict(by={"google/a": [4, "dry"], "qwen/b": [2, "chirpy"]}), dict(by={"google/a": [3, ""], "qwen/b": [0, ""]})]
+    evals.merged(rows)
+    assert rows[0]["score"] == 3 and rows[0]["why"] == "a: dry / b: chirpy"
+    assert rows[1]["score"] == 3  # no score from one judge: the other's
+    assert evals.by_judge(rows) == {"google/a": 3.5, "qwen/b": 2}
 
 
 def test_compare_with_nothing(tmp_path, monkeypatch):

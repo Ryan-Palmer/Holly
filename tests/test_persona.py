@@ -105,7 +105,6 @@ def test_crew_lines_skip_his_notes(cfg):
     c.record("[The timer 'pasta': it's due now.]", "Pasta's ready.")
     c.record("Jo's coming over.", "Noted.")
     assert c.crew_lines().endswith("Jo's coming over.") and "pasta" not in c.crew_lines()
-    assert c.recent_topics() == ["Jo's coming over."]
 
 
 def test_kept_on_disk(cfg, tmp_path):
@@ -144,3 +143,64 @@ def test_his_prompt_has_the_week_around_today(cfg):
     from app.persona import today, week_around
 
     assert f"Today is {today()}. {week_around(dt.date.today())}" in convo(cfg).messages_for("Hi.")[0]["content"]
+
+
+def report_turn(crew: str, report: str) -> list[dict]:
+    from app import status
+    return [{"role": "user", "content": crew},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "type": "function",
+                                                                 "function": {"name": "status", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "1", "content": status.REPORTS[0] + "\n" + report},
+            {"role": "assistant", "content": report}]
+
+
+def test_crew_asides_left_out_of_what_he_sees(cfg):
+    """With them kept, he copied them: every Cat line after was about coat hangers."""
+    c = convo(cfg)
+    c.record("Gift ideas?", "A jigsaw. The Cat's convinced the hangers are forming a union. He's livid.")
+    c.record("Where's the Cat?", "In the wardrobe. The Cat's convinced the hangers are judging him.")  # asked: kept
+    c.history += report_turn("Status report.", "Lister lost a bet. The Cat slept.")  # a report: kept
+    sent = [m["content"] for m in c.messages_for() if m["role"] == "assistant" and m["content"]]
+    assert sent == ["A jigsaw.", "In the wardrobe. The Cat's convinced the hangers are judging him.",
+                    "Lister lost a bet. The Cat slept."]
+
+
+def test_a_report_announced_isnt_asking_about_the_crew(cfg):
+    """"Tell the crew it's ready": they're the crew to him, not Red Dwarf's."""
+    c = convo(cfg)
+    c.record("[Your research on 'Gifts' is finished. Tell the crew it's ready.]",
+             "The gifts report is ready. The Cat's convinced the hangers are judging him.")
+    assert [m["content"] for m in c.messages_for() if m["role"] == "assistant"] == ["The gifts report is ready."]
+
+
+def test_what_he_doesnt_see_isnt_quoted_back_as_worn(cfg):
+    """"Lately you've said: 'convinced the hangers are'": crew asides, cut from what he sees,
+    were quoted back to him from his history, and he went on about coat hangers."""
+    c = convo(cfg)
+    c.record("Gift ideas?", "A jigsaw. The Cat's convinced the hangers are judging him.")
+    c.record("And for June?", "A blower. The Cat's convinced the hangers are forming a union.")
+    assert "hangers" not in c.messages_for("Thanks.")[-1]["content"]
+
+
+def test_status_reports_arent_worn_phrases(cfg):
+    """"Lately you've said 'an earlier report', 'report old news now'", from the line earlier
+    reports are cut to: he gave a status report, unasked, three times in four."""
+    c = convo(cfg)
+    c.history = (report_turn("Status report.", "The Cat slept. Lister lost a bet.")
+                 + report_turn("Another.", "The Cat sulked. Lister lost a bet.")
+                 + report_turn("And another.", "The Cat sulked. Lister lost a bet again."))
+    last = c.messages_for("She'd like a trug.")[-1]["content"]
+    assert "Lately" not in last
+
+
+def test_the_crew_after_asking_about_them_are_no_aside(cfg):
+    """"What's he doing there?", after "Where's Kryten?": about him still."""
+    c = convo(cfg)
+    c.record("Where's Kryten?", "In the laundry.")
+    c.record("What's he doing there?", "Ironing. Lister's helping, badly.")
+    c.record("Right. Kettle's on.", "Thrilling. Lister's helping with that too.")
+    sent = [m["content"] for m in c.messages_for() if m["role"] == "assistant"]
+    assert sent == ["In the laundry.", "Ironing. Lister's helping, badly.", "Thrilling."]
+    assert c.last_about_the_crew() is False
+    c.record("Where's Rimmer?", "Saluting.")
+    assert c.last_about_the_crew() is True

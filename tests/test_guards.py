@@ -3,7 +3,7 @@
 import pytest
 
 from app.guards import (CLAIMED_RECALL, CLOCK_TIME, COUNTDOWN, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
-                        PROMISED_RESEARCH, REPORT_WANTED, RESEARCH_ASKED, without_offers)
+                        PROMISED_RESEARCH, REPORT_ASKED, REPORT_WANTED, RESEARCH_ASKED, without_offers)
 
 CASES = [
     (COUNTDOWN, ["Six minutes left.", "Four minutes until you're stirring that pasta.", "Two minutes to go.",
@@ -106,3 +106,33 @@ def test_due_labels_however_theyre_punctuated():
                         now=dt.datetime(2026, 11, 25, 18, 0, 30))
     assert DUE_LABEL.findall(note) == ["Jo's playlist", "pasta"]
     assert [label for label in DUE_LABEL.findall(note) if ACTION_WORDS.search(label)] == ["Jo's playlist"]
+
+
+def test_a_crew_aside_and_the_rest_after_it_are_left_out():
+    """"The Cat is currently refusing to leave his wardrobe. He's convinced the hangers are
+    judging him.", after research queued: the second sentence, kept, and every Cat line
+    after was about coat hangers."""
+    reply = ("I've got it in hand. The Cat is currently refusing to leave his wardrobe. "
+             "He's convinced the hangers are judging him.")
+    assert without_offers(reply, asides=True) == "I've got it in hand."
+    assert without_offers(reply) == reply  # asked about the crew: kept
+    assert without_offers("The Cat slept.", asides=True) == "The Cat slept."  # all there is: kept
+    assert without_offers("A jigsaw, maybe. The cat would hate it.", asides=True) == "A jigsaw, maybe. The cat would hate it."
+
+
+@pytest.mark.parametrize("line", [
+    "Can you look into the best dog breeds for a small house and write me a report?",
+    "Holly, research the best electric bikes under a thousand pounds and write me a report.",
+    "Could you do a report on heat pumps?", "I'd like a report on air fryers.", "Write a report on slugs.",
+    "Holly, please write up a proper report on solar panels", "Go on then, write it up.",
+    "Can you put together a short write-up on composting?"])
+def test_a_report_asked_for_in_so_many_words(line):
+    assert REPORT_ASKED.search(line)
+
+
+@pytest.mark.parametrize("line", [
+    "Status report, please.", "What did the board games report say?", "I need to write a report for work tonight.",
+    "Could you look into slugs in the garden?", "My boss wants a status update by five.", "Can you write me a poem?",
+    "Can you sum up the coffee machine report?", "The report was rubbish.", "Can you open the report?"])
+def test_a_report_only_mentioned_isnt_one_asked_for(line):
+    assert not REPORT_ASKED.search(line)

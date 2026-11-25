@@ -1,12 +1,12 @@
 """How good Holly is on a model: his character, and his use of tools and memory, scored the
 same way every time, so models and changes can be compared.
 
-    python -m app.evals [--model KEY] [--runs N] [--label NAME] [--only persona|scenarios|memory|status]
-                        [--session] [--no-judge]
+    python -m app.evals [--model KEY] [--runs N] [--label NAME]
+                        [--only persona|scenarios|conversations|memory|status] [--session] [--no-judge]
     python -m app.evals --compare
 
-Four parts; the first two through his real reply loop with a silent voice, his memory in a
-temporary folder, and Spotify off:
+Five parts; the first three through his real reply loop with a silent voice, his memory in
+a temporary folder, and Spotify off:
 
 - persona: each prompt in persona/test_prompts.txt, asked afresh (or, with --session,
   as one conversation, so ruts show). Each reply is checked for a voice (sentences,
@@ -16,18 +16,25 @@ temporary folder, and Spotify off:
   used again and again. A judge scores each 1 to 5 for sounding like Holly.
 - scenarios: conversations with made-up memories (app/scenarios.py), each run --runs
   times (Gemma varies), checked for the tools and facts they need.
+- conversations: whole conversations (app/conversations.py), each run --runs times: small
+  talk, Red Dwarf, his tools, one with everything at once. The tools are checked; then
+  each judge in [evals.judges] reads each transcript whole, against a checklist (answers
+  what's said, nothing dragged in, no running jokes, in character, facts right, hangs
+  together). A point both judges fail, each with his own words quoted, fails it; one
+  alone flags it, for reading.
 - memory: the memory check (app/archive.py's about_the_past), which decides whether a
   line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES); and
   the other side checks, whether a line asks for a status report and whether a timer
   come due is a job for a tool (scenarios.STATUS_LINES, ACTION_LABELS).
 - status: five status reports (app/status.py), written as his are, and his answer to where
-  each of the crew is, each line scored by the judge for being that character, in that
+  each of the crew is, each line scored by the judges for being that character, in that
   world, and funny.
 
-The judge is one fixed model ([evals] judge in holly.toml), whatever model is under
-test, so scores compare between runs; it's loaded after every reply has been written,
+The judges are two fixed models ([evals.judges] in holly.toml), whatever model is under
+test, so scores compare between runs. Each scores everything (a score is their mean;
+each one's own is kept), loaded one after the other once every reply has been written,
 as two big models won't share the GPU. If data/scripts/holly_exchanges.json is there
-(his lines from the scripts, private and git-ignored), the judge is shown some of
+(his lines from the scripts, private and git-ignored), the judges are shown some of
 them for reference; they're never stored.
 
 A scorecard goes to runs/: Markdown, with every reply, to read for character, and
@@ -39,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import random
 import re
@@ -52,7 +60,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from . import scenarios
+from . import conversations, scenarios
 from .config import ROOT, load_config
 from .lmstudio import LmStudio
 from .speech_text import count_sentences, speech_problems
@@ -168,7 +176,7 @@ def persona_scores(rows: list[dict]) -> dict:
     tooled = [r for r in rows if set(r["tags"]) - {"ask"}]
     plain = [r for r in rows if not any(w in r["prompt"].lower() for w in CREATIVE)] or rows
     return dict(
-        judge=round(float(statistics.mean(scored)), 2) if scored else None,
+        judge=round(float(statistics.mean(scored)), 2) if scored else None, judge_by=by_judge(rows),
         passing=sum(not r["problems"] for r in rows), replies=len(rows),
         median_words=statistics.median(r["words"] for r in plain),
         one_sentence=round(sum(r["sentences"] == 1 for r in plain) / len(plain), 2),
@@ -195,22 +203,68 @@ def reference_lines(n: int = 16) -> str:
 
 
 def judge(lm, model: str, reference: str, prompt: str, reply: str) -> tuple[int, str]:
-    text = lm.ask(JUDGE_PROMPT.format(reference=reference), f"Said to him: {prompt}\nHis reply: {reply}", model,
-                  80, temperature=0.0)
-    m = re.search(r"SCORE:\s*([1-5])", text)
-    return (int(m.group(1)) if m else 0), text.split(".", 1)[-1].strip()[:160]
+    """A score, and why. Asked again with none: Qwen, not thinking, sometimes says nothing."""
+    score, why = 0, ""
+    for _ in range(3):
+        text = lm.ask(JUDGE_PROMPT.format(reference=reference), f"Said to him: {prompt}\nHis reply: {reply}",
+                      model, 80, temperature=0.0)
+        if m := re.search(r"SCORE:\s*([1-5])", text):
+            score, why = int(m.group(1)), text.split(".", 1)[-1].strip()[:160]
+            break
+    return score, why
 
 
-def judge_all(rows: list[dict], judge_model: str) -> None:
-    """Score every reply with the judge, loaded now, alone on the GPU."""
-    lm = LmStudio(load_config().llm.for_model(judge_model))
-    for other in lm.loaded_models() - {judge_model}:
-        print(f"  (unloading {other} for the judge)", flush=True)
-        lm.unload(other)
-    lm.ensure_loaded(judge_model)
-    reference = reference_lines()
+def merged(rows: list[dict]) -> None:
+    """Each row's score, the mean of its judges' ("by": {judge: [score, why]}), and their whys."""
     for r in rows:
-        r["score"], r["why"] = judge(lm, judge_model, reference, r["prompt"], r["reply"]) if r["reply"] else (0, "")
+        got = [s for s, _ in r["by"].values() if s]
+        r["score"] = round(statistics.mean(got), 2) if got else 0
+        r["why"] = " / ".join(f"{m.split('/')[-1]}: {w}" for m, (s, w) in r["by"].items() if w)
+
+
+def by_judge(rows: list[dict]) -> dict:
+    """Each judge's own mean, over the rows it scored."""
+    judges = {m for r in rows for m in r.get("by", {})}
+    return {m: round(statistics.mean(got), 2) for m in sorted(judges)
+            if (got := [r["by"][m][0] for r in rows if r.get("by", {}).get(m, [0])[0]])}
+
+
+def alone(model: str, context_length: int | None = None) -> LmStudio:
+    """`model`, loaded now, alone on the GPU: two big models won't share it. A judge gets
+    a longer context than Holly's ([evals] judge_context): a whole conversation, its tools'
+    answers in full, and its thinking."""
+    cfg = load_config().llm.for_model(model)
+    lm = LmStudio(dataclasses.replace(cfg, context_length=context_length) if context_length else cfg)
+    for other in lm.loaded_models() - {model}:
+        print(f"  (unloading {other} for {model})", flush=True)
+        lm.unload(other)
+    lm.ensure_loaded(model)
+    return lm
+
+
+def judge_all(judges: dict[str, str], persona_rows: list[dict], reports: list[str],
+              conversation_rows: list[dict]) -> list[dict]:
+    """Everything judged, by each judge in turn, each loaded once, alone on the GPU: the
+    persona replies and the status report lines scored (the mean counts, and each judge's
+    own is kept), the conversations read whole (thinking as hard as `judges` says). The
+    status report lines, scored, returned."""
+    reference = reference_lines()
+    status_rows: list[dict] = []
+    for model, thinking in judges.items():
+        print(f"Judging, on {model}...", flush=True)
+        lm = alone(model, load_config().evals.judge_context)
+        for r in persona_rows:
+            r.setdefault("by", {})[model] = list(judge(lm, model, reference, r["prompt"], r["reply"])
+                                                 if r["reply"] else (0, ""))
+        if reports:
+            rows = scenarios.judge_status(lm, model, reports)
+            status_rows = status_rows or [dict(r, by={}) for r in rows]
+            for o, r in zip(status_rows, rows):
+                o["by"][model] = [r["score"], r["why"]]
+        conversations.judge_rows(lm, model, conversation_rows, thinking)
+    merged(persona_rows)
+    merged(status_rows)
+    return status_rows
 
 
 # Scenarios ---------------------------------------------------------------------------
@@ -232,6 +286,19 @@ async def run_scenarios(model: str | None, runs: int) -> list[dict]:
     return out
 
 
+async def run_conversations(model: str | None, runs: int) -> list[dict]:
+    out = []
+    for convo in conversations.CONVERSATIONS:
+        for n in range(runs):
+            holly = scenarios.quiet_holly(model, Path(tempfile.mkdtemp(prefix="holly-conversation-")))
+            scenarios.seed(holly)
+            exchanges, wrong = await conversations.talk_through(holly, convo)
+            out.append(conversations.as_row(convo, n + 1, exchanges, wrong))
+            print(f"  {'ok ' if not wrong else 'BAD'} {convo.name} (run {n + 1}): {'; '.join(wrong) or 'tools right'}",
+                  flush=True)
+    return out
+
+
 def status_scores(rows: list[dict]) -> dict:
     """The status reports' numbers: the judge's mean, overall and by item."""
     scored = [r for r in rows if r["score"]]
@@ -240,7 +307,7 @@ def status_scores(rows: list[dict]) -> dict:
     by: dict[str, list[int]] = {}
     for r in scored:
         by.setdefault(r["who"], []).append(r["score"])
-    return dict(mean=round(statistics.mean(r["score"] for r in scored), 2),
+    return dict(mean=round(statistics.mean(r["score"] for r in scored), 2), judge_by=by_judge(rows),
                 by={who: round(statistics.mean(s), 1) for who, s in by.items()}, rows=rows)
 
 
@@ -269,10 +336,13 @@ def commit() -> str:
 
 
 def summary(card: dict) -> list[str]:
-    lines = [f"Model {card['model']}, judge {card['judge'] or 'off'}, code {card['commit']}"]
+    judges = ", ".join(j.split("/")[-1] for j in card.get("judges") or []) or "off"
+    lines = [f"Model {card['model']}, judges {judges}, code {card['commit']}"]
     if p := card["persona"]:
         lines += [
-            f"Judge (sounds like Holly, 1-5): {p['judge'] if p['judge'] is not None else 'off'}",
+            f"Judges (sounds like Holly, 1-5): {p['judge'] if p['judge'] is not None else 'off'}"
+            + (" (" + ", ".join(f"{j.split('/')[-1]} {s}" for j, s in p.get("judge_by", {}).items()) + ")"
+               if p.get("judge_by") else ""),
             f"Persona replies passing (length, speakable, no assistant manners, right tool): "
             f"{p['passing']} of {p['replies']}",
             f"Words per ordinary reply: median {p['median_words']:.0f} (in the shows, 9); one sentence: "
@@ -285,13 +355,19 @@ def summary(card: dict) -> list[str]:
         ]
     if s := card["scenarios"]:
         lines.append(f"Scenarios passed: {s['passed']} of {s['runs']}")
+    if c := card.get("conversations"):
+        failing = ", ".join(f"{p} {n}" for p, n in c["points"].items() if n) or "none"
+        flags = ", ".join(f"{p} {n}" for p, n in c["flags"].items() if n) or "none"
+        lines.append(f"Conversations passed: {c['passed']} of {c['runs']} (judges' overall, 1-5: {c['overall']}; "
+                     f"failed by both judges: {failing}; by one: {flags}; tools wrong: {c['tools_wrong']})")
     if m := card.get("memory_check"):
         lines.append(f"Memory check right: {m['right']} of {m['of']}")
     if c := card.get("side_checks"):
         lines.append(f"Side checks right (status reports, timer jobs): {c['right']} of {c['of']}")
     if st := card.get("status"):
-        lines.append(f"Status reports (judge, 1-5): {st['mean']} ("
-                     + ", ".join(f"{who} {v}" for who, v in st["by"].items()) + ")")
+        lines.append(f"Status reports (judges, 1-5): {st['mean']} ("
+                     + ", ".join(f"{who} {v}" for who, v in st["by"].items()) + "; "
+                     + ", ".join(f"{j.split('/')[-1]} {s}" for j, s in st.get("judge_by", {}).items()) + ")")
     lines.append("Used more than once, in all his replies: "
                  + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
@@ -311,6 +387,23 @@ def write(card: dict) -> Path:
             if r["wrong"]:
                 md += [f"**{r['name']}** (run {r['run']}): {'; '.join(r['wrong'])}  "]
                 md += [f"> {t['said']}  \n{t['reply']} _{t['tools']}_  " for t in r["turns"]] + [""]
+    if c := card.get("conversations"):
+        md += ["## Conversations", "", f"Judges: {', '.join(c['judges']) or 'none'}.", "",
+               "| Conversation | Passed |", "|---|---|"]
+        md += [f"| {k} | {p} of {n} |" for k, (p, n) in c["by_name"].items()] + [""]
+        for r in card["conversation_runs"]:
+            flags = conversations.flagged(r)
+            md += [f"### {r['name']}, run {r['run']}: "
+                   + ("; ".join(r["wrong"] + conversations.judged(r)) or "passed")
+                   + (f" (flagged by one judge: {'; '.join(flags)})" if flags else ""),
+                   "", "```", r["transcript"], "```", ""]
+            for v in r["verdicts"]:
+                md += [f"**{v['judge']}** (overall {v['overall']}):  "]
+                md += [f"- {p}: {'PASS' if x['ok'] else 'FAIL'} " + " ".join(
+                    f'"{q}"' + ("" if q in x["shown"] else " (not his words)") for q in x["quotes"])
+                       + (f" - {x['why']}" if x["why"] else "")
+                       for p, x in v["points"].items() if x and not x["ok"]] or ["- nothing wrong"]
+                md += [""]
     if m := card.get("memory_check"):
         md += ["## Memory check", "", f"{m['right']} of {m['of']} right."] + [
             f"- wanted {r['want']}, got {'/'.join(r['got'])}: {r['line']!r}"
@@ -341,13 +434,15 @@ def compare() -> str:
     for f in sorted(RUNS.glob("evals-*.json")):
         c = json.loads(f.read_text(encoding="utf-8"))
         p, s, m = c.get("persona") or {}, c.get("scenarios") or {}, c.get("memory_check") or {}
+        v = c.get("conversations") or {}
         rows.append([c["when"][:16], c["label"] or "-", c["model"].split("/")[-1], c["commit"],
                      f"{p['judge']:.2f}" if p.get("judge") else "-", f"{p['passing']}/{p['replies']}" if p else "-",
                      f"{p['tools_ok']}/{p['tooled']}" if p else "-", f"{s['passed']}/{s['runs']}" if s else "-",
+                     f"{v['passed']}/{v['runs']}" if v else "-",
                      f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-")])
     if not rows:
         return "No scorecards yet in runs/."
-    head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "memory", "s/reply"]
+    head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "convos", "memory", "s/reply"]
     widths = [max(len(r[i]) for r in rows + [head]) for i in range(len(head))]
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in [head] + rows)
 
@@ -355,7 +450,8 @@ def compare() -> str:
 async def run(args) -> dict:
     cfg = load_config()
     model = cfg.llm.for_model(args.model).model
-    judge_model = None if args.no_judge else (args.judge or cfg.evals.judge)
+    judges = {} if args.no_judge else ({m: cfg.evals.judges.get(m, "none") for m in args.judge} if args.judge
+                                       else dict(cfg.evals.judges))
     persona_rows, scenario_rows = [], []
     lm = LmStudio(cfg.llm.for_model(model))
     for other in lm.loaded_models() - {model}:  # Holly needs the GPU to himself
@@ -372,6 +468,10 @@ async def run(args) -> dict:
     if args.only in (None, "scenarios"):
         print(f"Scenarios, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
         scenario_rows = await run_scenarios(model, args.runs)
+    conversation_rows = []
+    if args.only in (None, "conversations"):
+        print(f"Conversations, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
+        conversation_rows = await run_conversations(model, args.runs)
     memory_rows, side_rows, reports, status_rows = [], [], [], []
     if args.only in (None, "memory"):
         print(f"Memory check, {len(scenarios.MEMORY_LINES)} lines, on {model}:", flush=True)
@@ -384,14 +484,10 @@ async def run(args) -> dict:
         reports = await scenarios.status_reports(lm, model, 5)
         for report in reports:
             print("  " + report.replace("\n", "\n  ") + "\n", flush=True)
-    if judge_model and persona_rows:
-        print(f"Judging, on {judge_model}...", flush=True)
-        judge_all(persona_rows, judge_model)
-    if judge_model and reports:
-        judge_lm = LmStudio(load_config().llm.for_model(judge_model))
-        judge_lm.ensure_loaded(judge_model)
-        status_rows = await asyncio.to_thread(scenarios.judge_status, judge_lm, judge_model, reports)
-    return dict(model=model, judge=judge_model if persona_rows or reports else None, label=args.label, commit=commit(),
+    judged = judges if persona_rows or reports or conversation_rows else {}
+    if judged:
+        status_rows = await asyncio.to_thread(judge_all, judged, persona_rows, reports, conversation_rows)
+    return dict(model=model, judges=list(judged), label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
                 memory_check=dict(right=sum(r["right"] for r in memory_rows), of=len(memory_rows),
@@ -399,20 +495,23 @@ async def run(args) -> dict:
                 side_checks=dict(right=sum(r["right"] for r in side_rows), of=len(side_rows),
                                  wrong=[r for r in side_rows if not r["right"]]) if side_rows else {},
                 status=status_scores(status_rows),
-                # Across both parts: "right you are" opened eight scenario replies, unnoticed. Each
+                conversations=conversations.scores(conversation_rows),
+                # Across the parts: "right you are" opened eight scenario replies, unnoticed. Each
                 # scenario's first run only: its later runs say the same things, rightly.
-                repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows if r["run"] == 1
-                                                  for t in r["turns"]]),
-                persona_rows=persona_rows, scenario_runs=scenario_rows)
+                repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows + conversation_rows
+                                                  if r["run"] == 1 for t in r["turns"] if t["reply"]]),
+                persona_rows=persona_rows, scenario_runs=scenario_rows, conversation_runs=conversation_rows)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Score Holly on a model: character, tools and memory")
     parser.add_argument("--model", help="the LM Studio chat model to test (default: holly.toml's)")
-    parser.add_argument("--judge", help="the judge's model (default: [evals] judge in holly.toml)")
+    parser.add_argument("--judge", action="append",
+                        help="a judge's model, in place of [evals.judges] in holly.toml (again for more)")
     parser.add_argument("--runs", type=int, default=None, help="runs of each scenario (default: holly.toml's)")
     parser.add_argument("--persona-runs", type=int, default=1, help="replies per persona prompt (default 1)")
-    parser.add_argument("--only", choices=["persona", "scenarios", "memory", "status"], help="one part only")
+    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "memory", "status"],
+                        help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge's scores")
     parser.add_argument("--label", default="", help="a name for the scorecard, to compare runs")

@@ -111,6 +111,13 @@ def set_aside(path: Path, why: str) -> Path:
 # The keys LM Studio is sent; others (a message's time, "at") stay here.
 API_KEYS = ("role", "content", "tool_calls", "tool_call_id")
 
+
+def about_the_crew(user: str, tools: set[str]) -> bool:
+    """Is this exchange about the crew of Red Dwarf: asked about by name (guards.CREW_ASKED),
+    or a status report or a memory given? Then, and the exchange after ("what's he doing
+    there?"), they're no aside (guards.CREW_ASIDE)."""
+    return bool(guards.CREW_ASKED.search(user) or tools & {"status", "recall"})
+
 # After the crew's line, in each request only. Over a long talk his own replies outweighed
 # the system prompt far above them: replayed with an afternoon's history, he answered
 # "it's all cleaned out" with "Well done. That's a productive bit of work", and with no
@@ -156,7 +163,6 @@ class Conversation:
         self.memory = ""  # his notes on the older history, written while he sleeps
         self.memory_file = memory_file
         self.archive = archive
-        self.reminders: list[str] = []  # from the ship's records (app/records.py), refreshed as he sleeps
         self.last_spoke: datetime.datetime | None = None  # the last exchange, this session or before
         self.previous_end: datetime.datetime | None = None  # when the last session's talk ended
         self._save_failed = False
@@ -167,12 +173,11 @@ class Conversation:
 
     def _build_preamble(self) -> None:
         """Holly knows the date (without it he searched for last year's
-        results), and has his notes on anything older than the history, and a
-        few things from the ship's records to bring up now and then. All go at
-        the end of the system prompt, which changes only when one of them does
-        (the notes and reminders only while he sleeps), so LM Studio's cache
-        survives until then."""
-        key = (today(), self.memory, self.previous_end, tuple(self.reminders))
+        results), and has his notes on anything older than the history. Both go
+        at the end of the system prompt, which changes only when one of them
+        does (the notes only while he sleeps), so LM Studio's cache survives
+        until then."""
+        key = (today(), self.memory, self.previous_end)
         if self._made_for != key:
             self._made_for = key
             content = f"{self.system_prompt}\n\nToday is {key[0]}. {week_around(datetime.date.today())}"
@@ -182,18 +187,22 @@ class Conversation:
             if self.memory:
                 content += ("\n\nYour notes on your earlier conversations, which you no longer "
                             f"remember word for word:\n{self.memory}")
-            if self.reminders:
-                content += ("\n\nThings from the ship's records that have come back to you lately. Now "
-                            "and then, when one fits what's being said, mention it in passing as your own "
-                            "memory, in your own words. At most one in a reply, and most replies none; "
-                            "never force one in.\n" + "\n".join(f"- {r}" for r in self.reminders))
             self.preamble = [{"role": "system", "content": content}]
 
-    def worn_phrases(self, replies: int = 8, at_most: int = 4) -> list[str]:
+    def worn_phrases(self, replies: int = 8, at_most: int = 4, history: list[dict] | None = None) -> list[str]:
         """Openings (three words) and phrases (four) in more than one of his last few
         replies. He fell into ruts: "I'll look into it while things are quiet" five
-        times running, "that's a bit" to open three replies in one evening."""
-        said = [m["content"] for m in self.history if m["role"] == "assistant" and m.get("content")][-replies:]
+        times running, "that's a bit" to open three replies in one evening. In `history`,
+        if given: his history as he's sent it (messages_for), so what's cut from it isn't
+        quoted back to him ("convinced the hangers are", from crew asides cut). Not status
+        reports: said as written, they're not his wording, and "Lately you've said 'the cat
+        refused to'" would only have him on about the crew again."""
+        from .status import SAID
+
+        history = self.history if history is None else history
+        said = [m["content"] for i, m in enumerate(history) if m["role"] == "assistant" and m.get("content")
+                and not (i and history[i - 1]["role"] == "tool"
+                         and (history[i - 1].get("content") or "").startswith(SAID))][-replies:]
         openings: dict[str, int] = {}
         phrases: dict[str, int] = {}
         for text in said:
@@ -217,26 +226,33 @@ class Conversation:
         His replies in the history are sent without their offers of more help
         (guards.OFFER), so he doesn't copy them, older ones included."""
         self._build_preamble()
+        history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
+        told: list[str] = []
+        tools: set[str] = set()
+        crew = crew_before = False  # this exchange about the crew of Red Dwarf; the one before
+        for m in history:
+            if m["role"] == "user":
+                told, tools, crew_before = [m.get("content") or ""], set(), crew
+            elif m["role"] == "tool":
+                told.append(m.get("content") or "")
+            elif m["role"] == "assistant" and m.get("tool_calls"):
+                tools |= {c["function"]["name"] for c in m["tool_calls"]}
+            if m["role"] == "assistant" and m.get("content"):
+                # And, unasked, without timers counted down or times of day nobody gave him:
+                # with six in his history, a minute on each reply, he went on counting,
+                # whatever the time. Nor the crew of Red Dwarf tacked on to something else:
+                # copying those, he tacked them on to every reply (guards.CREW_ASIDE).
+                unasked = not guards.TIME_ASKED.search(told[0] if told else "")
+                crew = about_the_crew(told[0] if told else "", tools)
+                m["content"] = guards.without_offers(m["content"], countdowns=unasked, told=told if unasked else None,
+                                                     asides=not (crew or crew_before))
         tail = []
         if user_text is not None:
             note = SPEAKING_UP if user_text.startswith("[") else IN_CHARACTER
-            if worn := self.worn_phrases():
+            if worn := self.worn_phrases(history=history):
                 user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
                               + ". Put it differently this time.]")
             tail = [{"role": "user", "content": f"{user_text}\n{note}"}]
-        history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
-        told: list[str] = []
-        for m in history:
-            if m["role"] == "user":
-                told = [m.get("content") or ""]
-            elif m["role"] == "tool":
-                told.append(m.get("content") or "")
-            elif m["role"] == "assistant" and m.get("content"):
-                # And, unasked, without timers counted down or times of day nobody gave him:
-                # with six in his history, a minute on each reply, he went on counting,
-                # whatever the time.
-                unasked = not guards.TIME_ASKED.search(told[0] if told else "")
-                m["content"] = guards.without_offers(m["content"], countdowns=unasked, told=told if unasked else None)
         return [*self.preamble, *history, *tail]
 
     def record(self, user_text: str, holly_text: str, steps: list[dict] | None = None) -> int:
@@ -345,6 +361,14 @@ class Conversation:
         return [(at, "\n".join(lines if recalled or i not in skip else crew))
                 for i, (at, lines, crew) in enumerate(out) if recalled or i not in skip or crew]
 
+    def last_about_the_crew(self) -> bool:
+        """Was the last exchange about the crew of Red Dwarf (about_the_crew)?"""
+        start = next((i for i in range(len(self.history) - 1, -1, -1) if self.history[i]["role"] == "user"), None)
+        if start is None:
+            return False
+        tools = {c["function"]["name"] for m in self.history[start:] for c in m.get("tool_calls") or []}
+        return about_the_crew(self.history[start].get("content") or "", tools)
+
     def crew_lines(self, n: int = 40, chars: int = 300) -> str:
         """What the crew have said in the history, newest last, each with when: for
         recall's judge, which otherwise saw only the archive. Asked who was coming
@@ -356,13 +380,6 @@ class Conversation:
                 said = f"{when(datetime.datetime.fromisoformat(m['at']))}: " if m.get("at") else ""
                 lines.append(f"- {said}{' '.join(text.split())[:chars]}")
         return "\n".join(lines[-n:])
-
-    def recent_topics(self, n: int = 4) -> list[str]:
-        """The crew's last `n` lines, newest first, for picking reminders that fit."""
-        # Not the notes he's handed when a timer comes due ("[The timer 'pasta'...]").
-        said = [m["content"] for m in self.history if m["role"] == "user" and m.get("content")
-                and not m["content"].startswith("[")]
-        return said[::-1][:n]
 
     def _archive(self, end: int) -> None:
         """Keep history[:end] in the archive, as it leaves the history. A

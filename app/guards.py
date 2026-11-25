@@ -61,6 +61,20 @@ PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on(?:to| wi
 REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|write it (?:all )?up|in depth|in detail|properly|"
                            r"proper (?:look|one|job)|full one|long one|while you doze|while you sleep|later)\b",
                            re.IGNORECASE)
+# A report asked of him in so many words ("look into dog breeds for a small house and write
+# me a report"): his reply must call a tool (app/speak.py). Well into an evening's talk he
+# asked "a quick search now, or a proper report?" anyway, calling nothing, 5 times in 6 (on
+# its own, never). Narrower than REPORT_WANTED, which only lets a start through: not
+# "status report", "the board games report", or "I need to write a report for work".
+_WRITE = r"(?:write|do|put together|make|draw up|prepare)"
+_A_REPORT = r"(?:a|an)\s+(?:(?:proper|full|short|quick|little|detailed)\s+)?(?:report|write-?up)\b"
+REPORT_ASKED = re.compile(
+    rf"\b{_WRITE}\s+(?:me|us)\s+(?:up\s+)?{_A_REPORT}"  # "write me a report"
+    rf"|\b(?:can|could|will|would)\s+you\b[^.?!]*?\b{_WRITE}\s+(?:up\s+)?{_A_REPORT}"  # "can you ... do a report"
+    rf"|^\W*(?:holly\W+)?(?:please\s+)?{_WRITE}\s+(?:up\s+)?{_A_REPORT}"  # "Write a report on..."
+    rf"|\b(?:want|like|need)\s+{_A_REPORT}\s+(?:on|about|into)\b"  # "I'd like a report on"
+    r"|\bwrite (?:it|that|this|them) (?:all )?up\b",
+    re.IGNORECASE)
 # Timers and reminders come due, in timers.announcement's note: each label, however it's
 # punctuated ("Jo's playlist").
 DUE_LABEL = re.compile(r"\bThe (?:timer|reminder) '(.*?)': it(?:'s due now| came due)")
@@ -107,15 +121,32 @@ OFFER = re.compile(r"\banything else\b[^.!?]*\?|\banything else (?:you|I can|I c
 SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
 
 
-def without_offers(text: str, countdowns: bool = False, told: list[str] | None = None) -> str:
+def without_offers(text: str, countdowns: bool = False, told: list[str] | None = None, asides: bool = False) -> str:
     """`text` without its sentences offering more help (OFFER); with `countdowns`, those
-    counting a timer down (COUNTDOWN); and given `told`, those with a time of day nobody gave
-    him (guessed_time); unless that's all it is."""
+    counting a timer down (COUNTDOWN); given `told`, those with a time of day nobody gave him
+    (guessed_time); with `asides`, a later one about the crew (CREW_ASIDE) and the rest of the
+    reply after it; unless that's all it is."""
     text = text.strip()
     sentences = SENTENCE_END.split(text)
-    kept = [s for s in sentences if not OFFER.search(s) and not (countdowns and COUNTDOWN.search(s))
-            and not (told is not None and guessed_time(s, told))]
+    if asides:
+        aside = next((i for i, s in enumerate(sentences) if i and CREW_ASIDE.search(s)), len(sentences))
+    else:
+        aside = len(sentences)
+    kept = [s for i, s in enumerate(sentences) if i < aside and not OFFER.search(s)
+            and not (countdowns and COUNTDOWN.search(s)) and not (told is not None and guessed_time(s, told))]
     return " ".join(kept) if kept and len(kept) < len(sentences) else text
+
+
+# The crew of Red Dwarf, tacked on to a reply about something else: after a run of status
+# reports in his history, a DeWalt gift list ended "The Cat's currently having a standoff
+# with a mirror", and research queued, "The Cat is currently refusing to leave his
+# wardrobe. He's convinced the hangers are judging him." And the rest after it: that second
+# sentence, kept, and every Cat line after was about coat hangers. Not said, nor kept,
+# unless the crew were asked about (CREW_ASKED) or a status report or recall is what's
+# being given. Capitals: "the cat" may be the crew's own. Not "crew" for asked: they're
+# "the crew" to him, and a report announced says "Tell the crew it's ready".
+CREW_ASIDE = re.compile(r"^\W*(?:The Cat|Lister|Rimmer|Kryten)\b")
+CREW_ASKED = re.compile(r"\b(?:Lister|Rimmer|Kryten|Cat|status|Red Dwarf)\b", re.IGNORECASE)
 
 
 # A timer counted down in passing, "Six minutes left", "Two minutes to go", "about a minute

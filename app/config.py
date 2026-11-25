@@ -130,7 +130,6 @@ class RecallConfig:
     enabled: bool = True
     file: Path = ROOT / "data/archive.db"  # every exchange that leaves his history
     records_file: Path = ROOT / "data/records.db"  # the ship's records (app/records.py), if built
-    reminders: int = 5  # entries from the records in his prompt, refreshed while he sleeps
     max_entries: int = 12  # keyword matches the judge reads, best first
     # Matches by meaning, from an embedding model in LM Studio ("" for keywords only).
     embed_model: str = "text-embedding-nomic-embed-text-v1.5"
@@ -191,8 +190,12 @@ class StatusConfig:
 
 @dataclass(frozen=True)
 class EvalsConfig:
-    judge: str = "google/gemma-4-26b-a4b-qat"  # scores replies, whatever model is under test
-    scenario_runs: int = 3  # runs of each scenario: Gemma varies
+    scenario_runs: int = 3  # runs of each scenario (and conversation): Gemma varies
+    # The judges, whatever model is under test: each scores everything judged, and how hard
+    # each thinks over a whole conversation (app/conversations.py).
+    judges: dict = field(default_factory=lambda: {"google/gemma-4-26b-a4b-qat": "none",
+                                                  "qwen/qwen3.8-27b": "medium"}, compare=False)
+    judge_context: int = 49152  # tokens: a whole conversation, its tools' answers, and thinking
 
 
 @dataclass(frozen=True)

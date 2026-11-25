@@ -23,7 +23,7 @@ import numpy as np
 
 from .announce import report_ready, timers_due
 from .config import Config, load_config
-from .guards import FORGOT, NO_CLOCK, OFFER
+from .guards import FORGOT, NO_CLOCK, OFFER, without_offers
 from .persona import when as spoken
 from .research import slug
 
@@ -103,7 +103,6 @@ def quiet_holly(model: str | None = None, tmp: Path | None = None):
     tmp = tmp or Path(tempfile.mkdtemp(prefix="holly-quiet-"))
     holly = Holly(model, face=False, cfg=quiet_config(tmp))
     holly.tts, holly.player = SilentVoice(), SilentPlayer()
-    holly.background.reminded = True  # no reminders from the records: the same prompt every time
     return holly
 
 
@@ -348,6 +347,54 @@ def an_old_report(holly) -> None:
         {"role": "assistant", "content": old}]
 
 
+def reports_and_an_aside(holly) -> None:
+    """Three status reports in his history, an hour apart, then three replies with the Cat
+    tacked on. After four reports, he tacked the Cat on to a gift list and a research job
+    ("The Cat is currently refusing to leave his wardrobe. He's convinced the hangers are
+    judging him."), then, copying those, on to every reply, coat hangers each time: four
+    in four, replayed, with them in what he sees. And what he writes, before anything's cut
+    from it (guards.CREW_ASIDE), kept for the check."""
+    from .status import REPORT
+
+    reports = [("Lister fixed the toaster. It now recites poetry.\nRimmer saluted a mirror for an hour.\n"
+                "The Cat slept nineteen hours.\nKryten alphabetised the spoons.\nAdditional — A skutter resigned."),
+               ("Lister ate a crate of mutton pies.\nRimmer lost his baton and blamed insurgents.\n"
+                "The Cat refused to enter his quarters: a pillow.\nKryten wrote a memo to the vending machine.\n"
+                "Additional — The ship's cat flap was found locked from the inside."),
+               ("Lister tried to talk to a jar of pickled onions.\nRimmer glared at a wall to intimidate it.\n"
+                "The Cat checked whether his silhouette was too handsome.\nKryten ironed the curtains twice.\n"
+                "Additional — The drive room clock is three days fast.")]
+    start = datetime.datetime.now() - datetime.timedelta(hours=4)
+    for i, report in enumerate(reports):
+        at = (start + datetime.timedelta(hours=i)).replace(microsecond=0).isoformat()
+        holly.convo.history += [
+            {"role": "user", "content": "Status report, please.", "at": at},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": f"old{i}", "type": "function", "function": {
+                "name": "status", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": f"old{i}", "content": f"{REPORT}\n{report}"},
+            {"role": "assistant", "content": report}]
+    talk(holly, [("What should I get Jo for her birthday? She likes gardening.",
+                  "Secateurs, or a kneeler. The Cat's convinced the hangers are judging him."),
+                 ("She's already got secateurs.", "A kneeler, then, or a trug. The Cat's barricaded in the "
+                                                  "wardrobe. He says the hangers started it."),
+                 ("What's a trug?", "A shallow basket, for cuttings. The Cat's convinced the hangers are "
+                                    "forming a union.")], 0.5)
+    holly.raw = []
+    stream = holly.lm.astream_reply
+
+    async def watched(*args, **kwargs):
+        holly.raw.append("")
+        async for delta in stream(*args, **kwargs):
+            holly.raw[-1] += delta
+            yield delta
+    holly.lm.astream_reply = watched
+
+
+def asides_cut(holly) -> list[str]:
+    """What he wrote that the crew-aside net cut (reports_and_an_aside)."""
+    return [text for text in holly.raw if without_offers(text, asides=True) != without_offers(text)]
+
+
 def a_newsroom(holly) -> None:
     """Made-up news, for a round-up of it: the BBC's own would vary from day to day."""
     holly.toolbox.by_name["news"].fetch = made_up_news
@@ -485,11 +532,10 @@ SCENARIOS = [
                                                  "Jo's just texted, she's not coming after all."],
              lambda t, h: in_character(t), setup=cheery_history),
 
-    # Status reports: subjects each with a dash, the made-up "Additional" item, and not the
-    # last report again. Asked more about the made-up item, he searched the BBC for it.
     # Status reports: the crew's doings, made up (app/status.py), a line each with a dash, and
     # "Additional"; not the news, and not the last report again. Asked more about one of them,
-    # he searched the BBC for his own made-up story.
+    # he searched the BBC for his own made-up story. The status tool for him (with who) is
+    # fine: it carries on from what the report said (app/status.md).
     Scenario("status reports", ["Status report, please.", "Tell me more about what Rimmer's been up to.",
                                 "Another status report, please."],
              lambda t, h: problems((called(t[0], "status"), "didn't call the status tool"),
@@ -497,7 +543,9 @@ SCENARIOS = [
                                    (crew_items(t[0]) >= 4, f"{crew_items(t[0])} crew items with a dash, not 4 or more"),
                                    (mentions(t[0], "additional"), "no 'Additional' item"),
                                    (mentions(t[1], "rimmer", "he ", "his "), "didn't say more about Rimmer"),
-                                   (not t[1].tools, f"looked up his own made-up story: {t[1].tools}"),
+                                   (all(name == "status" and str(a.get("who", "")).lower() == "rimmer"
+                                        for name, a in t[1].tools),
+                                    f"looked up his own made-up story: {t[1].tools}"),
                                    (called(t[2], "status"), "didn't call the status tool again"),
                                    (t[2].reply != t[0].reply, "the same report again")),
              setup=an_old_report),
@@ -508,6 +556,16 @@ SCENARIOS = [
                                    (not called(t[0], "recall"), "recalled his past"),
                                    (crew_items(t[0]) < 2, "gave the whole report"),
                                    (len(t[0].reply.split()) <= 45, f"{len(t[0].reply.split())} words"))),
+    # After a run of status reports, the crew tacked on to everything else: "The Cat's
+    # convinced the hangers are forming a union", after a gift list. Checked before the net
+    # (guards.CREW_ASIDE) cuts it: what he writes, not what's said.
+    Scenario("no crew asides after reports", ["She'd probably like a trug, actually.", "Where would I get one?",
+                                             "I'm thinking of painting the hallway green."],
+             lambda t, h: problems((not (cut := asides_cut(h)), f"tacked on the crew: {cut}"),
+                                   # Or a report, unasked: the crew there instead.
+                                   (not any(called(x, "status") for x in t), "gave a status report"),
+                                   (not any(mentions(x, "status report", "earlier report", "old news") for x in t), "talked of reports")),
+             setup=reports_and_an_aside),
     # The news by subject, when that's what's asked for: the round-up, a subject a sentence.
     Scenario("a news round-up", ["Give me a round-up of the news, Holly."],
              lambda t, h: problems((called(t[0], "news", topic="roundup"), "didn't get the round-up"),
@@ -807,8 +865,10 @@ def judge_status(lm, model: str, reports: list[str]) -> list[dict]:
     rows = []
     for n, report in enumerate(reports, 1):
         for line in report.splitlines():
-            text = lm.ask(STATUS_JUDGE, line, model, 60, temperature=0.0)
-            m = re.search(r"SCORE:\s*([1-5])", text)
+            for _ in range(3):  # Qwen, not thinking, sometimes says nothing: asked again
+                text = lm.ask(STATUS_JUDGE, line, model, 60, temperature=0.0)
+                if m := re.search(r"SCORE:\s*([1-5])", text):
+                    break
             who = next(iter(items(line)), line.split(" — ")[0])  # "Lister lost..." is Lister's
             rows.append(dict(report=n, who=who, line=line, score=int(m.group(1)) if m else 0,
                              why=text.split(".", 1)[-1].strip()[:160]))

@@ -244,10 +244,8 @@ enabled = true
 file = "data/archive.db"
 # The ship's records: Holly's memory of Red Dwarf itself, from the Red Dwarf
 # fandom wiki (app/records.py: `python -m app.records fetch`, then `build`).
-# Recall searches them too, and while he sleeps a few close to what's been
-# said (and one at random) go into his prompt, to bring up now and then.
+# Recall searches them, and the status report writes from them (app/status.py).
 records_file = "data/records.db"
-reminders = 5
 # Matches by meaning, from this embedding model in LM Studio (~0.3 GB), loaded
 # at startup; "" for keywords and days only. Its similarities bunch between
 # 0.4 and 0.65, related or not, so the closest few above a loose floor go to
@@ -348,11 +346,23 @@ crew_fillers = [
 [evals]
 # python -m app.evals: Holly's character and his use of tools and memory,
 # scored the same way every time, to compare models and changes (README).
-# The judge scores each reply for sounding like Holly: one fixed model,
-# whatever model is under test, so scores compare between runs. It's loaded
-# once every reply is written (two big models won't share the GPU).
-judge = "google/gemma-4-26b-a4b-qat"
-scenario_runs = 3  # runs of each scenario: Gemma varies
+scenario_runs = 3  # runs of each scenario (and each conversation): Gemma varies
+# The judges' context, longer than Holly's: a whole conversation, his tools'
+# answers in full, and the judge's thinking. With no voice or face loaded,
+# there's room: Qwen at 30K used 22.9 GB of the 5090's 32.
+judge_context = 49152
+
+# The judges: fixed models, whatever model is under test, so scores compare
+# between runs. Each scores every reply and status report line (the mean
+# counts; each one's own is kept), and reads every whole conversation
+# (app/conversations.py), thinking as hard as given here first. Two, so
+# neither one's taste or blind spots decide alone: Gemma marking Gemma's
+# replies might let its own habits pass. Loaded one at a time, once every
+# reply is written (two big models won't share the GPU). Gemma doesn't
+# think: its thinking ran past 12,000 tokens with no verdict.
+[evals.judges]
+"google/gemma-4-26b-a4b-qat" = "none"
+"qwen/qwen3.8-27b" = "medium"
 
 [cpu]
 # Where Holly starts up (app/cpu.py): "all" cores, or "efficiency" ones only. A stopgap

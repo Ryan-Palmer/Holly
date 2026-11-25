@@ -9,9 +9,8 @@ fetched through its API, cut into paragraph-sized entries, and kept in an
 archive like his conversations (app/archive.py): his recall tool searches both.
 Only what happens in the show is kept: pages about actors, production and fan
 works, and sections such as "Trivia" and "Behind the scenes", are left out, so
-he doesn't talk about the people who played him. A few entries related to what
-you've been talking about also go into his system prompt while he sleeps, so he
-can drop a reference in now and then (see reminders()).
+he doesn't talk about the people who played him. The status report (app/status.py)
+writes from them too.
 
 Everything stays in data/ (git-ignored): the show isn't ours to publish.
 """
@@ -21,7 +20,6 @@ from __future__ import annotations
 import argparse
 import html
 import json
-import random
 import re
 import sys
 import time
@@ -233,50 +231,10 @@ def build() -> None:
     print(f"done in {time.perf_counter() - t:.0f} s: {path}", flush=True)
 
 
-# Reminders ----------------------------------------------------------------
-
-REMINDER_CHARS = 320
-
-
 def source_of(entry: str) -> str:
     """Where an entry is from: "D.N.A. (episode), Summary" from
     "(Ship's records: D.N.A. (episode), Summary) Lister ..."."""
     return entry.removeprefix("(Ship's records: ").split(") ", 1)[0]
-
-
-def reminders(records, topics: list[str], n: int, rng: random.Random | None = None) -> list[str]:
-    """`n` entries for his system prompt: the closest to each of `topics` (what's
-    been said lately, newest first) in turn, one per page, and one at random, so
-    he has something to bring up even when the talk is about nothing on the
-    ship. Each cut to a sentence or two. Each topic is searched on its own: run
-    together, one strong word ("vindaloo") took every place and the guitar got none."""
-    rng = rng or random.Random()
-    picked: list[str] = []
-    seen: set[str] = set()
-
-    def add(text: str) -> None:
-        source = source_of(text).split(",")[0]  # the page: one entry from each
-        if source in seen:
-            return
-        seen.add(source)
-        cut = text[:REMINDER_CHARS]
-        if len(text) > REMINDER_CHARS:
-            cut = cut[: max(cut.rfind(". "), cut.rfind("! "), 120) + 1]
-        picked.append(cut.strip())
-
-    found = [[text for _, text in records.search(t, question=t)] for t in topics if t.strip()]
-    for rank in range(n * 2):  # each topic's best, then each one's second best, ...
-        for hits in found:
-            if rank < len(hits) and len(picked) < n - 1:
-                add(hits[rank])
-    if (total := records.count()) and len(picked) < n:
-        for _ in range(5):
-            row = records.entry(rng.randrange(total))
-            if row:
-                add(row)
-                if len(picked) >= n:
-                    break
-    return picked
 
 
 def main() -> None:

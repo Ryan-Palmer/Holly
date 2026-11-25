@@ -1,5 +1,5 @@
-"""What Holly does while he sleeps: his notes, reminders from the ship's records, and
-research, one at a time and in that order. Anyone speaking stops it.
+"""What Holly does while he sleeps: his notes, and research, one at a time and in that
+order. Anyone speaking stops it.
 
 Listening (app/listen.py), he dozes once he's been quiet a while; typed to (app/speak.py),
 whenever he isn't replying. Either way it's `doze()` to start whatever's due and `wake()`
@@ -14,7 +14,6 @@ import time
 
 from . import memory
 from .console import DIM, RESET, note
-from .records import reminders as pick_reminders, source_of
 
 NOTES_RETRY_S = 60.0  # after his notes failed to be written, wait this long before trying again
 RESEARCH_RETRY_S = 60.0  # after a research step failed (LM Studio, the network), wait this long
@@ -33,14 +32,12 @@ def context_report(cfg, convo, used: int | None) -> str:
 
 
 class Background:
-    def __init__(self, cfg, convo, lm, model: str, tools: list[dict] | None, archive=None, records=None,
-                 research=None):
+    def __init__(self, cfg, convo, lm, model: str, tools: list[dict] | None, archive=None, research=None):
         """`tools`: the schemas his replies send, for having LM Studio reread his prompt."""
         self.cfg, self.convo, self.lm, self.model, self.tools = cfg, convo, lm, model, tools
-        self.archive, self.records, self.research = archive, records, research
-        self.reminded = False  # the reminders fit the talk so far
+        self.archive, self.research = archive, research
         self.writing_notes = False  # the part of compacting that's safe to cancel
-        self.notes: asyncio.Task | None = None  # older history into his notes, and reminders
+        self.notes: asyncio.Task | None = None  # older history into his notes
         self.notes_retry_at = 0.0  # after a failed try, not before this
         self.researching: asyncio.Task | None = None  # research steps
         self.research_retry_at = 0.0
@@ -69,12 +66,11 @@ class Background:
             if task:
                 task.cancel()
 
-    # His notes and reminders ------------------------------------------------
+    # His notes --------------------------------------------------------------
 
     def notes_due(self) -> bool:
-        """His notes (or reminders from the records) want writing, and may be tried now."""
-        return bool(self.convo.needs_compacting() or (self.records and not self.reminded)) and (
-            time.perf_counter() >= self.notes_retry_at)
+        """His notes want writing, and may be tried now."""
+        return self.convo.needs_compacting() and time.perf_counter() >= self.notes_retry_at
 
     def start_notes(self) -> None:
         if self.notes or self.researching or not self.notes_due():
@@ -85,16 +81,7 @@ class Background:
     async def _sleep_work(self) -> bool:
         """False if the notes couldn't be written."""
         await self.keep_loaded()
-        ok = True
-        if self.convo.needs_compacting():
-            ok = await self.compact()
-        if self.records and not self.reminded:
-            try:
-                await self.refresh_reminders()
-            except Exception as e:  # the notes may be fine: not their failure, nor their retry
-                self.reminded = True  # try again after the next talk, not straight away
-                note(f"couldn't pick reminders from the ship's records: {e!r}")
-        return ok
+        return await self.compact() if self.convo.needs_compacting() else True
 
     def _noted(self, task: asyncio.Task) -> None:
         self.notes = None
@@ -125,7 +112,6 @@ class Background:
             self.writing_notes = False
         if not notes or not convo.apply_compaction(end, dropped, notes):
             return False
-        self.reminded = False  # the talk has moved on: reminders to fit it
         t1 = time.perf_counter()
         prompt = await self.lm.prewarm(convo.messages_for(), self.model, self.tools)
         if self.archive:  # the archived exchanges' vectors, now rather than at his next recall
@@ -138,20 +124,6 @@ class Background:
               f"{time.perf_counter() - t1:.1f} s to reread)\n  {context_report(self.cfg, convo, prompt)}{RESET}",
               flush=True)
         return True
-
-    async def refresh_reminders(self, prewarm: bool = True) -> None:
-        """A few entries from the ship's records for his system prompt, close to what's
-        been said lately (app/records.py); then, if they changed, LM Studio rereads the
-        prompt, as after his notes."""
-        picks = await asyncio.to_thread(pick_reminders, self.records, self.convo.recent_topics(),
-                                        self.cfg.recall.reminders)
-        self.reminded = True
-        if picks == self.convo.reminders:
-            return
-        self.convo.reminders = picks
-        note(f"from the ship's records, on his mind: {'; '.join(source_of(p) for p in picks)}")
-        if prewarm:
-            await self.lm.prewarm(self.convo.messages_for(), self.model, self.tools)
 
     # Research ---------------------------------------------------------------
 

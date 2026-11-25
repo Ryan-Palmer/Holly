@@ -174,7 +174,6 @@ class ListeningHolly(Holly):
                 # needed; asleep, it is.
                 self.deaf_until, self.awake_until = after_speaking(
                     time.perf_counter(), self.player.last_played, self.cfg.listen.awake_s)
-                self.background.reminded = False  # new talk: fresh reminders from the records when he sleeps
                 self.detector.reset()
         except KeyboardInterrupt:
             print()

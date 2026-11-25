@@ -214,6 +214,17 @@ def test_research_asked_for_outright_starts(make_holly):
     assert [j["title"] for j in holly.research.jobs] == ["Keeping chickens"]
 
 
+def test_a_report_asked_for_in_so_many_words_must_call_a_tool(make_holly):
+    """"Look into dog breeds for a small house and write me a report": well into an evening,
+    he asked "a quick search now, or a proper report?" anyway, calling nothing, 5 times in 6."""
+    lm = FakeLm([[START], "It's in hand.", [START], "A quick search now, or a proper report while I doze?"])
+    holly = make_holly(lm)
+    respond(holly, "Can you look into keeping chickens and write me a report?")
+    assert lm.requests[0]["tool_choice"] == "required"
+    respond(holly, "Could you look into keeping ducks?")  # which they want, not said: his to ask
+    assert lm.requests[2]["tool_choice"] is None
+
+
 def test_promising_research_without_starting_it_is_redone(make_holly):
     lm = FakeLm(["I'll put together a proper report while I doze.", [START], "It's in hand."])
     holly = make_holly(lm)
@@ -470,3 +481,31 @@ def test_the_memory_check_sees_the_last_two_exchanges():
     assert before.startswith("Status report / Politics — a bill.")
     assert before.endswith("a vending machine eats toes. / Human Toes / I gave you the news.")
     assert "A nap" not in before and "The BBC" not in before and " ... " in before
+
+
+def test_a_crew_aside_is_neither_said_nor_kept(make_holly):
+    """"The Cat's currently having a standoff with a mirror", after a gift list: four status
+    reports in his history, and he took them for how he talks. And the rest after it: "He's
+    convinced the hangers are judging him", kept, and every Cat line after was coat hangers."""
+    holly = make_holly(FakeLm(["A jigsaw, maybe. The Cat's having a standoff with a mirror. He's losing.",
+                               "In his wardrobe. The Cat's convinced the hangers are judging him."]))
+    respond(holly, "What should I get her?", "Where's the Cat?")
+    assert holly.tts.said[0] == "A jigsaw, maybe."
+    assert "hangers" in " ".join(holly.tts.said)  # asked about him: said
+    assert [m["content"] for m in holly.convo.history if m["role"] == "assistant"] == [
+        "A jigsaw, maybe.", "In his wardrobe. The Cat's convinced the hangers are judging him."]
+
+
+def test_a_crew_aside_after_a_tool_is_still_left_out_but_the_tools_answer_is_said(make_holly):
+    lm = FakeLm([[("clock", {})], "Ten past nine. Rimmer's alphabetising his socks."])
+    holly = make_holly(lm)
+    respond(holly, "What time is it?")
+    assert holly.tts.said == ["Ten past nine."]
+
+
+def test_the_crew_after_asking_about_them_are_said(make_holly):
+    """"What's he doing there?", after "Where's Kryten?": not an aside, he's still on them."""
+    holly = make_holly(FakeLm(["In the laundry. Lister's with him.", "Ironing. Lister's helping, badly."]))
+    respond(holly, "Where's Kryten?", "What's he doing there?")
+    assert " ".join(holly.tts.said).endswith("Ironing. Lister's helping, badly.")
+    assert holly.convo.history[-1]["content"] == "Ironing. Lister's helping, badly."

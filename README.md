@@ -108,8 +108,8 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   dated notes while he's idle, and kept whole in an archive, which his
   recall tool searches by keyword, meaning and day. It carries over between
   sessions.
-- **The ship's records.** Recall searches them too, and a few that fit the
-  conversation come back to him now and then.
+- **The ship's records.** Recall searches them too, and status reports are
+  written from them.
 - **Web search.** Free (DuckDuckGo and others) without setup. For better
   results, put a [Brave Search API](https://brave.com/search/api/) key in
   the Windows user environment variable `BRAVE_API_KEY`.
@@ -176,41 +176,66 @@ To check a change to his character, or another model, score him:
 .venv\Scripts\python -m app.evals --compare            # every scorecard so far
 ```
 
-It puts him through four things, with a silent voice and his memory in a
+It puts him through five things, with a silent voice and his memory in a
 temporary folder:
 
 - **Persona**: the prompts in `persona/test_prompts.txt`, each scored for
   length, anything a voice can't say, an assistant's manners, questions back,
-  the tool it needs, lines recited from his examples, and repetition. A judge
-  scores each reply 1-5 for sounding like Holly.
+  the tool it needs, lines recited from his examples, and repetition. The
+  judges score each reply 1-5 for sounding like Holly.
 - **Scenarios** (`app/scenarios.py`): conversations with made-up memories
   that need his tools and memory (recall, the clock and the days ahead,
   timers set and come due, status reports on made-up news, search or
   report, reading and announcing reports, weather, a failed search), each
   run three times, since the model varies.
+- **Conversations** (`app/conversations.py`): whole conversations, each run
+  three times: an evening with everything in it (small talk, Red Dwarf,
+  every tool, a timer and a report coming due mid-talk), and ones on their
+  own: ordinary talk after an evening of status reports, a cheery chat,
+  errands, and old times. The code checks the tools; each judge reads each
+  transcript whole, against a checklist: he answers what's said, drags
+  nothing in, has no running jokes, stays in character, gets the facts
+  right, and keeps track. A point both judges fail, each quoting his own
+  words (checked to be his), fails it; one judge alone flags it, for
+  reading. Scenarios catch bugs already found; these are for the ones
+  nobody has found yet, like the Cat tacked on to every reply for an
+  evening, which a judge scoring one reply calls in character. (On the code
+  before that fix, both judges failed it, 3 runs in 3.)
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
   (`MEMORY_LINES` in `app/scenarios.py`), each asked twice; and the other
   side checks, whether a line asks for a status report and whether a timer
   come due is a job for one of his tools.
 - **Status reports**: five status reports, written as his are, and his
-  answer to where each of the crew is, each line scored by the judge for
+  answer to where each of the crew is, each line scored by the judges for
   being that character, in that world, and funny.
 
 Every problem found by talking to him, once fixed, gets a check: a unit
 test if the fix is plain code, or a scenario or labelled line here if it
 depends on what the model says.
 
-The judge is one fixed model (`[evals]` in `holly.toml`), whatever model is
-being tested, so scores compare between runs; it's loaded once every reply
-is written. A scorecard goes to `runs/`: Markdown with every reply, and JSON
-for `--compare`. `--only persona`, `--only scenarios`, `--only memory` or
-`--only status` runs one part; `--session` asks the persona prompts as one conversation,
-which shows ruts. Run it with LM Studio up and no Holly running. A new model also wants its
+The judges are two fixed models, Gemma and Qwen (`[evals.judges]` in
+`holly.toml`), whatever model is being tested, so scores compare between
+runs. Two, so neither one's taste or blind spots decide alone: Gemma
+marking Gemma's replies might let its own habits pass. Each scores
+everything; a score is their mean, and each one's own is kept. Each is
+loaded once every reply is written, one after the other, with a longer
+context than Holly's (`judge_context`), and thinks as hard as `holly.toml`
+says over a whole conversation (Gemma not at all: its thinking ran to
+28,000 tokens of "I'll check one more time", with no verdict). `--judge MODEL`, given
+once or more, judges with others instead; `--no-judge` skips them.
+Scorecards from before the second judge (25 November 2026) are Gemma's
+alone.
+
+A scorecard goes to `runs/`: Markdown with every reply and transcript, and
+JSON for `--compare`. `--only persona`, `--only scenarios`, `--only
+conversations`, `--only memory` or `--only status` runs one part;
+`--session` asks the persona prompts as one conversation, which shows ruts.
+Run it with LM Studio up and no Holly running. A new model also wants its
 quirks in a `[models]` table in `holly.toml`.
 
 If you have Holly's lines from the show in `data/scripts/holly_exchanges.json`
-(not supplied), the judge is shown some of them for reference.
+(not supplied), the judges are shown some of them for reference.
 
 ## Tests
 

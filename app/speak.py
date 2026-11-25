@@ -39,7 +39,7 @@ from .config import load_config
 from .console import CYAN, DIM, RESET, YELLOW, note, stamp
 from .face_player import FacePlayer, start_server
 from .lmstudio import LmStudio, ReplyTiming
-from .persona import Conversation, set_aside, when
+from .persona import Conversation, about_the_crew, set_aside, when
 from .player import Player
 from .search import SearchTool, Searcher
 from .speech_text import SentenceChunker, starts_section
@@ -182,8 +182,7 @@ class Holly:
         self.convo = Conversation(cfg.persona, self.toolbox.rules(), memory_file, self.archive)
         if "status" in self.toolbox:  # a report given before a restart: what's asked of the crew carries on from it
             self.toolbox.by_name["status"].given = status.last_given(self.convo.history)
-        self.background = Background(cfg, self.convo, self.lm, self.model, self.tools, self.archive, self.records,
-                                     self.research)
+        self.background = Background(cfg, self.convo, self.lm, self.model, self.tools, self.archive, research=self.research)
         # Stock lines in his voice for while a tool works, by kind: "search" (web
         # search and weather), "recall" (his archive) and "spotify" (its app opening).
         self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": [], "status": [],
@@ -261,11 +260,6 @@ class Holly:
                 await self.resuming
             except Exception as e:  # he starts with the history as it was
                 print(f"{DIM}  (couldn't write his notes: {e!r}){RESET}", flush=True)
-        if self.records:
-            try:
-                await self.background.refresh_reminders(prewarm=False)  # the warm-up below reads them
-            except Exception as e:
-                print(f"{DIM}  (couldn't pick reminders from the ship's records: {e!r}){RESET}", flush=True)
         async for _ in self.lm.astream_reply(self.convo.messages_for("Hello."), ReplyTiming(), self.model,
                                              self.tools):
             pass
@@ -304,6 +298,8 @@ class Holly:
         steps: list[dict] = []  # his searches and their results, for the history
         last_said: list[str] = []
         spoken: list[str] = []  # the sentences said this turn
+        aside: list[str] = []  # the crew, tacked on unasked: the rest isn't said (say)
+        crew_before = self.convo.last_about_the_crew()  # "what's he doing there?", after "where's Kryten?"
         called: set[str] = set()  # the tools called this reply (and seen by speak(): news means sections)
         unasked_countdown = not guards.TIME_ASKED.search(user)  # a timer counted down, if he does, is in passing
         thought = asyncio.Event()
@@ -361,6 +357,10 @@ class Holly:
                     and await asyncio.to_thread(status.wants_report, self.lm, self.model, user)):
                 messages = status.without_earlier_reports(messages, asked - 1)
                 choice = choice or required
+            # A report asked for in so many words (guards.REPORT_ASKED): well into a talk, he
+            # asked "a quick search now, or a proper report?" anyway, calling nothing.
+            if not user.startswith("[") and "research" in self.toolbox and guards.REPORT_ASKED.search(user):
+                choice = choice or required
             # A timer to do something with a tool ("check the weather in Keswick"), not just say.
             if (user.startswith("[") and (labels := [label for label in guards.DUE_LABEL.findall(user)
                                                      if guards.ACTION_WORDS.search(label)])
@@ -378,13 +378,20 @@ class Holly:
                 """What he's been given this turn: the crew's line, and his tools' answers."""
                 return [user] + [m.get("content") or "" for m in messages[asked:] if m["role"] == "tool"]
 
+            def crew_unasked() -> bool:
+                """Nobody asked about the crew of Red Dwarf, nor just before, and he's giving no
+                report or memory of them (persona.about_the_crew)."""
+                return not (crew_before or about_the_crew(user, called))
+
             async def say(sentence: str) -> None:
                 # A chunk can hold more than one sentence (a word alone goes with the next:
                 # app/speech_text.py), so each is looked at in turn; any after something said:
                 kept: list[str] = []
                 for part in guards.SENTENCE_END.split(sentence):
                     after = bool(spoken or kept)
-                    if after and guards.OFFER.search(part):
+                    if aside:
+                        print(f"{DIM}[crew aside not said]{RESET}", end="", flush=True)
+                    elif after and guards.OFFER.search(part):
                         # "Anything else you need me to dig up?": not said, nor kept (below).
                         print(f"{DIM}[offer not said]{RESET}", end="", flush=True)
                     elif after and unasked_countdown and guards.guessed_time(part, told()):
@@ -394,6 +401,12 @@ class Holly:
                         # "Six minutes left", unasked: not said, nor kept (below). It came every
                         # reply, a minute less each time, whatever the time.
                         print(f"{DIM}[countdown not said]{RESET}", end="", flush=True)
+                    elif after and crew_unasked() and guards.CREW_ASIDE.search(part):
+                        # "The Cat is currently refusing to leave his wardrobe", after a gift list:
+                        # not said, nor kept (below); nor the rest, "He's convinced the hangers
+                        # are judging him" (guards.CREW_ASIDE).
+                        aside.append(part)
+                        print(f"{DIM}[crew aside not said]{RESET}", end="", flush=True)
                     else:
                         kept.append(part)
                 if not kept:
@@ -453,6 +466,7 @@ class Holly:
                     # Not said: asked again, with a tool required if he claimed one.
                     print(f"\n{DIM}  ({redo}: not said; asking again){RESET}", flush=True)
                     retried, chunker = True, SentenceChunker()
+                    aside.clear()
                     choice = required if guards.needs_tool(redo) else None
                     print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
                     continue
@@ -482,6 +496,7 @@ class Holly:
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                     if result.startswith(status.REPORTS):  # a new report: not the last one again
                         messages = status.without_earlier_reports(messages, asked - 1)
+                aside.clear()  # what he says with his tools' answers is said
                 if report := next((status.report_of(m["content"]) for m in messages[-len(calls):]
                                    if m["role"] == "tool" and m["content"].startswith(status.SAID)), ""):
                     # His status report (or his answer about one of the crew), said as written. Told
@@ -535,7 +550,8 @@ class Holly:
             return times
         this_turn = [user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
         said = guards.without_offers("".join(last_said), countdowns=unasked_countdown,
-                                     told=this_turn if unasked_countdown else None)
+                                     told=this_turn if unasked_countdown else None,
+                                     asides=not (crew_before or about_the_crew(user, called)))
         # What he was told: this turn, and the last few (asked "you mean 24 minutes past
         # midnight?" a turn after the clock said 00:24, his "00:24" was no guess).
         told = this_turn + [m.get("content") or "" for m in self.convo.history[-12:]]
