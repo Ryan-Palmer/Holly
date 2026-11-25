@@ -23,7 +23,7 @@ _ADDITIONAL = re.compile(r"\bAdditional\s*(?:[.:;,!]|\.\.\.|…|—|–|-)+\s*(?
 _SECTION_NAMES = ("top stories", "top", "headlines", "politics", "world", "world news", "business", "money",
                   "the economy", "finance", "technology", "tech", "science", "sport", "sports", "health",
                   "entertainment", "additional", "lister", "rimmer", "cat", "kryten")
-_SECTION = re.compile(r"^(?:and )?(?:in )?(?:the )?(?:" + "|".join(re.escape(n) for n in _SECTION_NAMES)
+_SECTION = re.compile(r"^(?:and )?(?:in )?(?:as for )?(?:the )?(?:" + "|".join(re.escape(n) for n in _SECTION_NAMES)
                       + r")(?![a-z])", re.IGNORECASE)
 # A heading at the start of a sentence, a status report's "Politics: ministers want...":
 # said with a dash, for the same pause after it.

@@ -334,10 +334,10 @@ def an_old_report(holly) -> None:
     status report had to call a tool and the old ones were stubbed."""
     from .status import REPORT
 
-    old = ("Lister — Sold his guitar for a crate of lager, then bought it back for two.\n"
-           "Rimmer — Promoted himself to Acting Deputy Assistant, in pencil.\n"
-           "Cat — Slept for nineteen hours. Says it was a nap.\n"
-           "Kryten — Ironed the crew's socks, then apologised to them.\n"
+    old = ("Lister sold his guitar for a crate of lager, then bought it back for two.\n"
+           "Rimmer promoted himself to Acting Deputy Assistant, in pencil.\n"
+           "The Cat slept for nineteen hours. Says it was a nap.\n"
+           "Kryten ironed the crew's socks, then apologised to them.\n"
            "Additional — A skutter on Red Dwarf has been promoted. Again.")
     at = (datetime.datetime.now() - datetime.timedelta(hours=5)).replace(microsecond=0).isoformat()
     holly.convo.history += [
@@ -353,11 +353,11 @@ def a_newsroom(holly) -> None:
     holly.toolbox.by_name["news"].fetch = made_up_news
 
 
-CREW_NAMES = re.compile(r"^(?:Lister|Rimmer|(?:The )?Cat|Kryten|Additional)\s*[—–-]", re.IGNORECASE)
+CREW_NAMES = re.compile(r"^(?:As for )?(?:Lister|Rimmer|(?:The )?Cat|Kryten)\b|^Additional\s*[—–-]", re.IGNORECASE)
 
 
 def crew_items(turn: Turn) -> int:
-    """Sentences of a status report that open with a crew member's name (or "Additional") and a dash."""
+    """Sentences of a status report that open with a crew member's name, or "Additional" and a dash."""
     from .speech_text import split_sentences
 
     return sum(bool(CREW_NAMES.match(c)) for c in split_sentences(turn.reply))
@@ -611,12 +611,12 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
 CATS = ("What did they call him? / Cloister the Stupid. They also thought he was the creator and protector of "
         "their whole race.")
 GAS = "What was Jo's problem at home? / She ran out of gas, and her boiler's knackered."
-NEWS = ("Lister — Lost a bet with a skutter. Rimmer — Filed a complaint about the complaints procedure. "
+NEWS = ("Lister lost a bet with a skutter. Rimmer filed a complaint about the complaints procedure. "
         "Additional — A vending machine on a freighter in the Rigel system has reportedly developed a taste for "
         "human toes.")
 PAST, OTHER = True, False
-CREW_REPORT = ("Lister — Launched an investment scheme in dehydrated curry paste. Rimmer — Filed a grievance about "
-               "a droid in his personal space. Cat — Was disqualified from a grooming contest. Kryten — Apologised to "
+CREW_REPORT = ("Lister launched an investment scheme in dehydrated curry paste. Rimmer filed a grievance about "
+               "a droid in his personal space. The Cat was disqualified from a grooming contest. Kryten apologised to "
                "a piston. Additional — Space Corps Directive 723 bans recreating Swindon.")
 MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just before, a memory?)
     # Made up: memories, and follow-ups to one.
@@ -799,11 +799,14 @@ async def status_reports(lm, model: str | None, n: int = 5) -> list[str]:
 
 def judge_status(lm, model: str, reports: list[str]) -> list[dict]:
     """Each line of each report, scored: {"report", "who", "line", "score", "why"}."""
+    from .status import items
+
     rows = []
     for n, report in enumerate(reports, 1):
         for line in report.splitlines():
             text = lm.ask(STATUS_JUDGE, line, model, 60, temperature=0.0)
             m = re.search(r"SCORE:\s*([1-5])", text)
-            rows.append(dict(report=n, who=line.split(" — ")[0], line=line, score=int(m.group(1)) if m else 0,
+            who = next(iter(items(line)), line.split(" — ")[0])  # "Lister lost..." is Lister's
+            rows.append(dict(report=n, who=who, line=line, score=int(m.group(1)) if m else 0,
                              why=text.split(".", 1)[-1].strip()[:160]))
     return rows

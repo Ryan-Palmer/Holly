@@ -211,7 +211,7 @@ def brief_one(records, name: str, recent: list[str], said: str = "", rng: random
                 f"records:\n{lines}")
     text = (f"{name}: in {rng.choice(PLACES)}, doing something to do with {rng.choice(KINDS)}. From their "
             f"records:\n{lines}")
-    done = [line.split(" — ", 1)[1] for report in recent for line in report.splitlines() if line.startswith(f"{name} — ")]
+    done = [t for report in recent if (t := items(report).get(name))]
     if done:  # given as "said lately", the Cat's letter to his reflection came back, three times in three
         text += "\n\nNot these again, nor anything like them:\n" + "\n".join(f"- {d}" for d in done[-4:])
     return text
@@ -230,10 +230,34 @@ def who(name) -> str | None:
     return next((n for n, _ in CREW if n.lower() == name), None)
 
 
+_ITEM = re.compile(r"^(?:As for )?(?:The )?(Lister|Rimmer|Cat|Kryten|Additional)\b[\s,:—–-]*(.+)$", re.IGNORECASE)
+# A first word that isn't what they did: then "As for Lister, his guitar...", not "Lister his guitar".
+_NOT_DONE = {"a", "an", "the", "his", "he", "her", "she", "their", "they", "it", "its", "this", "that", "after",
+             "despite", "following", "in", "on", "while", "when", "during"}
+
+
+def said_as(name: str, text: str) -> str:
+    """An item as said: "Lister lost a bet.", "The Cat refused..." Written "Lister — Lost a
+    bet.", the voice paused at the dash, and the names came out as headings. "Additional"
+    keeps it, a heading: a pause before the made-up news."""
+    if name == "Additional":
+        return f"Additional — {text}"
+    who = "The Cat" if name == "Cat" else name
+    first, sep, rest = text.partition(" ")
+    if first.lower() not in _NOT_DONE:
+        if first[:1].islower():
+            return f"{who} {text}"
+        if re.fullmatch(r"[A-Z][a-z']+[.,;:!?]*", first):  # "Lost": a verb, at the start of a sentence
+            return f"{who} {first.lower()}{sep}{rest}"
+    # Not what they did ("His spare heads...", "DivaDroid recalled..."): "As for Kryten, ..."
+    lead = first if re.fullmatch(r"[A-Z][a-z']+[.,;:!?]*", first) is None else first.lower()
+    return f"As for {'the Cat' if who == 'The Cat' else who}, {lead}{sep}{rest}"
+
+
 def items(report: str) -> dict[str, str]:
-    """A tidied report's items, by name: {"Lister": "Lodged a complaint...", ...}."""
-    return {name: text for name, _, text in (line.partition(" — ") for line in report.splitlines())
-            if name in NAMES and text}
+    """A report's items, by name, as said or as written: {"Lister": "lost a bet.", ...}."""
+    return {m.group(1).title(): m.group(2).strip() for line in report.splitlines()
+            if (m := _ITEM.match(line.strip()))}
 
 
 def tidy(text: str) -> str:
@@ -327,14 +351,14 @@ class StatusTool(Tool):
             drafts.append(items(tidy(text)))
         options = {name: [d[name] for d in drafts if d.get(name)] for name in NAMES}
         if not all(options.values()):  # a draft not in the form asked for: the first that is, as it came
-            return next(("\n".join(f"{n} — {d[n]}" for n in NAMES) for d in drafts if all(d.get(n) for n in NAMES)),
-                        "\n".join(f"{n} — {o[0]}" for n, o in options.items() if o))
+            return next(("\n".join(said_as(n, d[n]) for n in NAMES) for d in drafts if all(d.get(n) for n in NAMES)),
+                        "\n".join(said_as(n, o[0]) for n, o in options.items() if o))
         listing = "\n\n".join(f"{name}:\n" + "\n".join(f"{i}. {o}" for i, o in enumerate(opts, 1))
                               for name, opts in options.items())
         pick = await asyncio.to_thread(self.lm.ask, PICK_PROMPT, listing, self.model, 40, 0.0)
         chosen = {m.group(1).title().removeprefix("The "): int(m.group(2))
                   for m in re.finditer(r"(Lister|Rimmer|(?:The )?Cat|Kryten|Additional)\W+(\d)", pick, re.IGNORECASE)}
-        return "\n".join(f"{name} — {opts[min(max(chosen.get(name, 1), 1), len(opts)) - 1]}"
+        return "\n".join(said_as(name, opts[min(max(chosen.get(name, 1), 1), len(opts)) - 1])
                          for name, opts in options.items())
 
     async def write_one(self, name: str) -> str:

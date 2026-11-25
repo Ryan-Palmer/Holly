@@ -337,6 +337,9 @@ def test_each_reply_checks_his_model_is_loaded_his_way_first(make_holly):
 
 REPORT_LINES = ("Lister — Lost a bet.\nRimmer — Filed a complaint.\nCat — Slept.\nKryten — Ironed socks.\n"
                 "Additional — A skutter was promoted.")
+# As said: the crew's names in sentences ("Lister — Lost..." paused at the dash, a heading).
+SAID_LINES = ("Lister lost a bet.\nRimmer filed a complaint.\nThe Cat slept.\nKryten ironed socks.\n"
+              "Additional — A skutter was promoted.")
 
 
 def side(asked: str = "YES"):
@@ -360,9 +363,10 @@ def test_a_status_report_is_said_as_written(make_holly):
     holly = make_holly(lm)
     respond(holly, "Status report, please.")
     assert len(lm.requests) == 1  # the tool call; then no retelling
-    assert holly.convo.history[-1]["content"] == REPORT_LINES
-    assert holly.tts.said[0].startswith("Lister — Lost a bet.") and "Additional — A skutter was promoted." in \
-        " ".join(holly.tts.said)
+    assert holly.convo.history[-1]["content"] == SAID_LINES
+    said = " ".join(holly.tts.said)
+    assert said.startswith("Lister lost a bet.") and "The Cat slept." in said
+    assert "Additional — A skutter was promoted." in said  # only "Additional" is a heading
 
 
 def test_where_one_of_them_is_is_said_as_written(make_holly):
@@ -387,15 +391,15 @@ def test_a_new_status_report_isnt_sent_the_last_one(make_holly):
     holly = make_holly(lm)
     respond(holly, "Status report, please.")
     respond(holly, "Thoughts on science?")
-    assert any(m.get("content") == REPORT_LINES for m in lm.requests[1]["messages"])  # other turns have it
+    assert any(m.get("content") == SAID_LINES for m in lm.requests[1]["messages"])  # other turns have it
     respond(holly, "Another status report.")
     # Not even before he calls the tool: with the last one there, he gave it again, or made
     # one up, without calling. And he must call a tool.
     asked = lm.requests[2]
     contents = [m.get("content") or "" for m in asked["messages"]]
-    assert REPORT_LINES not in contents and asked["tool_choice"] == "required"
+    assert SAID_LINES not in contents and asked["tool_choice"] == "required"
     assert contents.count(status.EARLIER) == 2  # what he was given, and what he said
-    assert sum(m.get("content") == REPORT_LINES for m in holly.convo.history) == 2  # both still in his history
+    assert sum(m.get("content") == SAID_LINES for m in holly.convo.history) == 2  # both still in his history
 
 
 def test_a_status_report_mentioned_isnt_one_asked_for(make_holly):
@@ -408,7 +412,7 @@ def test_a_status_report_mentioned_isnt_one_asked_for(make_holly):
     respond(holly, "Status report, please.")
     respond(holly, "Ugh, my boss wants a status update by five.")
     asked = lm.requests[1]
-    assert asked["tool_choice"] is None and REPORT_LINES in [m.get("content") for m in asked["messages"]]
+    assert asked["tool_choice"] is None and SAID_LINES in [m.get("content") for m in asked["messages"]]
     assert [r["user"] for r in lm.side_requests if r["system"] == status.ASKED_PROMPT] == [
         "They say: Status report, please.", "They say: Ugh, my boss wants a status update by five."]
 

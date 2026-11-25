@@ -54,7 +54,7 @@ def drafts_lm(picks: str = "Lister: 2\nRimmer: 3\nCat: 1\nKryten: 2\nAdditional:
     def side(system, user):
         if system == status.WRITER_PROMPT:
             n.append(1)
-            return "\n".join(f"{name} — {name} draft {len(n)}." for name in status.NAMES)
+            return "\n".join(f"{name} — Wrote draft {len(n)}." for name in status.NAMES)
         if system == status.PICK_PROMPT:
             return picks
         return ""
@@ -65,11 +65,11 @@ def test_the_best_of_each_item_is_kept(cfg):
     """Alone, one item in three was a dud: three drafts, and the best of each, picked."""
     tool = status.StatusTool(drafts_lm(), "m", records(cfg))
     report = asyncio.run(tool.write())
-    assert report.splitlines() == ["Lister — Lister draft 2.", "Rimmer — Rimmer draft 3.", "Cat — Cat draft 1.",
-                                   "Kryten — Kryten draft 2.", "Additional — Additional draft 3."]
+    assert report.splitlines() == ["Lister wrote draft 2.", "Rimmer wrote draft 3.", "The Cat wrote draft 1.",
+                                   "Kryten wrote draft 2.", "Additional — Wrote draft 3."]
     # A pick that's nonsense keeps the first draft's.
     report = asyncio.run(status.StatusTool(drafts_lm("No idea."), "m").write())
-    assert report.splitlines()[0] == "Lister — Lister draft 1."
+    assert report.splitlines()[0] == "Lister wrote draft 1."
 
 
 def test_reports_are_remembered_between_sessions(cfg, tmp_path):
@@ -77,7 +77,7 @@ def test_reports_are_remembered_between_sessions(cfg, tmp_path):
     file = tmp_path / "status.json"
     tool = status.StatusTool(drafts_lm(), "m", None, file)
     result = asyncio.run(tool.run({}, None))
-    assert result.startswith(status.REPORT) and "Lister — Lister draft 2." in result
+    assert result.startswith(status.REPORT) and "Lister wrote draft 2." in result
     again = status.StatusTool(drafts_lm(), "m", None, file)
     assert list(again.recent) == list(tool.recent) and len(again.recent) == 1
 
@@ -152,3 +152,16 @@ def test_the_last_report_in_his_history_is_kept_to():
                {"role": "tool", "tool_call_id": "3",
                 "content": told(status.ANSWER, "He's in the gym.", status.AFTER_ANSWER)}]
     assert status.last_given(history) == "Rimmer — Newer." and status.last_given([]) == ""
+
+
+def test_the_crew_are_said_in_sentences_and_additional_is_a_heading():
+    """Written "Lister — Lost a bet.", the voice paused at the dash: the names came out as headings."""
+    assert status.said_as("Lister", "Lost a bet.") == "Lister lost a bet."
+    assert status.said_as("Cat", "Refused to move.") == "The Cat refused to move."
+    assert status.said_as("Kryten", "His spare heads walked out.") == "As for Kryten, his spare heads walked out."
+    assert status.said_as("Cat", "DivaDroid sued him.") == "As for the Cat, DivaDroid sued him."
+    assert status.said_as("Additional", "A skutter was promoted.") == "Additional — A skutter was promoted."
+    said = "Lister lost a bet.\nThe Cat slept.\nAs for Kryten, his heads walked out.\nAdditional — A recall."
+    assert status.items(said) == {"Lister": "lost a bet.", "Cat": "slept.", "Kryten": "his heads walked out.",
+                                  "Additional": "A recall."}
+    assert status.items("Rimmer — Filed a complaint.") == {"Rimmer": "Filed a complaint."}  # as written, too
