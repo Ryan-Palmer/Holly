@@ -299,3 +299,23 @@ def test_a_status_reports_sections_get_a_longer_pause(make_holly, monkeypatch):
     played.clear()
     respond(holly, "Thoughts on science?")
     assert played.count(pause) == 0  # no news this turn: sentences like these aren't sections
+
+
+def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
+    from app import news
+    from app.search import Lookup
+    monkeypatch.setattr(news, "roundup", lambda cfg: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
+    first = "Politics' got a bill. Additional — a skutter has gone missing."
+    lm = FakeLm([[("news", {"topic": "roundup"})], first, "Science is overrated.",
+                 [("news", {"topic": "roundup"})], "Politics — a bill."])
+    holly = make_holly(lm)
+    respond(holly, "Status report, please.")
+    respond(holly, "Thoughts on science?")
+    assert any(m.get("content") == first for m in lm.requests[2]["messages"])  # other turns have it
+    respond(holly, "Another status report.")
+    asked, after = lm.requests[3]["messages"], lm.requests[4]["messages"]
+    assert any(m.get("content") == first for m in asked)  # until he calls for the news
+    contents = [m.get("content") or "" for m in after]
+    assert first not in contents and contents.count(news.EARLIER) == 2  # the old news, and what he said
+    assert contents[-1].startswith(news.REPORT)  # the new report's news is there
+    assert any(m.get("content") == first for m in holly.convo.history)  # still in his history

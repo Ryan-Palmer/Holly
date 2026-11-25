@@ -51,6 +51,9 @@ LORE = ("the ship's crew", "the Jupiter Mining Corporation", "the Space Corps", 
         "a hologram", "a mechanoid", "the cat race", "a skutter", "the ship's computer systems",
         "a vending machine", "a GELF tribe", "an android colony", "a holo-ship", "a deep-space trading post",
         "the ship's food dispensers", "a space station", "a simulant", "the ship's medical unit")
+REPORT = "The BBC's latest, by subject, for a status report:"  # how a round-up starts
+# An earlier report, as he's sent it on a turn with a new one.
+EARLIER = "(An earlier status report: old news now.)"
 FRESH = datetime.timedelta(days=2)
 STALE = datetime.timedelta(days=7)  # if two days give too few
 KEEP_S = 300  # a feed is fetched again after this
@@ -151,13 +154,31 @@ def roundup(cfg: SearchConfig, now: datetime.datetime | None = None) -> Lookup:
     ms = (time.perf_counter() - t0) * 1000
     if not parts:
         return Lookup("roundup", "The BBC's feeds had nothing from the past two days. Say so.", 0, ms, 0)
-    answer = ("The BBC's latest, by subject, for a status report:\n" + "\n".join(parts)
+    answer = (REPORT + "\n" + "\n".join(parts)
               # The form here, the last thing he reads: in his rules alone, he copied an older
               # report from his history instead ("Politics' got... Tech's got...").
               + "\nRound it up subject by subject, a sentence each, in your own words, each starting with "
                 "its name and a dash ('Politics — ministers want...'); then the 'Additional' item, as your "
                 f"rules say: today's is news about {random.choice(LORE)}.")
     return Lookup("roundup", answer, count, ms, 0)
+
+
+def without_earlier_reports(messages: list[dict], before: int) -> list[dict]:
+    """`messages`, with the status reports in the first `before` (his history) cut to a
+    line: their news, and what he said of it. Sent on a turn with a new report. Asked
+    again six minutes after the last, the news unchanged, he gave the last one again word
+    for word ("Politics' got..."), not as the round-up asked ("Politics — ..."). Kept in
+    his history as they were: only this request leaves them out."""
+    out, report = [], False
+    for i, m in enumerate(messages):
+        if i < before and m["role"] == "tool" and (m.get("content") or "").startswith(REPORT):
+            m, report = {**m, "content": EARLIER}, True
+        elif i < before and report and m["role"] == "assistant" and not m.get("tool_calls"):
+            m, report = {**m, "content": EARLIER}, False
+        elif m["role"] == "user":
+            report = False
+        out.append(m)
+    return out
 
 
 def ago(when: datetime.datetime, now: datetime.datetime) -> str:

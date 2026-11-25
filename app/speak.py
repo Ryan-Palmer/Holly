@@ -31,7 +31,7 @@ import time
 import numpy as np
 import torch
 
-from . import archive, cpu, guards, research, spotify, timers
+from . import archive, cpu, guards, news, research, spotify, timers
 from .announce import Announcement, pending
 from .background import Background, context_report
 from .clock import ClockTool
@@ -445,6 +445,8 @@ class Holly:
                     called.add(call["name"])
                     result = await self.toolbox.run(call, turn, lookups)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+                    if result.startswith(news.REPORT):  # a new status report: not the last one again
+                        messages = news.without_earlier_reports(messages, asked - 1)
                 print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
             steps.extend(messages[asked:])
             if timing.prompt_tokens is not None:
