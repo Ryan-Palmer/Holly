@@ -216,6 +216,39 @@ def test_failed_notes_wait_before_trying_again(cfg):
     asyncio.run(go())
 
 
+def test_his_notes_check_his_model_is_loaded_his_way_first(cfg):
+    """LM Studio's engine crashed, and it loaded his model again with its own defaults:
+    longer prompts were cut to fit, with no error. Sleep-time work checks first."""
+    seen = []  # how many checks had been made by each request for his notes
+    bg, convo = background(cfg)
+    bg.lm.side = lambda system, user: seen.append(bg.lm.checks) or "About the crew:\n- They talk a lot."
+    for i in range(30):
+        convo.record("x" * 400, "y" * 400)
+    convo.soft_chars, convo.keep_chars = 4000, 2000
+    assert asyncio.run(bg._sleep_work()) is True
+    assert seen and set(seen) == {1} and bg.lm.checks == 1
+
+
+def test_each_research_step_checks_his_model_is_loaded_his_way_first(cfg):
+    """A crash can come in the middle of a job: each step checks, not just the first."""
+    class Checked:
+        def __init__(self, steps):
+            self.left, self.seen = steps, []
+
+        def has_work(self):
+            return self.left > 0
+
+        async def step(self):
+            self.seen.append(bg.lm.checks)
+            self.left -= 1
+            return "a step"
+
+    research = Checked(3)
+    bg, _ = background(cfg, research)
+    asyncio.run(bg._research())
+    assert research.seen == [1, 2, 3]
+
+
 @pytest.mark.parametrize("said", ["Additional. The ship's toaster has resigned.", "Additional: the ship's toaster has resigned.",
                                   "Additional, the ship's toaster has resigned.", "Additional... the ship's toaster has resigned.",
                                   "Additional — the ship's toaster has resigned."])

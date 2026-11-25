@@ -346,6 +346,15 @@ class Holly:
             required = "required" if self.cfg.llm.tool_choice else None
             choice = (required if turn.answering_choice and "research" in self.toolbox
                       and guards.REPORT_WANTED.search(user) else None)
+            # A status report, with one already in his history: he gave one without the news
+            # tool, three times in three, made up ("ministers are arguing about taxes") or the
+            # last one again; with none, he called it every time. So he must call a tool, and
+            # the earlier reports are stubbed before he sees them, not only once he's called it.
+            if guards.STATUS_ASKED.search(user) and "news" in self.toolbox:
+                messages = news.without_earlier_reports(messages, asked - 1)
+                choice = choice or required
+            if user.startswith("[") and guards.DUE_ACTION.search(user):  # a timer to do something
+                choice = choice or required
             # Which tool is his to choose: made to call one for a memory, he chose recall every
             # time (25 of 25 in the evals). A web search turned into recall only ever caught the
             # news, judged a memory by mistake.

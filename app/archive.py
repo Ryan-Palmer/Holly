@@ -590,6 +590,10 @@ def spans_in(text: str, on: datetime.date) -> list[list[tuple[str, str]]]:
 # that what's just been said is in front of him, and shown the last two exchanges (app/
 # speak.py), a day's 52 real lines had 8 taken for memories, not 15 (two of them new: a
 # forecast and a game's lore, each looked up, which did no harm); the 49 and 16 still right.
+# The labelled lines are in app/scenarios.py (MEMORY_LINES), checked by `python -m app.evals
+# --only memory` and `pytest -m lmstudio tests/test_memory_check.py`. Once there, more about
+# his made-up news, after "No, I need another status report please", was still a memory,
+# twice in two, till told the news he's just given counts however it was asked for: 85 of 85.
 PAST_PROMPT = """\
 You sort what someone says to Holly, the household computer (and the ship's computer from Red Dwarf).
 PAST: they're asking Holly for something from before, which he'd have to remember: what they did, said, \
@@ -603,7 +607,7 @@ Judge only what they say now. "Just before" is there so you can tell what a foll
 or the world (what was said in Parliament, at a match), however soon after a memory it comes.
 What's just been said in this conversation is in front of him, with nothing to remember: asking about \
 something he's just said (what he meant, more of a story or a news item he's just told), correcting him \
-("no, I meant..."), or answering him is OTHER.
+("no, I meant..."), or answering him is OTHER. So is anything about the news he's just given, however it was asked for ("another status report"): "more about that story" after his news is OTHER.
 Reply with one word: PAST or OTHER."""
 
 

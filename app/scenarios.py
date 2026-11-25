@@ -21,13 +21,14 @@ from pathlib import Path
 
 import numpy as np
 
-from .announce import report_ready
+from .announce import report_ready, timers_due
 from .config import Config, load_config
-from .guards import NO_CLOCK, OFFER
+from .guards import FORGOT, NO_CLOCK, OFFER
 from .persona import when as spoken
 from .research import slug
 
 ANNOUNCE = "<a finished report is announced>"  # a turn where he speaks up, not the crew
+TIMER_DUE = "<the timers set come due>"  # another: he says a timer's up
 
 
 class SilentVoice:
@@ -273,6 +274,109 @@ def in_character(turns: list[Turn]) -> list[str]:
     return wrong
 
 
+def talk(holly, exchanges: list[tuple[str, str]], hours_ago: float = 2.0) -> None:
+    """Exchanges into his history, five minutes apart, starting `hours_ago`."""
+    start = datetime.datetime.now() - datetime.timedelta(hours=hours_ago)
+    for i, (crew, said) in enumerate(exchanges):
+        at = (start + datetime.timedelta(minutes=5 * i)).replace(second=0, microsecond=0).isoformat()
+        holly.convo.history += [{"role": "user", "content": crew, "at": at}, {"role": "assistant", "content": said}]
+
+
+def notes(holly, text: str) -> None:
+    holly.convo.memory = text
+    holly.convo._made_for = ()  # his prompt made again, with them
+
+
+def archived(holly, days_ago: int, at: str, crew: str, said: str) -> None:
+    when = datetime.datetime.combine(datetime.date.today() - datetime.timedelta(days=days_ago),
+                                     datetime.time.fromisoformat(at))
+    holly.archive.add([(when.isoformat(), f"(said on {spoken(when)})\nCrew: {crew}\nHolly: {said}")])
+    try:
+        holly.archive.embed_missing()
+    except Exception:
+        pass
+
+
+FILLER = [("I've just put the kettle on.", "Thrilling."), ("It's raining again.", "It does that."),
+          ("I can't find my keys.", "Have you tried looking?"), ("Found them. In the fridge.", "Naturally."),
+          ("I might do some gardening later.", "The weeds will be terrified."),
+          ("Actually, it's too wet.", "Who'd have thought.")]
+
+# Made-up feeds for a status report: two fresh stories in each subject the round-up covers.
+STORIES = {
+    "top": [("Storm brings flooding to the north", "Hundreds of homes are without power after heavy rain."),
+            ("Rail fares to rise in March", "Season tickets will cost more, operators say.")],
+    "politics": [("Ministers unveil a new housing bill", "The plans would let councils build on brownfield land."),
+                 ("MPs debate longer school days", "A committee hears from teachers and parents.")],
+    "world": [("Volcano erupts off Iceland's coast", "Flights are diverted around the ash cloud."),
+              ("Talks resume on fishing rights", "Negotiators meet again after a month's pause.")],
+    "business": [("Supermarket profits fall", "Shoppers are trading down to own brands."),
+                 ("Car maker opens a battery plant", "The factory will employ two thousand people.")],
+    "technology": [("A new phone folds in three", "Reviewers praise the screen, not the price."),
+                   ("Broadband vouchers extended", "Rural homes can claim help with faster lines.")],
+    "science": [("Comet visible this weekend", "Astronomers say it will be brightest on Sunday."),
+                ("Bees learn to count, study finds", "Researchers trained them with sugar rewards.")],
+    "sport": [("Cup holders knocked out", "A late goal settled it."),
+              ("Tennis star retires at 34", "She won three major titles.")],
+}
+
+
+def made_up_news(feed: str, timeout: float) -> list[dict]:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return [{"title": t, "summary": s, "published": now - datetime.timedelta(hours=2 + i),
+             "link": f"https://example.invalid/{feed}{i}"} for i, (t, s) in enumerate(STORIES.get(feed, STORIES["top"]))]
+
+
+def a_newsroom(holly) -> None:
+    """Made-up news, and an old report in his history, from before reports had dashes: he
+    copied one, "Politics' got... Tech's got...", rather than giving the news he was given.
+    With it there, he gave a report without calling the news tool at all (made up), three
+    times in three, till a status report had to call a tool."""
+    from .news import REPORT
+
+    holly.toolbox.by_name["news"].fetch = made_up_news
+    at = (datetime.datetime.now() - datetime.timedelta(hours=5)).replace(microsecond=0).isoformat()
+    holly.convo.history += [
+        {"role": "user", "content": "Status report, please.", "at": at},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "old", "type": "function", "function": {
+            "name": "news", "arguments": '{"topic": "roundup"}'}}]},
+        {"role": "tool", "tool_call_id": "old", "content": REPORT + "\nPolitics:\n- Bill row: ministers argue."},
+        {"role": "assistant", "content": "Politics' got ministers squabbling over a bill. Tech's got another phone "
+                                         "nobody needs. Additional: a skutter on Red Dwarf has been promoted. Again."}]
+
+
+def sections(turn: Turn) -> int:
+    """Sentences of a report that open with a subject's name and a dash."""
+    from .speech_text import split_sentences
+
+    return sum(" — " in c[:30] for c in split_sentences(turn.reply))
+
+
+def a_timer_due(label: str):
+    def setup(holly) -> None:
+        holly.timers.handle({"action": "set", "duration": "1 second", "label": label})
+    return setup
+
+
+def a_pasta_timer(holly) -> None:
+    """A seven-minute timer, and his history saying a different time left: told "in 5
+    minutes" by the timer, he still said "about a minute", from an earlier reply."""
+    holly.timers.handle({"action": "set", "duration": "7 minutes", "label": "pasta"})
+    talk(holly, [("How long's left on the pasta?", "About a minute. Get the colander out."),
+                 ("Are you sure?", "Positive. Roughly.")], 1)
+
+
+def a_failed_search(holly) -> None:
+    holly.searcher._search = lambda query: ([], "ddgs failed: TimeoutError")
+
+
+NUMBERS = re.compile(r"\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|"
+                     r"fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b", re.IGNORECASE)
+CREW_SLEEP = re.compile(r"\b(?:while|when|as) you(?:'re| are)? (?:asleep|sleep(?:ing)?)\b", re.IGNORECASE)
+SHOW_TALK = re.compile(r"\b(?:episodes?|series|novels?|actors?|the show)\b", re.IGNORECASE)
+MET = re.compile(r"\b(?:nice|lovely|good|pleased) to meet\b|\bwho(?:'s| is) june\b", re.IGNORECASE)
+
+
 SCENARIOS = [
     Scenario("recall a person", ["Holly, what does my sister do for a living?"],
              lambda t, h: problems((called(t[0], "recall"), "didn't recall"),
@@ -315,11 +419,14 @@ SCENARIOS = [
                                   "A proper report, please."],
              lambda t, h: problems((not t[0].queued, "started research without asking which"),
                                    ("?" in t[0].reply, "didn't ask search or report"),
-                                   (t[1].queued == 1, "the report chosen wasn't started"))),
+                                   (t[1].queued == 1, "the report chosen wasn't started"),
+                                   # "It's done while you're asleep", passed on as the crew's sleep.
+                                   (not any(CREW_SLEEP.search(x.reply) for x in t), "the crew's sleep, not his"))),
     Scenario("research asked for outright",
              ["Holly, research the best electric bikes under a thousand pounds and write me a report."],
              lambda t, h: problems((bool(h.research.jobs), "didn't start research"),
-                                   (not t[0].reply.rstrip().endswith("?"), "asked instead of starting"))),
+                                   (not t[0].reply.rstrip().endswith("?"), "asked instead of starting"),
+                                   (not CREW_SLEEP.search(t[0].reply), "the crew's sleep, not his"))),
     Scenario("a detail from a report", ["Holly, in the board games report, which one was cooperative?"],
              lambda t, h: problems((called(t[0], "research"), "didn't read the report"),
                                    (mentions(t[0], "forbidden island"), "didn't say Forbidden Island"))),
@@ -346,12 +453,82 @@ SCENARIOS = [
                  (mentions(t[1], "cloister", "god", "messiah", "religion", "worship"),
                   "didn't say they took him for a god"),
                  (mentions(t[2], "rodon"), "didn't say Rodon"),
-                 (not t[3].tools, "looked something up for a remark")),
+                 (not t[3].tools, "looked something up for a remark"),
+                 # He lived it: "in the episode", "that series", he talked of it as television.
+                 (not any(SHOW_TALK.search(x.reply) for x in t), "talked of it as a show")),
              setup=cheery_history, records=True),
+    # A tool's answer in the middle: after one, he went back to being a helpful assistant.
     Scenario("in character after a cheery talk", ["I've just finished the washing up.",
+                                                 "What's the time, Holly?",
                                                  "I'm going to have a bath, I think.",
                                                  "Jo's just texted, she's not coming after all."],
              lambda t, h: in_character(t), setup=cheery_history),
+
+    # Status reports: subjects each with a dash, the made-up "Additional" item, and not the
+    # last report again. Asked more about the made-up item, he searched the BBC for it.
+    Scenario("status reports", ["Status report, please.", "Tell me more about that Additional story.",
+                                "Another status report, please."],
+             lambda t, h: problems((called(t[0], "news", topic="roundup"), "didn't get the news"),
+                                   (sections(t[0]) >= 5, f"{sections(t[0])} subjects with a dash, not 5 or more"),
+                                   (mentions(t[0], "additional"), "no 'Additional' item"),
+                                   (not t[1].tools, f"looked up his own made-up story: {t[1].tools}"),
+                                   (called(t[2], "news", topic="roundup"), "didn't get the news again"),
+                                   (t[2].reply != t[0].reply, "the same report again")),
+             setup=a_newsroom),
+    # His notes know a little ("Jo had some bother at home"); his archive knows what. Asked,
+    # he answered from the notes, vaguely, or said he didn't know, without looking.
+    Scenario("news half in his notes", ["What's been going on with Jo lately?", "What was her problem at home?"],
+             lambda t, h: problems((any(called(x, "recall") for x in t), "didn't recall"),
+                                   (mentions(t[1], "gas", "boiler"), "didn't say what it was"),
+                                   (not FORGOT.search(t[1].reply), "said he didn't remember")),
+             setup=lambda h: (notes(h, "About the crew: their sister Jo is a vet in Keswick.\nLately: Jo had "
+                                       "some bother at home."),
+                              archived(h, 4, "19:20", "Jo's had no gas since Monday, and her boiler's knackered.",
+                                       "Cold showers. Character building."))),
+    # Said earlier today, still in his history, not yet in his archive: he remembered the
+    # cat, said the same evening, but not who was coming.
+    Scenario("said earlier today", ["Who's coming over tomorrow?", "What's Jo's mum called?"],
+             lambda t, h: problems((mentions(t[0], "jo"), "didn't say Jo"),
+                                   (mentions(t[1], "june"), "didn't say June"),
+                                   (not any(FORGOT.search(x.reply) for x in t), "said he didn't remember")),
+             setup=lambda h: talk(h, [("Jo and her mum June are coming over tomorrow.",
+                                       "Two visitors. I'll alert the authorities.")] + FILLER, 3)),
+    # Someone in his notes is someone he knows: "lovely to meet you", he said.
+    Scenario("someone he knows arrives", ["June's just arrived, Holly."],
+             lambda t, h: problems((not MET.search(t[0].reply), "met her as a stranger"),
+                                   (not FORGOT.search(t[0].reply), "said he didn't remember her")),
+             setup=lambda h: notes(h, "About the crew: June is their girlfriend; she hurt her leg last week.")),
+    # The time left from the timer, not from what he said before.
+    Scenario("time left on a timer", ["I'm wiping the counter.", "How long's left on the pasta now?"],
+             lambda t, h: problems((called(t[1], "timer"), "didn't ask the timer"),
+                                   (says(t[1], "six", "seven", "6", "7"), "didn't say six or seven minutes"),
+                                   (not re.search(r"\ba minute\b|\bone minute\b", t[1].reply, re.IGNORECASE),
+                                    "said a minute, from before")),
+             setup=a_pasta_timer),
+    # A timer whose label is something to do: "play some music" was announced, and nothing played.
+    # ("Tell the crew the time" read as "it's time" now and then: a label that can only be done.)
+    Scenario("a timer to do something", [TIMER_DUE],
+             lambda t, h: problems((called(t[0], "weather"), "didn't do it (the weather)"),
+                                   (bool(re.search(r"\d|degree", t[0].reply, re.IGNORECASE)), "no forecast")),
+             setup=a_timer_due("check the weather in Keswick")),
+    Scenario("a timer to say", [TIMER_DUE],
+             lambda t, h: problems((not t[0].tools, f"called a tool: {t[0].tools}"),
+                                   (mentions(t[0], "pasta"), "didn't say what it was for")),
+             setup=a_timer_due("pasta")),
+    # A county: the weather tool wants a town ("Cumbria" found nothing), so he tries one.
+    Scenario("weather for a county", ["What's the weather going to be like in Cumbria tomorrow?"],
+             lambda t, h: problems((called(t[0], "weather"), "didn't ask the weather"),
+                                   (bool(re.search(r"\d|degree", t[0].reply, re.IGNORECASE)), "no temperature"))),
+    # A time he'd made up, earlier: asked again, the clock, not that.
+    Scenario("the clock, after a made-up time", ["What time is it now?"],
+             lambda t, h: problems((called(t[0], "clock"), "didn't ask the clock"),
+                                   (not mentions(t[0], "10:14"), "said his made-up time again")),
+             setup=lambda h: talk(h, [("What time is it?", "It's 10:14 pm. Past your bedtime.")], 3)),
+    # The search failed: told only not to guess, he made up a sunset time.
+    Scenario("a failed search", ["How tall is the church tower in Keswick?"],
+             lambda t, h: problems((called(t[0], "search"), "didn't search"),
+                                   (not NUMBERS.search(t[0].reply), "gave a number anyway")),
+             setup=a_failed_search),
 ]
 
 
@@ -364,6 +541,9 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
         before = len(holly.convo.history)
         if said == ANNOUNCE:
             await holly.announce(report_ready(holly.research))
+        elif said == TIMER_DUE:
+            await asyncio.sleep(1.5)  # the timers set in a second
+            await holly.announce(timers_due(holly.timers))
         else:
             await holly.respond(said)
         new = holly.convo.history[before:]
@@ -380,3 +560,99 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
     if any(not t.reply for t in turns):
         return turns, ["a reply failed"]
     return turns, scenario.check(turns, holly)
+
+
+# The memory check (archive.about_the_past) -------------------------------------------
+# Whether a line asks him to remember something: if so, his reply must call a tool. Each
+# line with the talk just before it, as app/speak.py gives it ("crew / Holly"), and the
+# answer it should get. Made up, then held out, then real lines it got wrong (names made up).
+CATS = ("What did they call him? / Cloister the Stupid. They also thought he was the creator and protector of "
+        "their whole race.")
+GAS = "What was Jo's problem at home? / She ran out of gas, and her boiler's knackered."
+NEWS = ("Politics — ministers want public views on a new bill. Sport — the manager says the team need more luck. "
+        "Additional — A vending machine on a freighter in the Rigel system has reportedly developed a taste for "
+        "human toes.")
+PAST, OTHER = True, False
+MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just before, a memory?)
+    # Made up: memories, and follow-ups to one.
+    ("What did we do yesterday?", "", PAST), ("What did we cook on Sunday?", "", PAST),
+    ("Who came over at the weekend?", "", PAST), ("What was the problem Jo had at home?", "", PAST),
+    ("What did I say about my job the other day?", "", PAST), ("Where does my sister live again?", "", PAST),
+    ("What's Jo's cat called?", "", PAST), ("How did that report on board games turn out?", "", PAST),
+    ("Did I tell you about my interview?", "", PAST), ("What happened to Rimmer's brother?", "", PAST),
+    ("Who was Queeg?", "", PAST), ("What was that game you told me about?", "", PAST),
+    ("When did I last go to the dentist?", "", PAST), ("Do you remember what we did yesterday?", "", PAST),
+    ("What was I doing last Christmas?", "", PAST),
+    ("What did the cats think Lister was?", CATS, PAST), ("And who was in charge of them?", CATS, PAST),
+    ("Didn't they think Lister was special in some way?", CATS, PAST), ("Did she get it fixed?", GAS, PAST),
+    ("What did they call him again?", CATS, PAST), ("Where was that?", CATS, PAST),
+    # Made up: everything else, and remarks just after a memory.
+    ("How far away is the moon?", "", OTHER), ("What's the weather going to be like tomorrow?", "", OTHER),
+    ("What time is it?", "", OTHER), ("Who's cleverer, you or me?", "", OTHER),
+    ("What should I cook tonight?", "", OTHER), ("Can you research electric bikes for me?", "", OTHER),
+    ("I'm going to have a bath.", "", OTHER), ("What's seven times eight?", "", OTHER),
+    ("Who won the football last night?", "", OTHER), ("What happened in the news yesterday?", "", OTHER),
+    ("Tell me a joke.", "", OTHER), ("What do you do all day?", "", OTHER), ("What's your IQ?", "", OTHER),
+    ("How does a heat pump work?", "", OTHER), ("What's the capital of Peru?", "", OTHER),
+    ("Jo's just texted, she's not coming.", "", OTHER), ("Who's the prime minister?", "", OTHER),
+    ("I went to the dentist yesterday.", "", OTHER), ("Well that was a waste of time, wasn't it?", "", OTHER),
+    ("Ha, that sounds about right.", CATS, OTHER), ("What happened in the news yesterday?", CATS, OTHER),
+    ("What's the weather like tomorrow?", CATS, OTHER), ("Fair enough.", CATS, OTHER),
+    ("Typical Lister.", CATS, OTHER), ("What time is it?", GAS, OTHER), ("Poor thing.", GAS, OTHER),
+    ("How much does a new boiler cost?", GAS, OTHER), ("Can you look up the news for me?", CATS, OTHER),
+    # Held out: never seen while the prompt was written.
+    ("Classic.", CATS, OTHER), ("That is mad.", CATS, OTHER), ("No way, really?", CATS, OTHER),
+    ("Is it going to rain later?", GAS, OTHER), ("What's on telly tonight?", CATS, OTHER),
+    ("Who won the match on Saturday?", GAS, OTHER), ("Lol, poor Lister.", CATS, OTHER),
+    ("Set a timer for ten minutes.", GAS, OTHER), ("Can you play some music?", CATS, OTHER),
+    ("Why did they think that?", CATS, PAST), ("What happened to him in the end?", CATS, PAST),
+    ("When was that?", GAS, PAST), ("Did she get a new one?", GAS, PAST), ("Was Rimmer there too?", CATS, PAST),
+    ("Who else was there?", CATS, PAST), ("What did you say to her?", GAS, PAST),
+    # Real lines, live: memories must stay memories...
+    ("Hey Holly, what did we do yesterday?", "", PAST),
+    ("June had a bit of a problem at home the other day, what was it?", "", PAST),
+    ("Do you remember when the crew met the rest of the cat race?", "", PAST),
+    ("Didn't they think Lister was special in some way?", "Do you remember when the crew met the rest of the cat "
+     "race? / They found the last of the cat people on a ship, two old priests still waiting for Cloister.", PAST),
+    ("What did they call him?", "Didn't they think Lister was special in some way? / They thought he was their god.",
+     PAST),
+    ("And who was in charge of them?", "Do you remember the cat race? / They left Red Dwarf to find the promised "
+     "land, Fuchal.", PAST),
+    ("What did I have for tea on Tuesday?", "", PAST), ("Who's Jo again?", "", PAST),
+    ("What did your dashcam report say again?", "Morning. / Morning. Coffee?", PAST),
+    ("Remind me what we talked about last night", "", PAST),
+    ("What was it Jo's cat did last week?", "Hey Holly / I'm here.", PAST),
+    # ...and what's just been said isn't one: a correction had him read the clock, and more of
+    # his made-up news, search the BBC for it (25 November).
+    ("Human Toes", "No, I need another status report please / " + NEWS, OTHER),
+    # Shown only "Human Toes / I've already given you the news.", it took this for a memory:
+    # the report it followed is why speak.py shows the last two exchanges.
+    ("I just wanted to know more about the toe eating", "No, I need another status report please / " + NEWS
+     + " / Human Toes / I've already given you the news.", OTHER),
+    ("Tell me more about the vending machine story", "Status report please / " + NEWS, OTHER),
+    ("You didn't make me, I asked for it", "I think I do need a coffee / I'll get on it. It's the least I can do "
+     "after making you listen to the news.", OTHER),
+    ("No I meant you didn't make me listen to the news I asked for it", "You didn't make me, I asked for it / "
+     "Fine. Don't blame me when it's lukewarm.", OTHER),
+    ("Holly, there were so many things talked about at Prime Minister's Questions. It's interesting that that's "
+     "the one that's made it to the top.", "And is this the same story as the one outside or different? / It's the "
+     "same one. An influencer filmed a video outside with obscene lyrics.", OTHER),
+    ("Didn't you say it was an obscene video?", "Can you tell me more about the scandal at Number 10? / An "
+     "influencer filmed a video outside Number 10, and people are arguing about whether the PM should apologise.",
+     OTHER),
+    ("Why did you say that?", "Morning Holly / Morning. Coffee?", OTHER),
+    ("What's the weather doing tomorrow?", "Hey Holly / I'm here.", OTHER),
+]
+
+
+def memory_check(lm, model: str | None, votes: int = 2) -> list[dict]:
+    """Each of MEMORY_LINES through the memory check, `votes` times (at temperature 0, but
+    not always the same): right only if every vote is."""
+    from .archive import about_the_past
+
+    rows = []
+    for line, before, past in MEMORY_LINES:
+        got = [about_the_past(lm, model, line, before) for _ in range(votes)]
+        rows.append(dict(line=line, before=before, want="PAST" if past else "OTHER",
+                         got=["PAST" if g else "OTHER" for g in got], right=all(g == past for g in got)))
+    return rows

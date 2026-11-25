@@ -1,10 +1,16 @@
 """Recall: finding what was said (by keyword and day; meaning needs LM Studio), and who
 a question is about."""
 
+import asyncio
+import dataclasses
 import datetime as dt
+from types import SimpleNamespace
 
-from app.archive import Archive, added_names, in_their_words, named_in
+from app.archive import QUERY_PREFIX, Archive, RecallTool, added_names, in_their_words, named_in
+from app.search import Lookup
+from app.tools import Turn
 from conftest import FakeLm
+from test_reports import BagOfWords
 
 HITS = [(None, "Crew: Jo came round with June and Ed.\nHolly: Noted.")]
 
@@ -140,6 +146,86 @@ def test_recall_nothing(cfg):
     a.add([entry(dt.datetime(2026, 11, 1, 9), "Kryten is a mechanoid.")])
     found = a.recall("Kryten", "When did I last see Kryten?")
     assert found.results == 0 and "doesn't say" in found.answer
+
+
+SAID = "Crew: Jo and her mum June are coming tomorrow."
+
+
+def test_recall_reads_what_the_crew_said_in_this_conversation(cfg):
+    """Asked who was coming over, he recalled, and the archive had nothing: the visit was
+    still in his history. The judge reads the crew's lines there too."""
+    asked = []
+    a = archive(cfg, FakeLm(side=lambda s, u: asked.append(u) or "ANSWER: Jo and her mum June."))
+    found = a.recall("visit coming over", "Who is coming over tomorrow?", said=SAID)
+    assert f"(Said in this conversation, by the crew:)\n{SAID}" in asked[0]
+    assert found.answer == "Jo and her mum June." and found.results == 1
+
+
+def test_nothing_remembered_tells_him_to_answer_from_the_conversation_or_his_notes(cfg):
+    """Told "say you don't remember", he did, with the answer in front of him."""
+    a = archive(cfg, FakeLm(side=lambda s, u: "NOTHING"))
+    found = a.recall("visit coming over", "Who is coming over tomorrow?", said=SAID)
+    assert found.results == 0
+    assert found.answer.startswith("Your archive doesn't say. If this conversation or your notes say, "
+                                   "answer from them.")
+    # Nothing found at all, and no judge asked: the same.
+    assert "If this conversation or your notes say, answer from them." in a.recall(
+        "boiler", "When's the boiler service?").answer
+
+
+class Remembers:
+    """An archive that records what recall was asked."""
+
+    def __init__(self):
+        self.calls = []
+
+    def recall(self, query, question, said="", asked=""):
+        self.calls.append((query, question, said, asked))
+        return Lookup(query, "Jo and her mum June are coming tomorrow.", 1, 1.0, 1.0, [query])
+
+
+def test_the_recall_tool_passes_the_crews_lines_and_their_own_words():
+    memory = Remembers()
+    turn = Turn("Holly, who's coming over tomorrow?", 3, SimpleNamespace(search_ms=0.0), crew_lines=lambda: SAID)
+    told = asyncio.run(RecallTool(memory).run(
+        {"query": "visit tomorrow", "question": "Who is coming over tomorrow?"}, turn))
+    assert memory.calls == [("visit tomorrow", "Who is coming over tomorrow?", SAID,
+                             "Holly, who's coming over tomorrow?")]
+    assert told.startswith("Jo and her mum June are coming tomorrow.\n(This is your memory of it")
+
+
+def test_the_episode_is_left_out_of_the_judges_question(cfg):
+    """"The Cat's name in the episode Gunmen of the Apocalypse?" got NOTHING from the
+    judge, taking it as the Cat's own name; without "the episode", the right one."""
+    asked = []
+    a = archive(cfg, FakeLm(side=lambda s, u: asked.append(u) or "ANSWER: The Riviera Kid."))
+    a.add([entry(dt.datetime(2026, 11, 1, 9), "We watched Gunmen of the Apocalypse again.")])
+    a.recall("Cat name Gunmen of the Apocalypse", "What was the Cat's name in the episode Gunmen of the Apocalypse?")
+    assert "Question: What was the Cat's name in Gunmen of the Apocalypse?\n" in asked[0]
+
+
+def test_a_days_search_by_meaning_leaves_the_day_words_out(cfg):
+    """Searching a day by meaning, "yesterday" put the entries that said "yesterday" first,
+    ahead of the album asked for: the day is settled, so its words are left out."""
+    class Embedder(FakeLm):
+        def __init__(self):
+            super().__init__()
+            self.texts = []
+
+        def embed(self, texts, model):
+            self.texts += texts
+            return BagOfWords().embed(texts, model)
+
+    lm = Embedder()
+    a = Archive(dataclasses.replace(cfg.recall, embed_model="embedder"), lm, "m")
+    yesterday = dt.datetime(2026, 11, 17, 9)
+    a.add([entry(yesterday, "We had a lovely day yesterday at the lake."),
+           entry(yesterday + dt.timedelta(hours=2), "Play that new album by the jazz band."),
+           entry(yesterday + dt.timedelta(hours=4), "Jo's making lasagne for tea.")])
+    hits = a.search("what music did I ask for yesterday?", on=dt.date(2026, 11, 18))
+    assert len(hits) == 3  # the day asked about, all of it
+    searched = [t for t in lm.texts if t.startswith(QUERY_PREFIX)]
+    assert searched and all("music" in t and "yesterday" not in t.lower() for t in searched)
 
 
 def test_misheard_names(cfg):

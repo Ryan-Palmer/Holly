@@ -161,7 +161,7 @@ To check a change to his character, or another model, score him:
 .venv\Scripts\python -m app.evals --compare            # every scorecard so far
 ```
 
-It puts him through two things, with a silent voice and his memory in a
+It puts him through three things, with a silent voice and his memory in a
 temporary folder:
 
 - **Persona**: the prompts in `persona/test_prompts.txt`, each scored for
@@ -172,12 +172,19 @@ temporary folder:
   that need his tools and memory (recall, the clock, timers, search or
   report, reading a report, announcing one), each run three times, since
   the model varies.
+- **Memory check**: the side task that decides whether a line asks him to
+  remember something (then he must look it up), on labelled lines
+  (`MEMORY_LINES` in `app/scenarios.py`), each asked twice.
+
+Every problem found by talking to him, once fixed, gets a check: a unit
+test if the fix is plain code, or a scenario or labelled line here if it
+depends on what the model says.
 
 The judge is one fixed model (`[evals]` in `holly.toml`), whatever model is
 being tested, so scores compare between runs; it's loaded once every reply
 is written. A scorecard goes to `runs/`: Markdown with every reply, and JSON
-for `--compare`. `--only persona` or `--only scenarios` runs one part;
-`--session` asks the persona prompts as one conversation, which shows ruts.
+for `--compare`. `--only persona`, `--only scenarios` or `--only memory`
+runs one part; `--session` asks the persona prompts as one conversation, which shows ruts.
 Run it with LM Studio up and no Holly running. A new model also wants its
 quirks in a `[models]` table in `holly.toml`.
 

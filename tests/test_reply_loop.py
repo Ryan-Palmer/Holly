@@ -244,6 +244,20 @@ def test_a_failed_timer_announcement_keeps_the_timer(make_holly):
     assert times.failed and [i["label"] for i in holly.timers.items] == ["pasta"]
 
 
+def test_a_timer_to_do_something_must_call_a_tool(make_holly):
+    """"Check the weather in Keswick" came due, and he announced it without checking, one
+    time in four, though the note told him to use the tool. A "pasta" timer is just said."""
+    lm = FakeLm([[("weather", {"place": "Keswick"})], "Six degrees and drizzle.", "Pasta's done."])
+    holly = make_holly(lm)
+    due = (dt.datetime.now() - dt.timedelta(seconds=5)).isoformat(timespec="seconds")
+    holly.timers.items = [{"label": "check the weather in Keswick", "due": due, "kind": "timer"}]
+    asyncio.run(holly.announce(announce.timers_due(holly.timers)))
+    assert lm.requests[0]["tool_choice"] == "required" and lm.requests[1]["tool_choice"] is None
+    holly.timers.items = [{"label": "pasta", "due": due, "kind": "timer"}]
+    asyncio.run(holly.announce(announce.timers_due(holly.timers)))
+    assert lm.requests[2]["tool_choice"] is None
+
+
 def test_a_failed_report_announcement_is_tried_again(make_holly):
     holly = make_holly(FakeLm([ConnectionError("LM Studio restarting"), "Your report's ready. Summary?"]))
     holly.research.shelf.add({"id": "r1", "title": "Keeping chickens", "request": "chickens", "stage": "done",
@@ -285,7 +299,7 @@ def test_a_status_reports_sections_get_a_longer_pause(make_holly, monkeypatch):
     from app import news
     from app.search import Lookup
     from app.speak import SECTION_PAUSE_S
-    monkeypatch.setattr(news, "roundup", lambda cfg: Lookup("roundup", "The BBC's latest, by subject...", 7, 1, 0))
+    monkeypatch.setattr(news, "roundup", lambda cfg, **kw: Lookup("roundup", "The BBC's latest, by subject...", 7, 1, 0))
     report = ("Man City's stalling. Politics' got the age of consent debate. Well — maybe so. "
               "Tech's got AI planning. Additional. The vending machine dispenses warm lemonade.")
     lm = FakeLm([[("news", {"topic": "roundup"})], report, "Science is overrated. Sport's a waste of time."])
@@ -316,7 +330,7 @@ def test_each_reply_checks_his_model_is_loaded_his_way_first(make_holly):
 def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
     from app import news
     from app.search import Lookup
-    monkeypatch.setattr(news, "roundup", lambda cfg: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
+    monkeypatch.setattr(news, "roundup", lambda cfg, **kw: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
     first = "Politics' got a bill. Additional — a skutter has gone missing."
     lm = FakeLm([[("news", {"topic": "roundup"})], first, "Science is overrated.",
                  [("news", {"topic": "roundup"})], "Politics — a bill."])
@@ -325,11 +339,14 @@ def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
     respond(holly, "Thoughts on science?")
     assert any(m.get("content") == first for m in lm.requests[2]["messages"])  # other turns have it
     respond(holly, "Another status report.")
-    asked, after = lm.requests[3]["messages"], lm.requests[4]["messages"]
-    assert any(m.get("content") == first for m in asked)  # until he calls for the news
+    # Not even before he calls for the news: with the last one there, he gave it again, or
+    # made one up, without calling. And he must call a tool.
+    asked, after = lm.requests[3], lm.requests[4]["messages"]
+    assert first not in [m.get("content") for m in asked["messages"]] and asked["tool_choice"] == "required"
     contents = [m.get("content") or "" for m in after]
     assert first not in contents and contents.count(news.EARLIER) == 2  # the old news, and what he said
     assert contents[-1].startswith(news.REPORT)  # the new report's news is there
+    assert lm.requests[4]["tool_choice"] is None  # once he has it, he says it
     assert any(m.get("content") == first for m in holly.convo.history)  # still in his history
 
 

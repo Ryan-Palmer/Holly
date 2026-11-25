@@ -89,6 +89,23 @@ def test_say_when():
     assert say_when(dt.datetime(2026, 11, 20, 19, 30), NOW) == "19:30 on Friday 20 November"
 
 
+@pytest.mark.parametrize("left, want", [
+    (dt.timedelta(minutes=1), "10:01 today, in 1 minute"),
+    (dt.timedelta(seconds=25), "10:00 today, in 25 seconds"),  # under half a minute
+    (dt.timedelta(minutes=4, seconds=40), "10:04 today, in 5 minutes"),  # rounded
+    (dt.timedelta(hours=1), "11:00 today, in 1 hour"),
+    (dt.timedelta(hours=2), "12:00 today, in 2 hours"),
+    (dt.timedelta(hours=2, minutes=5), "12:05 today, in 2 hours 5 minutes"),
+])
+def test_say_when_how_long_is_left(left, want):
+    assert say_when(NOW + left, NOW) == want
+
+
+def test_say_when_tomorrow_but_soon_says_how_long():
+    late = dt.datetime(2026, 11, 18, 22, 30)
+    assert say_when(dt.datetime(2026, 11, 19, 1, 0), late) == "01:00 tomorrow, in 2 hours 30 minutes"
+
+
 def test_days_in_looks_back():
     assert days_in("what did we talk about yesterday?", WED) == {dt.date(2026, 11, 17)}
     assert days_in("what did I say on Tuesday?", WED) == {dt.date(2026, 11, 17)}

@@ -132,13 +132,15 @@ def google_news(words: str, timeout: float) -> list[dict]:
     return stories
 
 
-def roundup(cfg: SearchConfig, now: datetime.datetime | None = None) -> Lookup:
+def roundup(cfg: SearchConfig, now: datetime.datetime | None = None, fetch=None) -> Lookup:
     """A status report's news: the freshest couple of stories in each of the main subjects,
-    each story once (the top stories turn up again under their subjects)."""
+    each story once (the top stories turn up again under their subjects). `fetch`: how a
+    feed's stories are got (headlines, unless the evals give made-up ones)."""
+    fetch = fetch or headlines
     t0 = time.perf_counter()
     now = now or datetime.datetime.now(datetime.timezone.utc)
     with concurrent.futures.ThreadPoolExecutor(len(ROUNDUP)) as pool_of:  # all at once: ~0.3 s
-        feeds = dict(zip(ROUNDUP, pool_of.map(lambda f: headlines(f, cfg.timeout_s), ROUNDUP)))
+        feeds = dict(zip(ROUNDUP, pool_of.map(lambda f: fetch(f, cfg.timeout_s), ROUNDUP)))
     seen, parts, count = set(), [], 0
     for feed, name in ROUNDUP.items():
         fresh = []
@@ -191,15 +193,16 @@ def ago(when: datetime.datetime, now: datetime.datetime) -> str:
     return f"{days} day{'s' * (days != 1)} ago"
 
 
-def news(topic: str, about: str, cfg: SearchConfig, now: datetime.datetime | None = None) -> Lookup:
+def news(topic: str, about: str, cfg: SearchConfig, now: datetime.datetime | None = None, fetch=None) -> Lookup:
     """The latest headlines on `topic`, or about `about` in any feed, as a few lines for Holly."""
+    fetch = fetch or headlines
     t0 = time.perf_counter()
     now = now or datetime.datetime.now(datetime.timezone.utc)
     words = [w for w in re.findall(r"[a-z0-9']+", about.lower()) if len(w) > 2]
     if words:
         pool, seen = [], set()
         with concurrent.futures.ThreadPoolExecutor(len(FEEDS)) as pool_of:  # all at once: ~0.3 s, not ~3
-            feeds = list(pool_of.map(lambda f: headlines(f, cfg.timeout_s), FEEDS))
+            feeds = list(pool_of.map(lambda f: fetch(f, cfg.timeout_s), FEEDS))
         for stories in feeds:
             for s in stories:
                 text = f"{s['title']} {s['summary']}".lower()
@@ -215,7 +218,7 @@ def news(topic: str, about: str, cfg: SearchConfig, now: datetime.datetime | Non
         what = f"about {about.strip()!r}"
     else:
         topic = topic if topic in FEEDS else "top"
-        pool = headlines(topic, cfg.timeout_s)
+        pool = fetch(topic, cfg.timeout_s)
         what = "top stories" if topic == "top" else f"{topic} news"
     recent = [s for s in pool if now - s["published"] <= FRESH]
     if len(recent) < 3:
@@ -237,12 +240,13 @@ class NewsTool(LookupTool):
 
     def __init__(self, cfg: SearchConfig):
         self.cfg = cfg
+        self.fetch = headlines  # a feed's stories: made-up ones in the evals (app/scenarios.py)
 
     async def run(self, args: dict, turn: Turn) -> str:
         topic = str(args.get("topic") or "top").strip().lower()
         about = str(args.get("about") or "").strip()
         if topic == "roundup" and not about:
-            found = await self.look_up("news: a status report", lambda: roundup(self.cfg), turn)
+            found = await self.look_up("news: a status report", lambda: roundup(self.cfg, fetch=self.fetch), turn)
             return found if isinstance(found, str) else Searcher.for_holly(found)
-        found = await self.look_up(f"news: {about or topic}", lambda: news(topic, about, self.cfg), turn)
+        found = await self.look_up(f"news: {about or topic}", lambda: news(topic, about, self.cfg, fetch=self.fetch), turn)
         return found if isinstance(found, str) else Searcher.for_holly(found)

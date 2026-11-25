@@ -65,6 +65,20 @@ def addressed(text: str, wake_words: set[str], edge: int) -> bool:
     return any(w in wake_words for w in words[:edge] + words[-edge:])
 
 
+def for_holly(text: str, started: float, awake_until: float, wake_words: set[str], edge: int) -> bool:
+    """Does he answer `text`, begun at `started`? Always with no wake words; awake (begun
+    by `awake_until`), with no name needed; asleep, only if he's `addressed`."""
+    return not wake_words or started <= awake_until or addressed(text, wake_words, edge)
+
+
+def after_speaking(now: float, last_played: float | None, awake_s: float) -> tuple[float, float]:
+    """(deaf_until, awake_until) once he's replied, counted from when his last sample left
+    the speakers (`last_played`), or `now` if that's later: the mic is deaf for the echo
+    tail after it, and he's awake, no name needed, for `awake_s`."""
+    spoke_until = max(now, last_played or 0.0)
+    return spoke_until + ECHO_TAIL_S, spoke_until + awake_s
+
+
 class ListeningHolly(Holly):
     HINT = ""
 
@@ -145,8 +159,8 @@ class ListeningHolly(Holly):
                     if not text:
                         continue
                     started = utterance.speech_end - utterance.duration_ms / 1000
-                    if self.wake_words and started > self.awake_until and not addressed(
-                            text, self.wake_words, self.cfg.listen.wake_edge_words):
+                    if not for_holly(text, started, self.awake_until, self.wake_words,
+                                     self.cfg.listen.wake_edge_words):
                         print(f"{stamp()}{DIM}(not for Holly) {text}{RESET}")
                         continue
                     print(f"{stamp()}You: {text}")
@@ -155,12 +169,11 @@ class ListeningHolly(Holly):
                     except Exception as e:  # the voice or the speakers failed: report it and carry on
                         print(f"{YELLOW}  (that reply failed: {e!r}){RESET}\n", flush=True)
                 # Drop what the mic heard while Holly spoke, until his last sample has
-                # left the speakers, plus the echo tail.
-                spoke_until = max(time.perf_counter(), self.player.last_played or 0.0)
-                self.deaf_until = spoke_until + ECHO_TAIL_S
-                # The same span his face stays awake for (the face server's --sleep-after):
-                # awake, no wake word needed; asleep, it is.
-                self.awake_until = spoke_until + self.cfg.listen.awake_s
+                # left the speakers, plus the echo tail. Awake for the same span his face
+                # stays awake for (the face server's --sleep-after): awake, no wake word
+                # needed; asleep, it is.
+                self.deaf_until, self.awake_until = after_speaking(
+                    time.perf_counter(), self.player.last_played, self.cfg.listen.awake_s)
                 self.background.reminded = False  # new talk: fresh reminders from the records when he sleeps
                 self.detector.reset()
         except KeyboardInterrupt:

@@ -61,6 +61,13 @@ PROMISED_RESEARCH = re.compile(r"\b(?:look into (?:it|that|this)|get on(?:to| wi
 REPORT_WANTED = re.compile(r"\b(?:research|report|write[- ]?up|write it (?:all )?up|in depth|in detail|properly|"
                            r"proper (?:look|one|job)|full one|long one|while you doze|while you sleep|later)\b",
                            re.IGNORECASE)
+# A timer or reminder come due whose label is a tool's job (timers.announcement's note):
+# told in the note to do it with the tool, he announced "check the weather in Keswick"
+# and didn't, one time in four. Then his reply must call one (app/speak.py).
+DUE_ACTION = re.compile(r"\bThe (?:timer|reminder) '[^']*\b(?:play|put on|music|songs?|album|playlist|weather|"
+                        r"forecast|news|headlines|the time|look up|search|find out)\b[^']*'", re.IGNORECASE)
+# A status report asked for: the news tool, every time (app/speak.py).
+STATUS_ASKED = re.compile(r"\bstatus (?:report|update)s?\b", re.IGNORECASE)
 # His last reply offered the choice in his own words ("shall I dig into it while I doze?").
 OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
                             r"dig into|while I(?:'m)? doz|while I sleep)", re.IGNORECASE)

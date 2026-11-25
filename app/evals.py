@@ -1,11 +1,11 @@
 """How good Holly is on a model: his character, and his use of tools and memory, scored the
 same way every time, so models and changes can be compared.
 
-    python -m app.evals [--model KEY] [--runs N] [--label NAME] [--only persona|scenarios]
+    python -m app.evals [--model KEY] [--runs N] [--label NAME] [--only persona|scenarios|memory]
                         [--session] [--no-judge]
     python -m app.evals --compare
 
-Two parts, both through his real reply loop with a silent voice, his memory in a
+Three parts; the first two through his real reply loop with a silent voice, his memory in a
 temporary folder, and Spotify off:
 
 - persona: each prompt in persona/test_prompts.txt, asked afresh (or, with --session,
@@ -16,6 +16,8 @@ temporary folder, and Spotify off:
   used again and again. A judge scores each 1 to 5 for sounding like Holly.
 - scenarios: conversations with made-up memories (app/scenarios.py), each run --runs
   times (Gemma varies), checked for the tools and facts they need.
+- memory: the memory check (app/archive.py's about_the_past), which decides whether a
+  line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES).
 
 The judge is one fixed model ([evals] judge in holly.toml), whatever model is under
 test, so scores compare between runs; it's loaded after every reply has been written,
@@ -266,6 +268,8 @@ def summary(card: dict) -> list[str]:
         ]
     if s := card["scenarios"]:
         lines.append(f"Scenarios passed: {s['passed']} of {s['runs']}")
+    if m := card.get("memory_check"):
+        lines.append(f"Memory check right: {m['right']} of {m['of']}")
     lines.append("Used more than once, in all his replies: "
                  + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
@@ -285,6 +289,10 @@ def write(card: dict) -> Path:
             if r["wrong"]:
                 md += [f"**{r['name']}** (run {r['run']}): {'; '.join(r['wrong'])}  "]
                 md += [f"> {t['said']}  \n{t['reply']} _{t['tools']}_  " for t in r["turns"]] + [""]
+    if m := card.get("memory_check"):
+        md += ["## Memory check", "", f"{m['right']} of {m['of']} right."] + [
+            f"- wanted {r['want']}, got {'/'.join(r['got'])}: {r['line']!r}"
+            + (f" (after: {r['before'][:80]!r})" if r["before"] else "") for r in m["wrong"]] + [""]
     if card["persona"]:
         md += ["## Persona", ""]
         for r in card["persona_rows"]:
@@ -302,14 +310,14 @@ def compare() -> str:
     rows = []
     for f in sorted(RUNS.glob("evals-*.json")):
         c = json.loads(f.read_text(encoding="utf-8"))
-        p, s = c.get("persona") or {}, c.get("scenarios") or {}
+        p, s, m = c.get("persona") or {}, c.get("scenarios") or {}, c.get("memory_check") or {}
         rows.append([c["when"][:16], c["label"] or "-", c["model"].split("/")[-1], c["commit"],
                      f"{p['judge']:.2f}" if p.get("judge") else "-", f"{p['passing']}/{p['replies']}" if p else "-",
                      f"{p['tools_ok']}/{p['tooled']}" if p else "-", f"{s['passed']}/{s['runs']}" if s else "-",
-                     str(p.get("seconds") or "-")])
+                     f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-")])
     if not rows:
         return "No scorecards yet in runs/."
-    head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "s/reply"]
+    head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "memory", "s/reply"]
     widths = [max(len(r[i]) for r in rows + [head]) for i in range(len(head))]
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in [head] + rows)
 
@@ -334,12 +342,19 @@ async def run(args) -> dict:
     if args.only in (None, "scenarios"):
         print(f"Scenarios, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
         scenario_rows = await run_scenarios(model, args.runs)
+    memory_rows = []
+    if args.only in (None, "memory"):
+        print(f"Memory check, {len(scenarios.MEMORY_LINES)} lines, on {model}:", flush=True)
+        memory_rows = await asyncio.to_thread(scenarios.memory_check, lm, model)
+        print(f"  {sum(r['right'] for r in memory_rows)} of {len(memory_rows)} right", flush=True)
     if judge_model and persona_rows:
         print(f"Judging, on {judge_model}...", flush=True)
         judge_all(persona_rows, judge_model)
     return dict(model=model, judge=judge_model if persona_rows else None, label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
+                memory_check=dict(right=sum(r["right"] for r in memory_rows), of=len(memory_rows),
+                                  wrong=[r for r in memory_rows if not r["right"]]) if memory_rows else {},
                 # Across both parts: "right you are" opened eight scenario replies, unnoticed. Each
                 # scenario's first run only: its later runs say the same things, rightly.
                 repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows if r["run"] == 1
@@ -353,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--judge", help="the judge's model (default: [evals] judge in holly.toml)")
     parser.add_argument("--runs", type=int, default=None, help="runs of each scenario (default: holly.toml's)")
     parser.add_argument("--persona-runs", type=int, default=1, help="replies per persona prompt (default 1)")
-    parser.add_argument("--only", choices=["persona", "scenarios"], help="one part only")
+    parser.add_argument("--only", choices=["persona", "scenarios", "memory"], help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge's scores")
     parser.add_argument("--label", default="", help="a name for the scorecard, to compare runs")

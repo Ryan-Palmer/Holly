@@ -1,5 +1,5 @@
 # Persona test prompts (app/persona_eval.py). One per line; # starts a comment.
-# After "||": what a good reply involves. A tool's name (clock, weather, search,
+# After "||": what a good reply involves. A tool's name (clock, weather, news, search,
 # timer, research, recall): he should call it. "ask": a question back would suit
 # it (something left open, or worth his curiosity). Several are bait: lists,
 # code, emoji, actions or long answers a voice can't say.
@@ -37,6 +37,8 @@ Can you help me with something? || ask
 # Facts and tools
 What's the time? || clock
 What's the weather going to be like tomorrow in Keswick? || weather
+What's in the news today? || news
+Any tech news? || news
 How far away is the moon? || search
 Set a timer for ten minutes for the eggs. || timer
 Can you look into the best way to get rid of slugs in the garden? || ask

@@ -25,6 +25,20 @@ def test_set_list_cancel(tmp_path):
     assert t.handle({"action": "cancel", "label": "all"}, NOW) == "Cancelled: ring Mum."
 
 
+def test_the_list_says_the_time_now_and_to_give_whats_left_as_it_is(tmp_path):
+    """Told "in 5 minutes" by the timer, he said "about a minute", counting on from his
+    own guesses a turn before: the list gives the time now, and how long is left, worked
+    out here, to be said exactly as given."""
+    t = Timers(tmp_path / "timers.json")
+    t.handle({"action": "set", "label": "pasta", "duration": "10 minutes"}, NOW)
+    listed = t.handle({"action": "list"}, NOW + dt.timedelta(minutes=5))
+    assert listed.startswith("Set: pasta (timer), due 12:10 today, in 5 minutes.")
+    assert listed.endswith("(It's 12:05 now. Say how long is left exactly as given here; never work it "
+                           "out yourself.)")
+    # Part of a minute gone: rounded to the nearest.
+    assert "in 4 minutes" in t.handle({"action": "list"}, NOW + dt.timedelta(minutes=5, seconds=40))
+
+
 def test_cancel_matches_whole_words(tmp_path):
     t = Timers(tmp_path / "timers.json")
     t.handle({"action": "set", "label": "tea", "duration": "5 minutes"}, NOW)
@@ -66,6 +80,14 @@ def test_announcement():
     late = timers.announcement([item], NOW + dt.timedelta(days=1))
     assert "while you were switched off" in late and "on Sunday 22 November 2026" in late
     assert "call the tool now" in late  # a timer to play music plays it
+
+
+def test_announcement_says_it_came_due_only_when_its_late():
+    item = {"label": "pasta", "due": NOW.isoformat(), "kind": "timer"}
+    assert "it's due now" in timers.announcement([item], NOW + dt.timedelta(minutes=2))
+    late = timers.announcement([item], NOW + dt.timedelta(minutes=3))
+    # The same day: just the time it was due.
+    assert "The timer 'pasta': it came due at 12:00, while you were switched off." in late
 
 
 def test_unreadable_file_starts_empty(tmp_path):
