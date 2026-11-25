@@ -152,8 +152,11 @@ def roundup(cfg: SearchConfig, now: datetime.datetime | None = None) -> Lookup:
     if not parts:
         return Lookup("roundup", "The BBC's feeds had nothing from the past two days. Say so.", 0, ms, 0)
     answer = ("The BBC's latest, by subject, for a status report:\n" + "\n".join(parts)
-              + "\nRound it up subject by subject, a sentence each, in your own words; then the "
-                f"'Additional' item, as your rules say: today's is news about {random.choice(LORE)}.")
+              # The form here, the last thing he reads: in his rules alone, he copied an older
+              # report from his history instead ("Politics' got... Tech's got...").
+              + "\nRound it up subject by subject, a sentence each, in your own words, each starting with "
+                "its name and a dash ('Politics — ministers want...'); then the 'Additional' item, as your "
+                f"rules say: today's is news about {random.choice(LORE)}.")
     return Lookup("roundup", answer, count, ms, 0)
 
 

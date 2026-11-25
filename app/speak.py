@@ -297,6 +297,7 @@ class Holly:
         steps: list[dict] = []  # his searches and their results, for the history
         last_said: list[str] = []
         spoken: list[str] = []  # the sentences said this turn
+        called: set[str] = set()  # the tools called this reply (and seen by speak(): news means sections)
         unasked_countdown = not guards.TIME_ASKED.search(user)  # a timer counted down, if he does, is in passing
         thought = asyncio.Event()
         wait_for_reply = self.cfg.tts.voxcpm.wait_for_reply
@@ -325,7 +326,6 @@ class Holly:
             messages = self.convo.messages_for(user)
             asked = len(messages)
             lookups = 0  # slow tools called this reply
-            called: set[str] = set()  # the tools called this reply
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
                         self._answering_choice(), self.convo.crew_lines)
             retried = False  # a reply was dropped part-way and asked again (once a turn)
@@ -460,7 +460,7 @@ class Holly:
                     await thought.wait()
                 first = True
                 while (sentence := await sentences.get()) is not None:
-                    if not first and starts_section(sentence):
+                    if not first and "news" in called and starts_section(sentence):
                         # A status report's next section ("Politics — ..."): a longer pause
                         # before it, as between items on the news. Punctuation couldn't
                         # give one: a dash, two, or a full stop and a dash, ~0.1 s.

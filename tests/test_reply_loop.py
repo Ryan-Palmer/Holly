@@ -281,14 +281,21 @@ def test_asked_about_the_past_in_other_words_he_must_look(make_holly):
     assert judged[1].startswith("Just before: What did we do yesterday? / Lasagne")  # for follow-ups
 
 
-def test_a_status_reports_sections_get_a_longer_pause(make_holly):
+def test_a_status_reports_sections_get_a_longer_pause(make_holly, monkeypatch):
+    from app import news
+    from app.search import Lookup
     from app.speak import SECTION_PAUSE_S
-    holly = make_holly(FakeLm(["Right then. Politics: ministers want views. Well — maybe so. "
-                               "Additional. The toaster has resigned."]))
+    monkeypatch.setattr(news, "roundup", lambda cfg: Lookup("roundup", "The BBC's latest, by subject...", 7, 1, 0))
+    report = ("Man City's stalling. Politics' got the age of consent debate. Well — maybe so. "
+              "Tech's got AI planning. Additional. The vending machine dispenses warm lemonade.")
+    lm = FakeLm([[("news", {"topic": "roundup"})], report, "Science is overrated. Sport's a waste of time."])
+    holly = make_holly(lm)
     played: list[int] = []
     holly.player.put = lambda audio: played.append(len(audio))
     respond(holly, "Status report, please.")
     pause = int(holly.tts.sample_rate * SECTION_PAUSE_S)
-    assert holly.tts.said == ["Right then.", "Politics — ministers want views.", "Well — maybe so.",
-                              "Additional — The toaster has resigned."]
-    assert played.count(pause) == 2  # before "Politics" and "Additional": not the first, nor "Well"
+    assert played.count(pause) == 3  # before Politics, Tech and Additional: his own way of putting them
+    assert "Additional — The vending machine dispenses warm lemonade." in holly.tts.said
+    played.clear()
+    respond(holly, "Thoughts on science?")
+    assert played.count(pause) == 0  # no news this turn: sentences like these aren't sections

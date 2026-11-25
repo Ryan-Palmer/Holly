@@ -18,13 +18,15 @@ _URL = re.compile(r"https?://\S+")
 # it ran on with no pause (0 ms, 3 times in 3); with a dash it paused 240-880 ms and said
 # it clearly each time. An ellipsis lost the word.
 _ADDITIONAL = re.compile(r"\bAdditional\s*(?:[.:;,!]|\.\.\.|…|—|–|-)+\s*(?=\w)")
+# A status report's sections, and their names as he might start one with them: "Politics —
+# ministers...", "Politics' got the age of consent...", "In tech, ...", "Top stories are...".
+_SECTION_NAMES = ("top stories", "top", "headlines", "politics", "world", "world news", "business", "money",
+                  "the economy", "finance", "technology", "tech", "science", "sport", "sports", "health",
+                  "entertainment", "additional")
+_SECTION = re.compile(r"^(?:and )?(?:in )?(?:the )?(?:" + "|".join(re.escape(n) for n in _SECTION_NAMES)
+                      + r")(?![a-z])", re.IGNORECASE)
 # A heading at the start of a sentence, a status report's "Politics: ministers want...":
 # said with a dash, for the same pause after it.
-# A status report's sections, and their names as he might say them.
-_SECTION_NAMES = ("top stories", "the top stories", "headlines", "politics", "world", "the world", "world news",
-                  "business", "business and money", "money", "the economy", "technology", "tech", "science",
-                  "sport", "sports", "health", "entertainment", "additional")
-_SECTION = re.compile(r"^(?:" + "|".join(re.escape(n) for n in _SECTION_NAMES) + r")\s+—\s", re.IGNORECASE)
 _HEADED = re.compile(r"^([A-Z][\w'&]*(?: (?:and )?[\w'&]+){0,2}):\s+(?=\w)")
 _SENTENCE_END = re.compile(r"[.!?]+[\"')”’]*(?=\s|$)")
 _CLAUSE_BREAK = re.compile(r"[,;:—–](?=\s)")
@@ -106,8 +108,10 @@ class SentenceChunker:
 
 
 def starts_section(chunk: str) -> bool:
-    """Does this chunk start a status report's section, a heading and a dash ("Politics —
-    ...", "Additional — ...")? It's then said after a longer pause."""
+    """Does this chunk start with a status report's section ("Politics — ...", "Politics' got
+    ...", "In tech, ...", "Additional — ...")? Then, in a reply with news in it, it's said
+    after a longer pause (app/speak.py). Asked for the dash, he wrote "Politics' got..." all
+    the same, copying his last report: what's looked for is the name, not the punctuation."""
     return bool(_SECTION.match(chunk))
 
 
