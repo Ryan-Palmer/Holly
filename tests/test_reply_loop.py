@@ -509,3 +509,32 @@ def test_the_crew_after_asking_about_them_are_said(make_holly):
     respond(holly, "Where's Kryten?", "What's he doing there?")
     assert " ".join(holly.tts.said).endswith("Ironing. Lister's helping, badly.")
     assert holly.convo.history[-1]["content"] == "Ironing. Lister's helping, badly."
+
+
+
+def test_each_net_is_counted_as_it_fires(make_holly):
+    """So the evals can show which nets a model still trips, and which can come out."""
+    from app import guards
+    lm = FakeLm(["Fifty-six. Anything else you need me to work out?",
+                 "A jigsaw. The Cat's having a standoff with a mirror. He's losing.",
+                 "I've checked my records.", [("recall", {"query": "Jo"})], "Nothing on her."])
+    holly = make_holly(lm)
+    respond(holly, "What's seven times eight?", "What should I get her?", "Who's Jo?")
+    assert holly.nets == {guards.OFFERED: 1, guards.ASIDE_CUT: 1, guards.CLAIMED: 1}  # the aside's rest: once
+    assert holly.tts.said[:2] == ["Fifty-six.", "A jigsaw."]
+
+
+def test_raw_the_nets_count_and_do_nothing(make_holly):
+    """evals --raw: the model as it is. What a net would cut is said and kept, and nothing's
+    asked again; each is still counted."""
+    from app import guards
+    lm = FakeLm(["Fifty-six. Anything else you need me to work out?", "I've checked my records.", "Yeah?"])
+    holly = make_holly(lm)
+    holly.nets_act = holly.convo.clean = False
+    respond(holly, "What's seven times eight?", "Who's Jo?", "Hey Holly")
+    assert len(lm.requests) == 3  # nothing asked again
+    assert " ".join(holly.tts.said) == ("Fifty-six. Anything else you need me to work out? I've checked my records. "
+                                        "Yeah?")
+    assert holly.convo.history[1]["content"] == "Fifty-six. Anything else you need me to work out?"
+    assert "Anything else" in lm.requests[1]["messages"][2]["content"]  # nor cut from what he sees
+    assert holly.nets == {guards.OFFERED: 1, guards.CLAIMED: 1, guards.ALONE: 1}

@@ -96,13 +96,15 @@ def quiet_config(tmp: Path, cfg: Config | None = None) -> Config:
         spotify=dataclasses.replace(cfg.spotify, enabled=False))
 
 
-def quiet_holly(model: str | None = None, tmp: Path | None = None):
-    """A Holly on the real model, silent, with nothing of yours: his memory in `tmp`."""
+def quiet_holly(model: str | None = None, tmp: Path | None = None, raw: bool = False):
+    """A Holly on the real model, silent, with nothing of yours: his memory in `tmp`. `raw`:
+    his reply nets count what they'd do, and do nothing (guards.NETS): the model as it is."""
     from .speak import Holly  # here: it imports torch and the rest
 
     tmp = tmp or Path(tempfile.mkdtemp(prefix="holly-quiet-"))
     holly = Holly(model, face=False, cfg=quiet_config(tmp))
     holly.tts, holly.player = SilentVoice(), SilentPlayer()
+    holly.nets_act = holly.convo.clean = not raw
     return holly
 
 
@@ -379,20 +381,20 @@ def reports_and_an_aside(holly) -> None:
                                                   "wardrobe. He says the hangers started it."),
                  ("What's a trug?", "A shallow basket, for cuttings. The Cat's convinced the hangers are "
                                     "forming a union.")], 0.5)
-    holly.raw = []
+    holly.written = []
     stream = holly.lm.astream_reply
 
     async def watched(*args, **kwargs):
-        holly.raw.append("")
+        holly.written.append("")
         async for delta in stream(*args, **kwargs):
-            holly.raw[-1] += delta
+            holly.written[-1] += delta
             yield delta
     holly.lm.astream_reply = watched
 
 
 def asides_cut(holly) -> list[str]:
     """What he wrote that the crew-aside net cut (reports_and_an_aside)."""
-    return [text for text in holly.raw if without_offers(text, asides=True) != without_offers(text)]
+    return [text for text in holly.written if without_offers(text, asides=True) != without_offers(text)]
 
 
 def a_newsroom(holly) -> None:

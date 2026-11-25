@@ -227,6 +227,19 @@ once or more, judges with others instead; `--no-judge` skips them.
 Scorecards from before the second judge (25 November 2026) are Gemma's
 alone.
 
+**Reply nets.** Holly's reply loop has nets that make up for what a model
+gets wrong: an offer of more help not said, a timer counted down unasked, a
+promise of research with no research started, the crew tacked on, and so
+on (`NETS` in `app/guards.py`). Each is counted as it fires, and the
+scorecard lists every one with its count, the ones at nought too. `--raw`
+lets the nets count what they would do and do nothing (nor clean his
+history), to see the model as it is. Holly keeps the counts from real use
+too, per model, in `data/nets.json` (`--forget` and `--reset` leave them):
+`python -m app.evals --nets` shows them. A net a new model never trips, in
+the evals or in real talk, can come out: fixes go first into what he's given (prompt, history, notes),
+then into routing (a tool required when the ask is plain), and only last
+into nets on what he says.
+
 A scorecard goes to `runs/`: Markdown with every reply and transcript, and
 JSON for `--compare`. `--only persona`, `--only scenarios`, `--only
 conversations`, `--only memory` or `--only status` runs one part;

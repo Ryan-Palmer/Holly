@@ -68,3 +68,26 @@ def test_two_judges_scores_are_averaged_and_each_kept():
 def test_compare_with_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(evals, "RUNS", tmp_path)
     assert evals.compare() == "No scorecards yet in runs/."
+
+
+
+def test_reply_nets_on_the_scorecard(tmp_path, monkeypatch):
+    """Every net, with how often it fired, the ones at nought too: those can come out."""
+    from app import guards
+    monkeypatch.setattr(evals, "RUNS", tmp_path)
+    persona = [dict(row("Morning.", "Morning."), nets={guards.OFFERED: 2})]
+    scen = [dict(name="a timer", run=1, wrong=[], nets={guards.OFFERED: 1, guards.COUNT_CUT: 1},
+                 turns=[dict(said="x", reply="y", tools=[]), dict(said="z", reply="w", tools=[])])]
+    nets = evals.net_counts(persona, scen, [])
+    assert nets["replies"] == 3 and list(nets["total"]) == list(guards.NETS)
+    assert nets["total"][guards.OFFERED] == 3 and nets["total"][guards.STRAY] == 0
+    assert nets["by"] == {"persona": {guards.OFFERED: 2}, "scenarios": {guards.OFFERED: 1, guards.COUNT_CUT: 1}}
+    card = dict(model="google/some-model", judges=[], raw=True, label="raw", commit="abc123", when="2026-11-25T23:00",
+                session=False, persona=evals.persona_scores(persona), scenarios=evals.scenario_scores(scen),
+                persona_rows=persona, scenario_runs=scen, nets=nets, repeated=[])
+    text = "\n".join(evals.summary(card))
+    assert "Reply nets that would have fired (raw: none acted), over 3 replies: an offer, not said 3;" in text
+    assert f"{len(guards.NETS) - 2} of {len(guards.NETS)} never" in text
+    md = evals.write(card).with_suffix(".md").read_text(encoding="utf-8")
+    assert "| an offer, not said | 3 | 2 | 1 |" in md and "| a stray word | 0 | 0 | 0 |" in md
+    assert "4/3 raw" in evals.compare()

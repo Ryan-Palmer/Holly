@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import dataclasses
 import random
+from collections import Counter
 from pathlib import Path
 import shutil
 import sys
@@ -39,6 +40,7 @@ from .config import load_config
 from .console import CYAN, DIM, RESET, YELLOW, note, stamp
 from .face_player import FacePlayer, start_server
 from .lmstudio import LmStudio, ReplyTiming
+from .nets import NetCounts
 from .persona import Conversation, about_the_crew, set_aside, when
 from .player import Player
 from .search import SearchTool, Searcher
@@ -192,6 +194,19 @@ class Holly:
         self.player: Player | FacePlayer | None = None
         self.resuming: asyncio.Task | None = None  # at startup: the last session into his notes
         self.turns = 0  # replies so far this session
+        # The nets on his replies (guards.NETS), each as it fires: they make up for a model's
+        # habits, and the evals show which a model still trips. With nets_act off (evals
+        # --raw) they're counted, and do nothing: the model as it is.
+        self.nets: Counter[str] = Counter()
+        self.nets_act = True
+        # ...and kept between sessions, per model, beside his memory (app/nets.py): what real
+        # talk trips, not only the evals'.
+        self.net_counts = NetCounts(memory_file.with_name("nets.json") if memory_file else None)
+
+    def fired(self, net: str) -> bool:
+        """Count a net firing; True if it's to act."""
+        self.nets[net] += 1
+        return self.nets_act
 
     def voice_name(self) -> str:
         return "Holly (VoxCPM2 clone)"
@@ -293,6 +308,7 @@ class Holly:
         assert self.tts and self.player
         times = times or TurnTimes(start=time.perf_counter())
         self.turns += 1
+        nets_before = Counter(self.nets)  # this turn's, for the counts kept (app/nets.py)
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
         parts: list[str] = []
         steps: list[dict] = []  # his searches and their results, for the history
@@ -389,24 +405,29 @@ class Holly:
                 kept: list[str] = []
                 for part in guards.SENTENCE_END.split(sentence):
                     after = bool(spoken or kept)
-                    if aside:
-                        print(f"{DIM}[crew aside not said]{RESET}", end="", flush=True)
+                    rest = bool(aside)  # the rest of a crew aside: cut with it, counted once
+                    if rest:
+                        net = guards.ASIDE_CUT
                     elif after and guards.OFFER.search(part):
                         # "Anything else you need me to dig up?": not said, nor kept (below).
-                        print(f"{DIM}[offer not said]{RESET}", end="", flush=True)
+                        net = guards.OFFERED
                     elif after and unasked_countdown and guards.guessed_time(part, told()):
                         # "It's 22:15", unasked and unchecked: a minute on from his last, each reply.
-                        print(f"{DIM}[guessed time not said]{RESET}", end="", flush=True)
+                        net = guards.GUESS_CUT
                     elif after and unasked_countdown and guards.COUNTDOWN.search(part):
                         # "Six minutes left", unasked: not said, nor kept (below). It came every
                         # reply, a minute less each time, whatever the time.
-                        print(f"{DIM}[countdown not said]{RESET}", end="", flush=True)
+                        net = guards.COUNT_CUT
                     elif after and crew_unasked() and guards.CREW_ASIDE.search(part):
                         # "The Cat is currently refusing to leave his wardrobe", after a gift list:
                         # not said, nor kept (below); nor the rest, "He's convinced the hangers
                         # are judging him" (guards.CREW_ASIDE).
                         aside.append(part)
-                        print(f"{DIM}[crew aside not said]{RESET}", end="", flush=True)
+                        net = guards.ASIDE_CUT
+                    else:
+                        net = None
+                    if net and (self.nets_act if rest else self.fired(net)):
+                        print(f"{DIM}[{net}]{RESET}", end="", flush=True)
                     else:
                         kept.append(part)
                 if not kept:
@@ -417,16 +438,18 @@ class Holly:
                 await sentences.put(sentence)
 
             def dropped(sentence: str) -> str | None:
-                """Why this sentence mustn't be said, if it mustn't (app/guards.py)."""
+                """Why this sentence mustn't be said, if it mustn't (app/guards.py); counted,
+                and nothing if the nets don't act."""
                 if retried:
                     return None
-                return guards.unsaid(sentence, user, stray=self.stray_words, recalled="recall" in called,
-                                     researched="research" in called, can_recall="recall" in self.toolbox,
-                                     can_research="research" in self.toolbox,
-                                     answering_choice=turn.answering_choice, clocked="clock" in called,
-                                     can_clock="clock" in self.toolbox,
-                                     counting=bool(self.timers and self.timers.items) and "timer" not in called,
-                                     told=told())
+                why = guards.unsaid(sentence, user, stray=self.stray_words, recalled="recall" in called,
+                                    researched="research" in called, can_recall="recall" in self.toolbox,
+                                    can_research="research" in self.toolbox,
+                                    answering_choice=turn.answering_choice, clocked="clock" in called,
+                                    can_clock="clock" in self.toolbox,
+                                    counting=bool(self.timers and self.timers.items) and "timer" not in called,
+                                    told=told())
+                return why if why and self.fired(why) else None
 
             while True:
                 calls: list[dict] = []
@@ -453,10 +476,10 @@ class Holly:
                     for sentence in last:
                         if redo := dropped(sentence):
                             break
-                        if lone:
+                        if lone and self.fired(guards.ALONE):
                             # A word alone, his whole reply ("Yeah?", to "Hey Holly"): the voice garbled
                             # it. Asked again, for a few words; a word again, it's said.
-                            redo = "a word alone"
+                            redo = guards.ALONE
                             messages = [*messages[:asked - 1], {**messages[asked - 1], "content": (
                                 messages[asked - 1]["content"] + "\n[A word alone doesn't come out right in "
                                 "your voice: say a few words.]")}, *messages[asked:]]
@@ -549,15 +572,19 @@ class Holly:
             times.failed = True
             return times
         this_turn = [user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
-        said = guards.without_offers("".join(last_said), countdowns=unasked_countdown,
-                                     told=this_turn if unasked_countdown else None,
-                                     asides=not (crew_before or about_the_crew(user, called)))
+        said = "".join(last_said).strip()
+        if self.nets_act:  # what wasn't said (say, above) isn't kept either
+            said = guards.without_offers(said, countdowns=unasked_countdown,
+                                         told=this_turn if unasked_countdown else None,
+                                         asides=not (crew_before or about_the_crew(user, called)))
         # What he was told: this turn, and the last few (asked "you mean 24 minutes past
         # midnight?" a turn after the clock said 00:24, his "00:24" was no guess).
         told = this_turn + [m.get("content") or "" for m in self.convo.history[-12:]]
-        if guards.guessed_time(said, told):
+        if guards.guessed_time(said, told) and self.fired(guards.GUESS_MARKED):
             said += guards.GUESSED
         dropped = self.convo.record(user, said, steps)
+        if self.nets_act:  # (raw, they're the model's own, not kept with real use's)
+            self.net_counts.add(self.model, self.nets - nets_before)
         print(f"{DIM}  {times.report()}{RESET}")
         if dropped:
             print(f"{DIM}  (history past {self.cfg.persona.history_hard_tokens:,} tokens: dropped the "

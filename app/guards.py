@@ -168,6 +168,29 @@ TIME_ASKED = re.compile(r"\b(?:how long|how much (?:time|longer)|time left|what 
 GUESSED = " [That time was a guess, not from the clock: it's probably wrong.]"
 
 
+# Every net on his replies, by the name it's counted under. Each makes up for something a
+# model did wrong. app/speak.py counts each one as it fires, and the evals show how often:
+# with --raw, how often they would have, acting on nothing (app/evals.py). One a new model
+# never trips can come out. Asked again (unsaid, and a word alone):
+STRAY = "a stray word"
+MARKUP = "he wrote a tool call out as text"
+COUNTED = "he counted a timer down without the timer tool"
+TIMED = "he gave a time of day without the clock"
+NO_CLOCK_SAID = "he said he couldn't tell the time without calling the clock"
+CLAIMED = "he said he'd looked in his memory without calling recall"
+FORGOTTEN = "he said he didn't remember without calling recall"
+PROMISED = "he promised research without calling the research tool"
+ALONE = "a word alone"
+# Not said, nor kept (app/speak.py); and marked in his history:
+OFFERED = "an offer, not said"
+GUESS_CUT = "a guessed time, not said"
+COUNT_CUT = "a countdown, not said"
+ASIDE_CUT = "a crew aside, not said"
+GUESS_MARKED = "a guessed time, marked as one in his history"
+NETS = (STRAY, MARKUP, COUNTED, TIMED, NO_CLOCK_SAID, CLAIMED, FORGOTTEN, PROMISED, ALONE,
+        OFFERED, GUESS_CUT, COUNT_CUT, ASIDE_CUT, GUESS_MARKED)
+
+
 def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researched: bool, can_recall: bool,
            can_research: bool, answering_choice: bool, clocked: bool = False, can_clock: bool = False,
            counting: bool = False, told: list[str] | None = None) -> str | None:
@@ -176,20 +199,20 @@ def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researc
     `answering_choice`: the crew are answering his search-or-report question; `counting`:
     a timer's set and he hasn't called the timer tool in this reply, so any count down is
     his guess; `told`: what he's been given this turn (the crew's line, tools' answers)."""
-    if (word := sentence.strip().strip(".!").lower()) in stray:  # Gemma's lone "thought"
-        return f"a stray {word!r}"
+    if sentence.strip().strip(".!").lower() in stray:  # Gemma's lone "thought"
+        return STRAY
     if TOOL_MARKUP.search(sentence):
-        return "he wrote a tool call out as text"
+        return MARKUP
     if counting and COUNTDOWN.search(sentence) and TIME_ASKED.search(user):
-        return "he counted a timer down without the timer tool"  # (unasked, it isn't said: speak.py)
+        return COUNTED  # (unasked, it isn't said: speak.py)
     if told is not None and can_clock and TIME_ASKED.search(user) and guessed_time(sentence, told):
-        return "he gave a time of day without the clock"  # (unasked, it isn't said: speak.py)
+        return TIMED  # (unasked, it isn't said: speak.py)
     if not clocked and can_clock and NO_CLOCK.search(sentence):
-        return "he said he couldn't tell the time without calling the clock"
+        return NO_CLOCK_SAID
     if not recalled and can_recall and CLAIMED_RECALL.search(sentence):
-        return "he said he'd looked in his memory without calling recall"
+        return CLAIMED
     if not recalled and can_recall and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
-        return "he said he didn't remember without calling recall"
+        return FORGOTTEN
     # Asked for research, or answering his search-or-report question ("go on then, write it
     # up"): he said he'd started a report and called nothing, four times in six. A question
     # isn't a promise: "shall I have a proper look while I doze?" is him asking which the
@@ -197,7 +220,7 @@ def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researc
     if (not researched and can_research
             and (RESEARCH_ASKED.search(user) or REPORT_WANTED.search(user) or answering_choice)
             and PROMISED_RESEARCH.search(sentence) and not sentence.rstrip().endswith("?")):
-        return "he promised research without calling the research tool"
+        return PROMISED
     return None
 
 

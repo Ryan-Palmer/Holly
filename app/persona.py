@@ -166,6 +166,9 @@ class Conversation:
         self.last_spoke: datetime.datetime | None = None  # the last exchange, this session or before
         self.previous_end: datetime.datetime | None = None  # when the last session's talk ended
         self._save_failed = False
+        # His replies sent without what the reply nets cut (messages_for); off with them
+        # (Holly.nets_act, evals --raw), to see the model as it is.
+        self.clean = True
         self._made_for: tuple = ()
         self.preamble: list[dict] = []
         self.load()
@@ -237,7 +240,7 @@ class Conversation:
                 told.append(m.get("content") or "")
             elif m["role"] == "assistant" and m.get("tool_calls"):
                 tools |= {c["function"]["name"] for c in m["tool_calls"]}
-            if m["role"] == "assistant" and m.get("content"):
+            if m["role"] == "assistant" and m.get("content") and self.clean:
                 # And, unasked, without timers counted down or times of day nobody gave him:
                 # with six in his history, a minute on each reply, he went on counting,
                 # whatever the time. Nor the crew of Red Dwarf tacked on to something else:

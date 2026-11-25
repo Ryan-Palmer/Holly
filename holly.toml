@@ -347,9 +347,11 @@ crew_fillers = [
 # python -m app.evals: Holly's character and his use of tools and memory,
 # scored the same way every time, to compare models and changes (README).
 scenario_runs = 3  # runs of each scenario (and each conversation): Gemma varies
-# The judges' context, longer than Holly's: a whole conversation, his tools'
-# answers in full, and the judge's thinking. With no voice or face loaded,
-# there's room: Qwen at 30K used 22.9 GB of the 5090's 32.
+# The context of a judge that thinks, longer than Holly's: a whole
+# conversation (~3,200 tokens at most), his tools' answers in full, and its
+# thinking. With no voice or face loaded, there's room: Qwen at 30K used
+# 22.9 GB of the 5090's 32. A judge that doesn't think is loaded as Holly's
+# model is, so Gemma isn't loaded again just to judge.
 judge_context = 49152
 
 # The judges: fixed models, whatever model is under test, so scores compare

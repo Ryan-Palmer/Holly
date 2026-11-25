@@ -204,3 +204,13 @@ def test_the_crew_after_asking_about_them_are_no_aside(cfg):
     assert c.last_about_the_crew() is False
     c.record("Where's Rimmer?", "Saluting.")
     assert c.last_about_the_crew() is True
+
+
+
+def test_raw_his_history_is_sent_as_it_was(cfg):
+    """evals --raw: nothing cut from what he sees either."""
+    c = convo(cfg)
+    c.clean = False
+    c.record("Coal prices?", "Up again. Anything else you need me to dig up?")
+    assert [m["content"] for m in c.messages_for() if m["role"] == "assistant"] == [
+        "Up again. Anything else you need me to dig up?"]

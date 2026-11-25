@@ -59,7 +59,7 @@ def unsaid(sentence, user="Hello.", **kw):
 
 
 def test_unsaid():
-    assert unsaid("Thought.") == "a stray 'thought'"
+    assert unsaid("Thought.") == guards.STRAY
     assert "recall" in unsaid("I've checked my records.")
     assert unsaid("I've checked my records.", recalled=True) is None
     assert unsaid("I've checked my records.", can_recall=False) is None
@@ -69,12 +69,12 @@ def test_unsaid():
     assert unsaid("Shall I look into it while I doze?", "Research slugs.") is None  # a question, not a promise
     assert "research" in unsaid("I'm on it.", "Yes please.", answering_choice=True)
     assert unsaid("I'm on it.", "Yes please.") is None
-    assert guards.needs_tool(unsaid("I've checked my records.")) and not guards.needs_tool("a stray 'thought'")
+    assert guards.needs_tool(unsaid("I've checked my records.")) and not guards.needs_tool(guards.STRAY)
     assert "clock" in unsaid("It's Tuesday, I think. I've no clock of my own.", can_clock=True)
     assert unsaid("I've no clock of my own.", can_clock=True, clocked=True) is None
     assert guards.needs_tool(unsaid("No idea what time it is.", can_clock=True))
     leaked = unsaid('recall{query:<|"|>Lister<|"|>}<tool_call|>')
-    assert leaked == "he wrote a tool call out as text" and guards.needs_tool(leaked)
+    assert leaked == guards.MARKUP and guards.needs_tool(leaked)
     assert unsaid("Lister? Miss him? Like a hole in the head.") is None
 
 

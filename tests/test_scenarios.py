@@ -15,8 +15,10 @@ pytestmark = pytest.mark.lmstudio
 def loaded(lmstudio):
     from app.config import load_config
 
+    from app.evals import alone
+
     cfg = load_config()
-    lmstudio.ensure_loaded(cfg.llm.model)
+    alone(cfg.llm.model)  # with anything else unloaded: a judge left from the evals, say
     try:
         lmstudio.ensure_loaded(cfg.recall.embed_model, context_length=2048)
     except Exception:  # recall by keyword and day only

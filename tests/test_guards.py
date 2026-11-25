@@ -136,3 +136,14 @@ def test_a_report_asked_for_in_so_many_words(line):
     "Can you sum up the coffee machine report?", "The report was rubbish.", "Can you open the report?"])
 def test_a_report_only_mentioned_isnt_one_asked_for(line):
     assert not REPORT_ASKED.search(line)
+
+
+
+def test_every_net_has_a_name_of_its_own():
+    """Counted by name (app/speak.py), so the evals show which a model still trips."""
+    from app import guards
+    assert len(set(guards.NETS)) == len(guards.NETS)
+    asked_again_with_a_tool = (guards.MARKUP, guards.COUNTED, guards.TIMED, guards.NO_CLOCK_SAID, guards.CLAIMED,
+                               guards.FORGOTTEN, guards.PROMISED)
+    assert all(guards.needs_tool(n) for n in asked_again_with_a_tool)
+    assert not guards.needs_tool(guards.STRAY) and not guards.needs_tool(guards.ALONE)

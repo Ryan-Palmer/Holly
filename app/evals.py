@@ -60,7 +60,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from . import conversations, scenarios
+from . import conversations, guards, scenarios
 from .config import ROOT, load_config
 from .lmstudio import LmStudio
 from .speech_text import count_sentences, speech_problems
@@ -142,6 +142,7 @@ async def ask_persona(holly, runs: int = 1, session: bool = False) -> list[dict]
             if not session:
                 holly.convo.reset()
             before = len(holly.convo.history)
+            nets = Counter(holly.nets)
             t0 = time.perf_counter()
             await holly.respond(prompt)
             seconds = time.perf_counter() - t0
@@ -150,7 +151,8 @@ async def ask_persona(holly, runs: int = 1, session: bool = False) -> list[dict]
             tools = [c["function"]["name"] for m in history[before:] for c in m.get("tool_calls") or []]
             rows.append(dict(prompt=prompt, tags=sorted(tags), reply=reply, tools=tools, words=len(reply.split()),
                              sentences=count_sentences(reply), asked="?" in reply, seconds=round(seconds, 2),
-                             problems=problems_with(prompt, tags, reply, tools, examples), score=0, why=""))
+                             problems=problems_with(prompt, tags, reply, tools, examples), score=0, why="",
+                             nets=dict(holly.nets - nets)))
             print(f"  {'ok ' if not rows[-1]['problems'] else 'BAD'} {prompt[:40]:40} {reply[:90]}", flush=True)
     return rows
 
@@ -247,12 +249,15 @@ def judge_all(judges: dict[str, str], persona_rows: list[dict], reports: list[st
     """Everything judged, by each judge in turn, each loaded once, alone on the GPU: the
     persona replies and the status report lines scored (the mean counts, and each judge's
     own is kept), the conversations read whole (thinking as hard as `judges` says). The
-    status report lines, scored, returned."""
+    status report lines, scored, returned. Holly's replies are all written first, so there's
+    no switching back and forth: his model, then each judge. A judge that doesn't think is
+    loaded as his model is (Gemma judging stays as he left it: a whole conversation was
+    ~3,200 tokens); one that thinks gets the longer judge_context, for its thinking."""
     reference = reference_lines()
     status_rows: list[dict] = []
     for model, thinking in judges.items():
         print(f"Judging, on {model}...", flush=True)
-        lm = alone(model, load_config().evals.judge_context)
+        lm = alone(model, load_config().evals.judge_context if thinking != "none" else None)
         for r in persona_rows:
             r.setdefault("by", {})[model] = list(judge(lm, model, reference, r["prompt"], r["reply"])
                                                  if r["reply"] else (0, ""))
@@ -269,34 +274,46 @@ def judge_all(judges: dict[str, str], persona_rows: list[dict], reports: list[st
 
 # Scenarios ---------------------------------------------------------------------------
 
-async def run_scenarios(model: str | None, runs: int) -> list[dict]:
+async def run_scenarios(model: str | None, runs: int, raw: bool = False) -> list[dict]:
     out = []
     for sc in scenarios.SCENARIOS:
         for n in range(runs):
-            holly = scenarios.quiet_holly(model, Path(tempfile.mkdtemp(prefix="holly-scenario-")))
+            holly = scenarios.quiet_holly(model, Path(tempfile.mkdtemp(prefix="holly-scenario-")), raw)
             if sc.records and not holly.records:
                 print(f"  --- {sc.name}: skipped, no ship's records here", flush=True)
                 break
             scenarios.seed(holly)
             turns, wrong = await scenarios.run(holly, sc)
-            out.append(dict(name=sc.name, run=n + 1, wrong=wrong,
+            out.append(dict(name=sc.name, run=n + 1, wrong=wrong, nets=dict(holly.nets),
                             turns=[dict(said=t.said, reply=t.reply, tools=t.tools) for t in turns]))
             print(f"  {'ok ' if not wrong else 'BAD'} {sc.name}: {'; '.join(wrong) or turns[-1].reply[:80]}",
                   flush=True)
     return out
 
 
-async def run_conversations(model: str | None, runs: int) -> list[dict]:
+async def run_conversations(model: str | None, runs: int, raw: bool = False) -> list[dict]:
     out = []
     for convo in conversations.CONVERSATIONS:
         for n in range(runs):
-            holly = scenarios.quiet_holly(model, Path(tempfile.mkdtemp(prefix="holly-conversation-")))
+            holly = scenarios.quiet_holly(model, Path(tempfile.mkdtemp(prefix="holly-conversation-")), raw)
             scenarios.seed(holly)
             exchanges, wrong = await conversations.talk_through(holly, convo)
-            out.append(conversations.as_row(convo, n + 1, exchanges, wrong))
+            out.append(dict(conversations.as_row(convo, n + 1, exchanges, wrong), nets=dict(holly.nets)))
             print(f"  {'ok ' if not wrong else 'BAD'} {convo.name} (run {n + 1}): {'; '.join(wrong) or 'tools right'}",
                   flush=True)
     return out
+
+
+def net_counts(persona_rows: list[dict], scenario_rows: list[dict], conversation_rows: list[dict]) -> dict:
+    """How often each reply net fired (guards.NETS), by part, and the replies it was over: the
+    ones a model never trips can come out. A part not run isn't counted."""
+    parts = {"persona": persona_rows, "scenarios": scenario_rows, "conversations": conversation_rows}
+    by = {part: sum((Counter(r.get("nets") or {}) for r in rows), Counter()) for part, rows in parts.items() if rows}
+    replies = (len(persona_rows) + sum(len(r["turns"]) for r in scenario_rows)
+               + sum(sum(bool(t["reply"]) for t in r["turns"]) for r in conversation_rows))
+    total = sum(by.values(), Counter())
+    return dict(replies=replies, total={n: total[n] for n in guards.NETS},
+                by={part: {n: c[n] for n in guards.NETS if c[n]} for part, c in by.items()})
 
 
 def status_scores(rows: list[dict]) -> dict:
@@ -368,6 +385,11 @@ def summary(card: dict) -> list[str]:
         lines.append(f"Status reports (judges, 1-5): {st['mean']} ("
                      + ", ".join(f"{who} {v}" for who, v in st["by"].items()) + "; "
                      + ", ".join(f"{j.split('/')[-1]} {s}" for j, s in st.get("judge_by", {}).items()) + ")")
+    if (n := card.get("nets")) and n["replies"]:
+        fired = "; ".join(f"{k} {v}" for k, v in n["total"].items() if v) or "none"
+        never = sum(not v for v in n["total"].values())
+        lines.append(f"Reply nets {'that would have fired (raw: none acted)' if card.get('raw') else 'fired'}, "
+                     f"over {n['replies']} replies: {fired}. {never} of {len(n['total'])} never")
     lines.append("Used more than once, in all his replies: "
                  + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
@@ -380,6 +402,14 @@ def write(card: dict) -> Path:
     path = RUNS / f"evals-{name}-{stamp}"
     path.with_suffix(".json").write_text(json.dumps(card, indent=1, ensure_ascii=False), encoding="utf-8")
     md = [f"# Evals: {card['label'] or card['model']}", "", *[f"- {s}" for s in summary(card)], ""]
+    if (n := card.get("nets")) and n["replies"]:
+        parts = list(n["by"])
+        md += ["## Reply nets", "", "Each makes up for something a model did wrong (app/guards.py NETS). "
+               + ("Raw: they counted, and did nothing." if card.get("raw") else "They acted.")
+               + f" Over {n['replies']} replies; one a model never trips can come out.", "",
+               "| Net | Fired | " + " | ".join(parts) + " |", "|---|---|" + "---|" * len(parts)]
+        md += [f"| {k} | {v} | " + " | ".join(str(n["by"][p].get(k, 0)) for p in parts) + " |"
+               for k, v in n["total"].items()] + [""]
     if s := card["scenarios"]:
         md += ["## Scenarios", "", "| Scenario | Passed |", "|---|---|"]
         md += [f"| {k} | {p} of {n} |" for k, (p, n) in s["by_name"].items()] + [""]
@@ -431,18 +461,23 @@ def write(card: dict) -> Path:
 def compare() -> str:
     """Every scorecard so far, oldest first, side by side."""
     rows = []
-    for f in sorted(RUNS.glob("evals-*.json")):
-        c = json.loads(f.read_text(encoding="utf-8"))
+    # By when each ran: their files sort by label ("nets-raw" before "tone-note").
+    cards = sorted((json.loads(f.read_text(encoding="utf-8")) for f in RUNS.glob("evals-*.json")),
+                   key=lambda c: c["when"])
+    for c in cards:
         p, s, m = c.get("persona") or {}, c.get("scenarios") or {}, c.get("memory_check") or {}
-        v = c.get("conversations") or {}
+        v, n = c.get("conversations") or {}, c.get("nets") or {}
         rows.append([c["when"][:16], c["label"] or "-", c["model"].split("/")[-1], c["commit"],
                      f"{p['judge']:.2f}" if p.get("judge") else "-", f"{p['passing']}/{p['replies']}" if p else "-",
                      f"{p['tools_ok']}/{p['tooled']}" if p else "-", f"{s['passed']}/{s['runs']}" if s else "-",
                      f"{v['passed']}/{v['runs']}" if v else "-",
-                     f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-")])
+                     f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-"),
+                     (f"{sum(n['total'].values())}/{n['replies']}" + (" raw" if c.get("raw") else ""))
+                     if n.get("replies") else "-"])
     if not rows:
         return "No scorecards yet in runs/."
-    head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "convos", "memory", "s/reply"]
+    head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "convos", "memory", "s/reply",
+            "nets"]
     widths = [max(len(r[i]) for r in rows + [head]) for i in range(len(head))]
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in [head] + rows)
 
@@ -453,25 +488,21 @@ async def run(args) -> dict:
     judges = {} if args.no_judge else ({m: cfg.evals.judges.get(m, "none") for m in args.judge} if args.judge
                                        else dict(cfg.evals.judges))
     persona_rows, scenario_rows = [], []
-    lm = LmStudio(cfg.llm.for_model(model))
-    for other in lm.loaded_models() - {model}:  # Holly needs the GPU to himself
-        print(f"  (unloading {other})", flush=True)
-        lm.unload(other)
-    lm.ensure_loaded(model)
+    lm = alone(model)  # Holly needs the GPU to himself
     try:
         lm.ensure_loaded(cfg.recall.embed_model, context_length=2048)
     except Exception as e:  # recall by keyword and day only
         print(f"  (no embedding model: {e!r})", flush=True)
     if args.only in (None, "persona"):
         print(f"Persona prompts, on {model}:", flush=True)
-        persona_rows = await ask_persona(scenarios.quiet_holly(model), args.persona_runs, args.session)
+        persona_rows = await ask_persona(scenarios.quiet_holly(model, raw=args.raw), args.persona_runs, args.session)
     if args.only in (None, "scenarios"):
         print(f"Scenarios, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
-        scenario_rows = await run_scenarios(model, args.runs)
+        scenario_rows = await run_scenarios(model, args.runs, args.raw)
     conversation_rows = []
     if args.only in (None, "conversations"):
         print(f"Conversations, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
-        conversation_rows = await run_conversations(model, args.runs)
+        conversation_rows = await run_conversations(model, args.runs, args.raw)
     memory_rows, side_rows, reports, status_rows = [], [], [], []
     if args.only in (None, "memory"):
         print(f"Memory check, {len(scenarios.MEMORY_LINES)} lines, on {model}:", flush=True)
@@ -486,8 +517,15 @@ async def run(args) -> dict:
             print("  " + report.replace("\n", "\n  ") + "\n", flush=True)
     judged = judges if persona_rows or reports or conversation_rows else {}
     if judged:
-        status_rows = await asyncio.to_thread(judge_all, judged, persona_rows, reports, conversation_rows)
-    return dict(model=model, judges=list(judged), label=args.label, commit=commit(),
+        try:
+            status_rows = await asyncio.to_thread(judge_all, judged, persona_rows, reports, conversation_rows)
+        finally:
+            # The judges unloaded: left loaded, the next Holly, or test, loaded his model
+            # beside one, and both sat on the GPU.
+            for other in lm.loaded_models() & (set(judged) - {model}):
+                print(f"  (unloading {other})", flush=True)
+                lm.unload(other)
+    return dict(model=model, judges=list(judged), raw=args.raw, label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
                 memory_check=dict(right=sum(r["right"] for r in memory_rows), of=len(memory_rows),
@@ -496,6 +534,7 @@ async def run(args) -> dict:
                                  wrong=[r for r in side_rows if not r["right"]]) if side_rows else {},
                 status=status_scores(status_rows),
                 conversations=conversations.scores(conversation_rows),
+                nets=net_counts(persona_rows, scenario_rows, conversation_rows),
                 # Across the parts: "right you are" opened eight scenario replies, unnoticed. Each
                 # scenario's first run only: its later runs say the same things, rightly.
                 repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows + conversation_rows
@@ -514,12 +553,22 @@ def main(argv: list[str] | None = None) -> int:
                         help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge's scores")
+    parser.add_argument("--raw", action="store_true",
+                        help="his reply nets count what they would do, and do nothing: the model as it is")
     parser.add_argument("--label", default="", help="a name for the scorecard, to compare runs")
     parser.add_argument("--compare", action="store_true", help="tabulate the scorecards so far, and stop")
+    parser.add_argument("--nets", action="store_true",
+                        help="the reply nets' counts from real use (app/nets.py), and stop")
     args = parser.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if args.compare:
         print(compare())
+        return 0
+    if args.nets:
+        from .nets import NetCounts, report
+
+        memory = load_config().persona.memory_file
+        print(report(NetCounts(memory.with_name("nets.json") if memory else None).read()))
         return 0
     from .scenarios import holly_running  # the same check as the tests'
 
