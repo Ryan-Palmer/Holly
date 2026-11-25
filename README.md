@@ -116,9 +116,16 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 - **Weather.** Forecasts for any town, from Open-Meteo. No setup.
 - **Clock.** The time here or anywhere, and how many days until a day.
 - **News.** The BBC's latest headlines, by subject or on anything you name
-  (Google News for a story the BBC hasn't got). Ask for a status report and
-  he rounds up the main subjects, a sentence each, then an "Additional"
-  item: made-up news from the Red Dwarf universe. No setup.
+  (Google News for a story the BBC hasn't got), or a round-up of the main
+  subjects, a sentence each. No setup.
+- **Status reports.** Ask for a status report and he gives a line each on
+  what Lister, Rimmer, the Cat and Kryten have been up to lately, then an
+  "Additional" item from the wider Red Dwarf universe, all made up. It's
+  written from their pages of the ship's records (three drafts, the best of
+  each line kept), so it's better with the records built. Ask where one of
+  them is ("where's Kryten?", "what's Rimmer up to?") and he makes up a line
+  about just them, the same way, carrying on from his last report. Settings
+  under `[status]` in `holly.toml`.
 - **Timers and reminders.** "Set a timer for 20 minutes", "remind me at half
   seven tomorrow to ring Mum". He speaks up when one is due, even after a
   restart.
@@ -169,7 +176,7 @@ To check a change to his character, or another model, score him:
 .venv\Scripts\python -m app.evals --compare            # every scorecard so far
 ```
 
-It puts him through three things, with a silent voice and his memory in a
+It puts him through four things, with a silent voice and his memory in a
 temporary folder:
 
 - **Persona**: the prompts in `persona/test_prompts.txt`, each scored for
@@ -186,6 +193,9 @@ temporary folder:
   (`MEMORY_LINES` in `app/scenarios.py`), each asked twice; and the other
   side checks, whether a line asks for a status report and whether a timer
   come due is a job for one of his tools.
+- **Status reports**: five status reports, written as his are, and his
+  answer to where each of the crew is, each line scored by the judge for
+  being that character, in that world, and funny.
 
 Every problem found by talking to him, once fixed, gets a check: a unit
 test if the fix is plain code, or a scenario or labelled line here if it
@@ -194,8 +204,8 @@ depends on what the model says.
 The judge is one fixed model (`[evals]` in `holly.toml`), whatever model is
 being tested, so scores compare between runs; it's loaded once every reply
 is written. A scorecard goes to `runs/`: Markdown with every reply, and JSON
-for `--compare`. `--only persona`, `--only scenarios` or `--only memory`
-runs one part; `--session` asks the persona prompts as one conversation,
+for `--compare`. `--only persona`, `--only scenarios`, `--only memory` or
+`--only status` runs one part; `--session` asks the persona prompts as one conversation,
 which shows ruts. Run it with LM Studio up and no Holly running. A new model also wants its
 quirks in a `[models]` table in `holly.toml`.
 

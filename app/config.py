@@ -182,6 +182,13 @@ class ResearchConfig:
 
 
 @dataclass(frozen=True)
+class StatusConfig:
+    enabled: bool = True  # the status report (app/status.py): the crew's doings, made up
+    file: Path = ROOT / "data/status.json"  # the last few reports, to write something different from
+    fillers: tuple[str, ...] = ()  # said while it's written
+
+
+@dataclass(frozen=True)
 class EvalsConfig:
     judge: str = "google/gemma-4-26b-a4b-qat"  # scores replies, whatever model is under test
     scenario_runs: int = 3  # runs of each scenario: Gemma varies
@@ -205,6 +212,7 @@ class Config:
     timers: TimersConfig = TimersConfig()
     spotify: SpotifyConfig = SpotifyConfig()
     research: ResearchConfig = ResearchConfig()
+    status: StatusConfig = StatusConfig()
     evals: EvalsConfig = EvalsConfig()
     cpu: CpuConfig = CpuConfig()
 
@@ -248,6 +256,8 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
                                  for k, v in raw.get("spotify", {}).items()}),
         research=ResearchConfig(**{k: (base / v if k == "dir" else v)
                                    for k, v in raw.get("research", {}).items()}),
+        status=StatusConfig(**{k: (base / v if k == "file" else tuple(v) if k == "fillers" else v)
+                               for k, v in raw.get("status", {}).items()}),
         evals=EvalsConfig(**raw.get("evals", {})),
         cpu=CpuConfig(**raw.get("cpu", {})),
     )

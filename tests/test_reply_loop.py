@@ -335,46 +335,94 @@ def test_each_reply_checks_his_model_is_loaded_his_way_first(make_holly):
     assert lm.checks == 2 and holly.convo.history[-1]["content"] == "Drizzle."
 
 
-def test_a_new_status_report_isnt_sent_the_last_one(make_holly, monkeypatch):
-    from app import news
-    from app.search import Lookup
-    monkeypatch.setattr(news, "roundup", lambda cfg, **kw: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
-    first = "Politics' got a bill. Additional — a skutter has gone missing."
-    lm = FakeLm([[("news", {"topic": "roundup"})], first, "Science is overrated.",
-                 [("news", {"topic": "roundup"})], "Politics — a bill."],
-                side=lambda system, user: "YES" if system == news.REPORT_PROMPT else "")
+REPORT_LINES = ("Lister — Lost a bet.\nRimmer — Filed a complaint.\nCat — Slept.\nKryten — Ironed socks.\n"
+                "Additional — A skutter was promoted.")
+
+
+def side(asked: str = "YES"):
+    """The side tasks of a status report: the check (asked), each draft, and the pick."""
+    from app import status
+
+    def answer(system: str, user: str) -> str:
+        if system == status.ASKED_PROMPT:
+            return asked(user) if callable(asked) else asked
+        if system == status.WRITER_PROMPT:
+            return REPORT_LINES
+        if system == status.PICK_PROMPT:
+            return "Lister: 1\nRimmer: 1\nCat: 1\nKryten: 1\nAdditional: 1"
+        return ""
+    return answer
+
+
+def test_a_status_report_is_said_as_written(make_holly):
+    """Told to give it as written, he retold it shorter, and the jokes came out mangled."""
+    lm = FakeLm([[("status", {})]], side=side())
+    holly = make_holly(lm)
+    respond(holly, "Status report, please.")
+    assert len(lm.requests) == 1  # the tool call; then no retelling
+    assert holly.convo.history[-1]["content"] == REPORT_LINES
+    assert holly.tts.said[0].startswith("Lister — Lost a bet.") and "Additional — A skutter was promoted." in \
+        " ".join(holly.tts.said)
+
+
+def test_where_one_of_them_is_is_said_as_written(make_holly):
+    """"Where's Kryten?": one answer about him, made up, said as written, not the whole report."""
+    from app import status
+
+    def answer(system, user):
+        if system.startswith(status.PICK_ONE_PROMPT):
+            return "1"
+        return "He's in the laundry, apologising to a sock." if system.startswith("Someone asks Holly") else ""
+
+    lm = FakeLm([[("status", {"who": "Kryten"})]], side=answer)
+    holly = make_holly(lm)
+    respond(holly, "Where's Kryten?")
+    assert len(lm.requests) == 1 and holly.convo.history[-1]["content"] == "He's in the laundry, apologising to a sock."
+    assert holly.tts.said == ["He's in the laundry, apologising to a sock."]
+
+
+def test_a_new_status_report_isnt_sent_the_last_one(make_holly):
+    from app import status
+    lm = FakeLm([[("status", {})], "Science is overrated.", [("status", {})]], side=side())
     holly = make_holly(lm)
     respond(holly, "Status report, please.")
     respond(holly, "Thoughts on science?")
-    assert any(m.get("content") == first for m in lm.requests[2]["messages"])  # other turns have it
+    assert any(m.get("content") == REPORT_LINES for m in lm.requests[1]["messages"])  # other turns have it
     respond(holly, "Another status report.")
-    # Not even before he calls for the news: with the last one there, he gave it again, or
-    # made one up, without calling. And he must call a tool.
-    asked, after = lm.requests[3], lm.requests[4]["messages"]
-    assert first not in [m.get("content") for m in asked["messages"]] and asked["tool_choice"] == "required"
-    contents = [m.get("content") or "" for m in after]
-    assert first not in contents and contents.count(news.EARLIER) == 2  # the old news, and what he said
-    assert contents[-1].startswith(news.REPORT)  # the new report's news is there
-    assert lm.requests[4]["tool_choice"] is None  # once he has it, he says it
-    assert any(m.get("content") == first for m in holly.convo.history)  # still in his history
+    # Not even before he calls the tool: with the last one there, he gave it again, or made
+    # one up, without calling. And he must call a tool.
+    asked = lm.requests[2]
+    contents = [m.get("content") or "" for m in asked["messages"]]
+    assert REPORT_LINES not in contents and asked["tool_choice"] == "required"
+    assert contents.count(status.EARLIER) == 2  # what he was given, and what he said
+    assert sum(m.get("content") == REPORT_LINES for m in holly.convo.history) == 2  # both still in his history
 
 
-def test_a_status_report_mentioned_isnt_one_asked_for(make_holly, monkeypatch):
+def test_a_status_report_mentioned_isnt_one_asked_for(make_holly):
     """"My boss wants a status update by five" had him made to give the news: the words
     are only a reason to ask the model."""
-    from app import news
-    from app.search import Lookup
-    monkeypatch.setattr(news, "roundup", lambda cfg, **kw: Lookup("roundup", news.REPORT + "\nPolitics:\n- A bill", 1, 1, 0))
-    first = "Politics — a bill."
-    lm = FakeLm([[("news", {"topic": "roundup"})], first, "Deadlines. Lovely."],
-                side=lambda system, user: "YES" if "please" in user else "NO")
+    from app import status
+    lm = FakeLm([[("status", {})], "Deadlines. Lovely."],
+                side=side(lambda user: "YES" if "please" in user else "NO"))
     holly = make_holly(lm)
     respond(holly, "Status report, please.")
     respond(holly, "Ugh, my boss wants a status update by five.")
-    asked = lm.requests[2]
-    assert asked["tool_choice"] is None and first in [m.get("content") for m in asked["messages"]]
-    assert [r["user"] for r in lm.side_requests if r["system"] == news.REPORT_PROMPT] == [
+    asked = lm.requests[1]
+    assert asked["tool_choice"] is None and REPORT_LINES in [m.get("content") for m in asked["messages"]]
+    assert [r["user"] for r in lm.side_requests if r["system"] == status.ASKED_PROMPT] == [
         "They say: Status report, please.", "They say: Ugh, my boss wants a status update by five."]
+
+
+def test_an_old_news_round_up_counts_as_an_earlier_report(make_holly):
+    """Reports kept in his history from when a status report was the news are stubbed too."""
+    from app import status
+    old = [{"role": "user", "content": "Status report"},
+           {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "type": "function",
+                                                                 "function": {"name": "news", "arguments": "{}"}}]},
+           {"role": "tool", "tool_call_id": "1", "content": "The BBC's latest, by subject, for a status report:\n..."},
+           {"role": "assistant", "content": "Politics' got a bill."}, {"role": "user", "content": "Status report"}]
+    out = status.without_earlier_reports(old, 4)
+    assert [m["content"] for m in out[2:4]] == [status.EARLIER, status.EARLIER]
 
 
 def test_the_memory_check_sees_the_last_two_exchanges():

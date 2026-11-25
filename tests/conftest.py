@@ -29,6 +29,7 @@ def cfg(tmp_path):
                                    embed_model=""),
         timers=dataclasses.replace(c.timers, file=tmp_path / "timers.json"),
         research=dataclasses.replace(c.research, dir=tmp_path / "research", pause_s=0.0),
+        status=dataclasses.replace(c.status, file=tmp_path / "status.json"),
         spotify=dataclasses.replace(c.spotify, enabled=False),
     )
 

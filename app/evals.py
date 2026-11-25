@@ -1,11 +1,11 @@
 """How good Holly is on a model: his character, and his use of tools and memory, scored the
 same way every time, so models and changes can be compared.
 
-    python -m app.evals [--model KEY] [--runs N] [--label NAME] [--only persona|scenarios|memory]
+    python -m app.evals [--model KEY] [--runs N] [--label NAME] [--only persona|scenarios|memory|status]
                         [--session] [--no-judge]
     python -m app.evals --compare
 
-Three parts; the first two through his real reply loop with a silent voice, his memory in a
+Four parts; the first two through his real reply loop with a silent voice, his memory in a
 temporary folder, and Spotify off:
 
 - persona: each prompt in persona/test_prompts.txt, asked afresh (or, with --session,
@@ -20,6 +20,9 @@ temporary folder, and Spotify off:
   line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES); and
   the other side checks, whether a line asks for a status report and whether a timer
   come due is a job for a tool (scenarios.STATUS_LINES, ACTION_LABELS).
+- status: five status reports (app/status.py), written as his are, and his answer to where
+  each of the crew is, each line scored by the judge for being that character, in that
+  world, and funny.
 
 The judge is one fixed model ([evals] judge in holly.toml), whatever model is under
 test, so scores compare between runs; it's loaded after every reply has been written,
@@ -229,6 +232,18 @@ async def run_scenarios(model: str | None, runs: int) -> list[dict]:
     return out
 
 
+def status_scores(rows: list[dict]) -> dict:
+    """The status reports' numbers: the judge's mean, overall and by item."""
+    scored = [r for r in rows if r["score"]]
+    if not scored:
+        return {}
+    by: dict[str, list[int]] = {}
+    for r in scored:
+        by.setdefault(r["who"], []).append(r["score"])
+    return dict(mean=round(statistics.mean(r["score"] for r in scored), 2),
+                by={who: round(statistics.mean(s), 1) for who, s in by.items()}, rows=rows)
+
+
 def scenario_scores(rows: list[dict]) -> dict:
     if not rows:
         return {}
@@ -274,6 +289,9 @@ def summary(card: dict) -> list[str]:
         lines.append(f"Memory check right: {m['right']} of {m['of']}")
     if c := card.get("side_checks"):
         lines.append(f"Side checks right (status reports, timer jobs): {c['right']} of {c['of']}")
+    if st := card.get("status"):
+        lines.append(f"Status reports (judge, 1-5): {st['mean']} ("
+                     + ", ".join(f"{who} {v}" for who, v in st["by"].items()) + ")")
     lines.append("Used more than once, in all his replies: "
                  + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
@@ -297,6 +315,11 @@ def write(card: dict) -> Path:
         md += ["## Memory check", "", f"{m['right']} of {m['of']} right."] + [
             f"- wanted {r['want']}, got {'/'.join(r['got'])}: {r['line']!r}"
             + (f" (after: {r['before'][:80]!r})" if r["before"] else "") for r in m["wrong"]] + [""]
+    if st := card.get("status"):
+        md += ["## Status reports", "", f"Judge: {st['mean']} of 5.", ""]
+        for r in st["rows"]:
+            md += [f"- _{r['score']}/5_ {r['line']}  " + (f"  \n  _{r['why']}_" if r["why"] else "")]
+        md += [""]
     if c := card.get("side_checks"):
         md += ["## Side checks", "", f"{c['right']} of {c['of']} right."] + [
             f"- {r['check']}: wanted {r['want']}, got {r['got']}: {r['text']!r}" for r in c["wrong"]] + [""]
@@ -349,23 +372,33 @@ async def run(args) -> dict:
     if args.only in (None, "scenarios"):
         print(f"Scenarios, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
         scenario_rows = await run_scenarios(model, args.runs)
-    memory_rows, side_rows = [], []
+    memory_rows, side_rows, reports, status_rows = [], [], [], []
     if args.only in (None, "memory"):
         print(f"Memory check, {len(scenarios.MEMORY_LINES)} lines, on {model}:", flush=True)
         memory_rows = await asyncio.to_thread(scenarios.memory_check, lm, model)
         print(f"  {sum(r['right'] for r in memory_rows)} of {len(memory_rows)} right", flush=True)
         side_rows = await asyncio.to_thread(scenarios.side_checks, lm, model)
         print(f"Side checks: {sum(r['right'] for r in side_rows)} of {len(side_rows)} right", flush=True)
+    if args.only in (None, "status"):
+        print(f"Status reports, 5, on {model}:", flush=True)
+        reports = await scenarios.status_reports(lm, model, 5)
+        for report in reports:
+            print("  " + report.replace("\n", "\n  ") + "\n", flush=True)
     if judge_model and persona_rows:
         print(f"Judging, on {judge_model}...", flush=True)
         judge_all(persona_rows, judge_model)
-    return dict(model=model, judge=judge_model if persona_rows else None, label=args.label, commit=commit(),
+    if judge_model and reports:
+        judge_lm = LmStudio(load_config().llm.for_model(judge_model))
+        judge_lm.ensure_loaded(judge_model)
+        status_rows = await asyncio.to_thread(scenarios.judge_status, judge_lm, judge_model, reports)
+    return dict(model=model, judge=judge_model if persona_rows or reports else None, label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
                 memory_check=dict(right=sum(r["right"] for r in memory_rows), of=len(memory_rows),
                                   wrong=[r for r in memory_rows if not r["right"]]) if memory_rows else {},
                 side_checks=dict(right=sum(r["right"] for r in side_rows), of=len(side_rows),
                                  wrong=[r for r in side_rows if not r["right"]]) if side_rows else {},
+                status=status_scores(status_rows),
                 # Across both parts: "right you are" opened eight scenario replies, unnoticed. Each
                 # scenario's first run only: its later runs say the same things, rightly.
                 repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows if r["run"] == 1
@@ -379,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--judge", help="the judge's model (default: [evals] judge in holly.toml)")
     parser.add_argument("--runs", type=int, default=None, help="runs of each scenario (default: holly.toml's)")
     parser.add_argument("--persona-runs", type=int, default=1, help="replies per persona prompt (default 1)")
-    parser.add_argument("--only", choices=["persona", "scenarios", "memory"], help="one part only")
+    parser.add_argument("--only", choices=["persona", "scenarios", "memory", "status"], help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge's scores")
     parser.add_argument("--label", default="", help="a name for the scorecard, to compare runs")

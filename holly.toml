@@ -327,6 +327,19 @@ timeout_s = 15.0
 max_minutes = 45.0  # of work per job; then the report is written from what's found
 max_errors = 5  # failed steps in a row before a job is given up
 
+[status]
+# A status report (app/status.py): asked for one, Holly gives a line each on what Lister,
+# Rimmer, the Cat and Kryten have been up to lately, then an "Additional" item from the
+# wider Red Dwarf universe, all made up. It's written out of his sight from their pages
+# of the ship's records (three drafts, the best of each item kept: ~4 s). For the real
+# news, ask for the news. The last few reports are kept in `file`, to steer clear of.
+enabled = true
+file = "data/status.json"
+fillers = [
+    "Hang on. I'll check the monitors.",
+    "One moment. Let's see what they've been up to.",
+]
+
 [evals]
 # python -m app.evals: Holly's character and his use of tools and memory,
 # scored the same way every time, to compare models and changes (README).

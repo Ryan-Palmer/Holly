@@ -95,7 +95,7 @@ def test_a_status_report_takes_each_subject_once(feeds, cfg):
     assert found.answer.count("Energy payment explained") == 1  # listed twice in its feed
     assert found.answer.count("Big story") == 1  # under top stories, not again under business
     assert "Business and money:" in found.answer and "Science:" in found.answer and "Sport:" not in found.answer
-    assert any(found.answer.rstrip().endswith(f"today's is news about {lore}.") for lore in news.LORE)
+    assert "Additional" not in found.answer  # the news, just: the made-up item is the status report's
 
 
 class Broken(Exception):

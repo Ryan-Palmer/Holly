@@ -1,5 +1,5 @@
 """The side checks on the real model: is a line asking for a status report
-(news.wants_report), and is a timer come due a job for one of his tools (timers.to_do)?
+(status.wants_report), and is a timer come due a job for one of his tools (timers.to_do)?
 Each labelled case in scenarios.STATUS_LINES and scenarios.ACTION_LABELS, asked twice.
 Skipped unless run with `pytest -m lmstudio`, with LM Studio up and no Holly running."""
 
@@ -22,7 +22,7 @@ def lm(lmstudio):
                          ids=[f"{'YES' if w else 'NO'}: {line[:50]}" for line, w in scenarios.STATUS_LINES])
 def test_status_report_asked(lm, line, wanted):
     """"My boss wants a status update by five" had him made to give the news."""
-    from app.news import wants_report
+    from app.status import wants_report
 
     assert [wants_report(lm, lm.cfg.model, line, quiet=False) for _ in range(2)] == [wanted, wanted]
 

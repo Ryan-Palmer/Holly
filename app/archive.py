@@ -314,6 +314,17 @@ class Archive:
                                                        PAGE_MATCHES)).fetchall()
         return rows
 
+    def page(self, title: str) -> list[str]:
+        """Every entry of a page of the ship's records, in order, each as "(Ship's records:
+        Title, Section) text"; none if there's no such page."""
+        def like(x: str) -> str:
+            return x.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+        with self.lock:
+            rows = self.db.execute("SELECT text FROM entries WHERE text LIKE ? ESCAPE '\\' OR text LIKE ? ESCAPE '\\' "
+                                   "ORDER BY rowid", (like(RECORD + title) + ") %", like(RECORD + title) + ", %"))
+            return [r[0] for r in rows.fetchall()]
+
     def close(self) -> None:
         with self.lock:
             self.db.close()
@@ -631,7 +642,12 @@ Judge only what they say now. "Just before" is there so you can tell what a foll
 or the world (what was said in Parliament, at a match), however soon after a memory it comes.
 What's just been said in this conversation is in front of him, with nothing to remember: asking about \
 something he's just said (what he meant, more of a story or a news item he's just told), correcting him \
-("no, I meant..."), or answering him is OTHER. So is anything about the news he's just given, however it was asked for ("another status report"): "more about that story" after his news is OTHER.
+("no, I meant..."), or answering him is OTHER. So is anything about the news or the status report he's just \
+given (his status report is what Lister, Rimmer, the Cat and Kryten have been up to lately, all his own \
+invention), however it was asked for ("another status report"): "more about that story", "what's Rimmer been \
+up to?" after it is OTHER. A research report he wrote before is PAST. Asking where one of the crew is now, \
+or what they're doing ("where's Kryten?", "is Lister about?"), is OTHER: he makes that up, with nothing to \
+remember.
 Reply with one word: PAST or OTHER."""
 
 

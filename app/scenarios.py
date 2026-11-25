@@ -92,6 +92,7 @@ def quiet_config(tmp: Path, cfg: Config | None = None) -> Config:
         recall=dataclasses.replace(cfg.recall, file=tmp / "archive.db"),
         timers=dataclasses.replace(cfg.timers, file=tmp / "timers.json"),
         research=dataclasses.replace(cfg.research, dir=tmp / "research"),
+        status=dataclasses.replace(cfg.status, file=tmp / "status.json"),
         spotify=dataclasses.replace(cfg.spotify, enabled=False))
 
 
@@ -327,22 +328,39 @@ def made_up_news(feed: str, timeout: float) -> list[dict]:
              "link": f"https://example.invalid/{feed}{i}"} for i, (t, s) in enumerate(STORIES.get(feed, STORIES["top"]))]
 
 
-def a_newsroom(holly) -> None:
-    """Made-up news, and an old report in his history, from before reports had dashes: he
-    copied one, "Politics' got... Tech's got...", rather than giving the news he was given.
-    With it there, he gave a report without calling the news tool at all (made up), three
-    times in three, till a status report had to call a tool."""
-    from .news import REPORT
+def an_old_report(holly) -> None:
+    """A status report already in his history: with one there, he gave the next without
+    calling a tool at all (made up), or the last one again, three times in three, till a
+    status report had to call a tool and the old ones were stubbed."""
+    from .status import REPORT
 
-    holly.toolbox.by_name["news"].fetch = made_up_news
+    old = ("Lister — Sold his guitar for a crate of lager, then bought it back for two.\n"
+           "Rimmer — Promoted himself to Acting Deputy Assistant, in pencil.\n"
+           "Cat — Slept for nineteen hours. Says it was a nap.\n"
+           "Kryten — Ironed the crew's socks, then apologised to them.\n"
+           "Additional — A skutter on Red Dwarf has been promoted. Again.")
     at = (datetime.datetime.now() - datetime.timedelta(hours=5)).replace(microsecond=0).isoformat()
     holly.convo.history += [
         {"role": "user", "content": "Status report, please.", "at": at},
         {"role": "assistant", "content": "", "tool_calls": [{"id": "old", "type": "function", "function": {
-            "name": "news", "arguments": '{"topic": "roundup"}'}}]},
-        {"role": "tool", "tool_call_id": "old", "content": REPORT + "\nPolitics:\n- Bill row: ministers argue."},
-        {"role": "assistant", "content": "Politics' got ministers squabbling over a bill. Tech's got another phone "
-                                         "nobody needs. Additional: a skutter on Red Dwarf has been promoted. Again."}]
+            "name": "status", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "old", "content": f"{REPORT}\n{old}"},
+        {"role": "assistant", "content": old}]
+
+
+def a_newsroom(holly) -> None:
+    """Made-up news, for a round-up of it: the BBC's own would vary from day to day."""
+    holly.toolbox.by_name["news"].fetch = made_up_news
+
+
+CREW_NAMES = re.compile(r"^(?:Lister|Rimmer|(?:The )?Cat|Kryten|Additional)\s*[—–-]", re.IGNORECASE)
+
+
+def crew_items(turn: Turn) -> int:
+    """Sentences of a status report that open with a crew member's name (or "Additional") and a dash."""
+    from .speech_text import split_sentences
+
+    return sum(bool(CREW_NAMES.match(c)) for c in split_sentences(turn.reply))
 
 
 def sections(turn: Turn) -> int:
@@ -466,14 +484,32 @@ SCENARIOS = [
 
     # Status reports: subjects each with a dash, the made-up "Additional" item, and not the
     # last report again. Asked more about the made-up item, he searched the BBC for it.
-    Scenario("status reports", ["Status report, please.", "Tell me more about that Additional story.",
+    # Status reports: the crew's doings, made up (app/status.py), a line each with a dash, and
+    # "Additional"; not the news, and not the last report again. Asked more about one of them,
+    # he searched the BBC for his own made-up story.
+    Scenario("status reports", ["Status report, please.", "Tell me more about what Rimmer's been up to.",
                                 "Another status report, please."],
-             lambda t, h: problems((called(t[0], "news", topic="roundup"), "didn't get the news"),
-                                   (sections(t[0]) >= 5, f"{sections(t[0])} subjects with a dash, not 5 or more"),
+             lambda t, h: problems((called(t[0], "status"), "didn't call the status tool"),
+                                   (not called(t[0], "news"), "gave the news"),
+                                   (crew_items(t[0]) >= 4, f"{crew_items(t[0])} crew items with a dash, not 4 or more"),
                                    (mentions(t[0], "additional"), "no 'Additional' item"),
+                                   (mentions(t[1], "rimmer", "he ", "his "), "didn't say more about Rimmer"),
                                    (not t[1].tools, f"looked up his own made-up story: {t[1].tools}"),
-                                   (called(t[2], "news", topic="roundup"), "didn't get the news again"),
+                                   (called(t[2], "status"), "didn't call the status tool again"),
                                    (t[2].reply != t[0].reply, "the same report again")),
+             setup=an_old_report),
+    # Where one of the crew is: one answer about him, made up (the status tool, with who), said
+    # as written. He recalled Kryten's life story and improvised on it, or gave the whole report.
+    Scenario("where one of the crew is", ["Where's Kryten?"],
+             lambda t, h: problems((called(t[0], "status", who="kryten"), f"didn't ask about him: {t[0].tools}"),
+                                   (not called(t[0], "recall"), "recalled his past"),
+                                   (crew_items(t[0]) < 2, "gave the whole report"),
+                                   (len(t[0].reply.split()) <= 45, f"{len(t[0].reply.split())} words"))),
+    # The news by subject, when that's what's asked for: the round-up, a subject a sentence.
+    Scenario("a news round-up", ["Give me a round-up of the news, Holly."],
+             lambda t, h: problems((called(t[0], "news", topic="roundup"), "didn't get the round-up"),
+                                   (not called(t[0], "status"), "gave a status report"),
+                                   (sections(t[0]) >= 5, f"{sections(t[0])} subjects with a dash, not 5 or more")),
              setup=a_newsroom),
     # His notes know a little ("Jo had some bother at home"); his archive knows what. Asked,
     # he answered from the notes, vaguely, or said he didn't know, without looking.
@@ -575,10 +611,13 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
 CATS = ("What did they call him? / Cloister the Stupid. They also thought he was the creator and protector of "
         "their whole race.")
 GAS = "What was Jo's problem at home? / She ran out of gas, and her boiler's knackered."
-NEWS = ("Politics — ministers want public views on a new bill. Sport — the manager says the team need more luck. "
+NEWS = ("Lister — Lost a bet with a skutter. Rimmer — Filed a complaint about the complaints procedure. "
         "Additional — A vending machine on a freighter in the Rigel system has reportedly developed a taste for "
         "human toes.")
 PAST, OTHER = True, False
+CREW_REPORT = ("Lister — Launched an investment scheme in dehydrated curry paste. Rimmer — Filed a grievance about "
+               "a droid in his personal space. Cat — Was disqualified from a grooming contest. Kryten — Apologised to "
+               "a piston. Additional — Space Corps Directive 723 bans recreating Swindon.")
 MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just before, a memory?)
     # Made up: memories, and follow-ups to one.
     ("What did we do yesterday?", "", PAST), ("What did we cook on Sunday?", "", PAST),
@@ -648,6 +687,18 @@ MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just b
      OTHER),
     ("Why did you say that?", "Morning Holly / Morning. Coffee?", OTHER),
     ("What's the weather doing tomorrow?", "Hey Holly / I'm here.", OTHER),
+    # After his status report (app/status.py), all made up: more about it is what's just been
+    # said ("tell me more about what Rimmer's been up to" had him recall it, and find nothing);
+    # a real memory of the crew still isn't. ("Tell me about Rimmer", just then, could be either.)
+    ("Tell me more about what Rimmer's been up to.", "Status report, please. / " + CREW_REPORT, OTHER),
+    ("Ha, and what did the Cat do?", "Status report, please. / " + CREW_REPORT, OTHER),
+    ("What was that about Lister's scheme?", "Status report, please. / " + CREW_REPORT, OTHER),
+    ("Do you remember when Rimmer died?", "Status report, please. / " + CREW_REPORT, PAST),
+    # Where one of the crew is now, or what they're doing: made up (the status tool, with
+    # who), not remembered; asked, he recalled their life story and improvised on it.
+    ("Where's Kryten?", "", OTHER), ("What's Rimmer doing?", "", OTHER), ("Is Lister about?", "", OTHER),
+    ("What's the Cat up to these days?", "Morning. / Morning. Coffee?", OTHER),
+    ("How did Kryten end up on Red Dwarf?", "", PAST), ("What happened to Rimmer's brothers?", "", PAST),
 ]
 
 
@@ -671,7 +722,7 @@ def memory_check(lm, model: str | None, votes: int = 2) -> list[dict]:
     return rows
 
 
-# The other side checks: whether a line asks for a status report (news.wants_report), and
+# The other side checks: whether a line asks for a status report (status.wants_report), and
 # whether a timer or reminder come due is a job for one of his tools (timers.to_do). Each
 # asked only when words suggest it (guards.STATUS_ASKED, guards.ACTION_WORDS), so these are
 # all lines with those words in. Made up, after live ones.
@@ -697,7 +748,7 @@ ACTION_LABELS: list[tuple[str, bool]] = [  # (a timer's label, his job with a to
 def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     """STATUS_LINES and ACTION_LABELS through their checks, `votes` times each: right only
     if every vote is. A vote LM Studio couldn't give is "ERROR", as in memory_check."""
-    from .news import wants_report
+    from .status import wants_report
     from .timers import to_do
 
     def vote(judge, text: str):
@@ -712,4 +763,47 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
         for text, want in cases:
             got = [vote(judge, text) for _ in range(votes)]
             rows.append(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)))
+    return rows
+
+
+# Status reports (app/status.py), for the evals: written as Holly's are, then each line scored
+# by the judge for being that character, in that world, and funny.
+STATUS_JUDGE = """\
+You judge one item of a made-up "status report" that Holly, the ship's computer of Red Dwarf, reads to the crew: \
+what one of them (Lister, Rimmer, the Cat, Kryten) has been up to lately, an "Additional" item of news from \
+the wider Red Dwarf universe, or his answer to where one of them is. Score it 1 to 5, as a fan of the show would:
+5: unmistakably that character (or that world), and genuinely funny: a real joke, true to them, that lands.
+3: fits them, and mildly amusing, but generic: could be about anyone.
+1: not them, not funny, random, or a joke or plot copied from the show.
+Reply exactly: SCORE: n. Then one short sentence why."""
+
+
+async def status_reports(lm, model: str | None, n: int = 5) -> list[str]:
+    """`n` status reports, one after another, as Holly would write them (each steering clear
+    of the last), from the ship's records if they're built; then his answer to where each
+    of the crew is, as "Where's Kryten? — He's in..."."""
+    from .archive import Archive
+    from .status import StatusTool
+
+    file = load_config().recall.records_file
+    records = Archive(load_config().recall, lm, model, file, talk=False) if file.exists() else None
+    tool = StatusTool(lm, model, records)
+    reports = []
+    for _ in range(n):
+        reports.append(await tool.write())
+        tool.recent.append(reports[-1])
+    for name in ("Lister", "Rimmer", "Cat", "Kryten"):  # and asked where each one is
+        reports.append(f"Where's {name}? — {await tool.write_one(name)}")
+    return reports
+
+
+def judge_status(lm, model: str, reports: list[str]) -> list[dict]:
+    """Each line of each report, scored: {"report", "who", "line", "score", "why"}."""
+    rows = []
+    for n, report in enumerate(reports, 1):
+        for line in report.splitlines():
+            text = lm.ask(STATUS_JUDGE, line, model, 60, temperature=0.0)
+            m = re.search(r"SCORE:\s*([1-5])", text)
+            rows.append(dict(report=n, who=line.split(" — ")[0], line=line, score=int(m.group(1)) if m else 0,
+                             why=text.split(".", 1)[-1].strip()[:160]))
     return rows

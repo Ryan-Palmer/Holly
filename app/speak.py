@@ -31,7 +31,7 @@ import time
 import numpy as np
 import torch
 
-from . import archive, cpu, guards, news, research, spotify, timers
+from . import archive, cpu, guards, news, research, spotify, status, timers
 from .announce import Announcement, pending
 from .background import Background, context_report
 from .clock import ClockTool
@@ -172,17 +172,21 @@ class Holly:
             tools.append(spotify.SpotifyTool(self.spotify))
         if self.research_tool:
             tools.append(self.research_tool)
+        if cfg.status.enabled:  # with the ship's records, if built, to write from
+            tools.append(status.StatusTool(self.lm, self.model, self.records, cfg.status.file))
         self.toolbox = Toolbox(tools, cfg.search.max_searches)
         # Every request sends the same tools: they're part of the start of the
         # prompt, so changing them between requests would break LM Studio's cache.
         self.tools = self.toolbox.schemas()
         self.turn_lock = asyncio.Lock()  # one reply at a time: yours, or his speaking up
         self.convo = Conversation(cfg.persona, self.toolbox.rules(), memory_file, self.archive)
+        if "status" in self.toolbox:  # a report given before a restart: what's asked of the crew carries on from it
+            self.toolbox.by_name["status"].given = status.last_given(self.convo.history)
         self.background = Background(cfg, self.convo, self.lm, self.model, self.tools, self.archive, self.records,
                                      self.research)
         # Stock lines in his voice for while a tool works, by kind: "search" (web
         # search and weather), "recall" (his archive) and "spotify" (its app opening).
-        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": []}
+        self.fillers: dict[str, list[np.ndarray]] = {"search": [], "recall": [], "spotify": [], "status": []}
         self.last_filler = -1
         self.tts: Tts | None = None
         self.player: Player | FacePlayer | None = None
@@ -266,7 +270,8 @@ class Holly:
             pass
         lines = {"search": self.cfg.search.fillers if self.searcher else (),
                  "recall": self.cfg.recall.fillers if self.archive else (),
-                 "spotify": self.cfg.spotify.fillers if self.spotify else ()}
+                 "spotify": self.cfg.spotify.fillers if self.spotify else (),
+                 "status": self.cfg.status.fillers if self.cfg.status.enabled else ()}
         for kind, said in lines.items():
             for line in said:
                 chunks = [a async for a in self.tts.stream(line, trim_lead=True)]
@@ -346,13 +351,13 @@ class Holly:
             required = "required" if self.cfg.llm.tool_choice else None
             choice = (required if turn.answering_choice and "research" in self.toolbox
                       and guards.REPORT_WANTED.search(user) else None)
-            # A status report, with one already in his history: he gave one without the news
-            # tool, three times in three, made up ("ministers are arguing about taxes") or the
-            # last one again; with none, he called it every time. So he must call a tool, and
-            # the earlier reports are stubbed before he sees them, not only once he's called it.
-            if (not user.startswith("[") and "news" in self.toolbox and guards.STATUS_ASKED.search(user)
-                    and await asyncio.to_thread(news.wants_report, self.lm, self.model, user)):
-                messages = news.without_earlier_reports(messages, asked - 1)
+            # A status report, with one already in his history: he gave one without the tool,
+            # three times in three, made up or the last one again; with none, he called it
+            # every time. So he must call a tool, and the earlier reports are stubbed before he
+            # sees them, not only once he's called it.
+            if (not user.startswith("[") and "status" in self.toolbox and guards.STATUS_ASKED.search(user)
+                    and await asyncio.to_thread(status.wants_report, self.lm, self.model, user)):
+                messages = status.without_earlier_reports(messages, asked - 1)
                 choice = choice or required
             # A timer to do something with a tool ("check the weather in Keswick"), not just say.
             if (user.startswith("[") and (labels := [label for label in guards.DUE_LABEL.findall(user)
@@ -463,8 +468,21 @@ class Holly:
                     called.add(call["name"])
                     result = await self.toolbox.run(call, turn, lookups)
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
-                    if result.startswith(news.REPORT):  # a new status report: not the last one again
-                        messages = news.without_earlier_reports(messages, asked - 1)
+                    if result.startswith(status.REPORTS):  # a new report: not the last one again
+                        messages = status.without_earlier_reports(messages, asked - 1)
+                if report := next((status.report_of(m["content"]) for m in messages[-len(calls):]
+                                   if m["role"] == "tool" and m["content"].startswith(status.SAID)), ""):
+                    # His status report (or his answer about one of the crew), said as written. Told
+                    # to give it as written, he retold it
+                    # shorter, his own way, and the jokes came out mangled ("Tried his screwdriver. It
+                    # gave him a disciplinary hearing."). It's in his voice already: his history has it
+                    # as his reply, for anything asked about it after.
+                    print(f"{stamp()}{CYAN}Holly:{RESET} {report}", flush=True)
+                    parts.append(report)
+                    for sentence in chunker.feed(report + "\n") + chunker.flush():
+                        await say(sentence)
+                    last_said[:] = [report]
+                    break
                 print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
             steps.extend(messages[asked:])
             if timing.prompt_tokens is not None:
@@ -480,8 +498,8 @@ class Holly:
                     await thought.wait()
                 first = True
                 while (sentence := await sentences.get()) is not None:
-                    if not first and "news" in called and starts_section(sentence):
-                        # A status report's next section ("Politics — ..."): a longer pause
+                    if not first and called & {"news", "status"} and starts_section(sentence):
+                        # A report's next section ("Politics — ...", "Rimmer — ..."): a longer pause
                         # before it, as between items on the news. Punctuation couldn't
                         # give one: a dash, two, or a full stop and a dash, ~0.1 s.
                         self.player.put(np.zeros(int(self.tts.sample_rate * SECTION_PAUSE_S), np.float32))

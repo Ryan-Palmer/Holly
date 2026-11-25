@@ -17,7 +17,6 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import email.utils
-import random
 import re
 import threading
 import time
@@ -41,20 +40,13 @@ FEEDS = {
 BBC_PAGES = ("https://www.bbc.co.uk/", "https://www.bbc.com/")
 GOOGLE = "https://news.google.com/rss/search"
 HEADLINES = 6  # given him at most: he'll say two or three
-# A status report: the top stories, then the freshest of these, a couple each.
+# A round-up of the news: the top stories, then the freshest of these, a couple each.
 ROUNDUP = {"top": "Top stories", "politics": "Politics", "world": "World", "business": "Business and money",
            "technology": "Technology", "science": "Science", "sport": "Sport"}
 ROUNDUP_EACH = 2
-# The report's "Additional" item, news from the Red Dwarf universe, is about one of these,
-# drawn at random: left to choose, four reports in four had a mechanoid "detained" in some
-# "sector", or the Jupiter Mining Corporation "announcing" something.
-LORE = ("the ship's crew", "the Jupiter Mining Corporation", "the Space Corps", "a rival mining ship",
-        "a hologram", "a mechanoid", "the cat race", "a skutter", "the ship's computer systems",
-        "a vending machine", "a GELF tribe", "an android colony", "a holo-ship", "a deep-space trading post",
-        "the ship's food dispensers", "a space station", "a simulant", "the ship's medical unit")
-REPORT = "The BBC's latest, by subject, for a status report:"  # how a round-up starts
-# An earlier report, as he's sent it on a turn with a new one.
-EARLIER = "(An earlier status report: old news now.)"
+# How a round-up starts. It was his status report, with an "Additional" item from the Red
+# Dwarf universe; that's app/status.py's now, and a round-up is just the news.
+REPORT = "The BBC's latest, by subject:"
 FRESH = datetime.timedelta(days=2)
 STALE = datetime.timedelta(days=7)  # if two days give too few
 KEEP_S = 300  # a feed is fetched again after this
@@ -69,8 +61,8 @@ TOOL = {
             "type": "object",
             "properties": {
                 "topic": {"type": "string", "enum": list(FEEDS) + ["roundup"], "description":
-                          "'top' for the main stories; 'roundup' for a status report: the latest in each "
-                          "of the main subjects."},
+                          "'top' for the main stories; 'roundup' for a round-up: the latest in each of "
+                          "the main subjects."},
                 "about": {"type": "string", "description":
                           "Optional: a few words to look for, for news about something in particular "
                           "('Sutton Hoo', 'interest rates')."},
@@ -178,52 +170,8 @@ def roundup(cfg: SearchConfig, now: datetime.datetime | None = None, fetch=None)
               # The form here, the last thing he reads: in his rules alone, he copied an older
               # report from his history instead ("Politics' got... Tech's got...").
               + "\nRound it up subject by subject, a sentence each, in your own words, each starting with "
-                "its name and a dash ('Politics — ministers want...'); then the 'Additional' item, as your "
-                f"rules say: today's is news about {random.choice(LORE)}.")
+                "its name and a dash ('Politics — ministers want...').")
     return Lookup("roundup", answer, count, ms, 0)
-
-
-# Is the crew's line asking for a status report? Asked only when it says "status report" or
-# "status update" (guards.STATUS_ASKED): words alone took "my boss wants a status update
-# by five" for one, and he'd have been made to give the news.
-REPORT_PROMPT = """\
-You sort what someone says to Holly, the household computer. He gives a "status report" when asked: a round-up \
-of today's news, subject by subject.
-YES: they're asking him for one now ("status report, please", "give me a status update, Holly", "another status \
-report", "what's the status report today?").
-NO: anything else: a status report or update of their own or someone else's ("I've got a status report to \
-write", "my boss wants a status update by five"), or a remark about one he's given.
-Reply with one word: YES or NO."""
-
-
-def wants_report(lm, model: str | None, line: str, quiet: bool = True) -> bool:
-    """Is `line` asking him for a status report? If it can't be asked, False (he answers as
-    he would have), or with `quiet` off (the evals), the error."""
-    try:
-        return lm.ask(REPORT_PROMPT, f"They say: {line}", model, max_tokens=4,
-                      temperature=0).strip().upper().startswith("YES")
-    except Exception:
-        if not quiet:
-            raise
-        return False
-
-
-def without_earlier_reports(messages: list[dict], before: int) -> list[dict]:
-    """`messages`, with the status reports in the first `before` (his history) cut to a
-    line: their news, and what he said of it. Sent on a turn with a new report. Asked
-    again six minutes after the last, the news unchanged, he gave the last one again word
-    for word ("Politics' got..."), not as the round-up asked ("Politics — ..."). Kept in
-    his history as they were: only this request leaves them out."""
-    out, report = [], False
-    for i, m in enumerate(messages):
-        if i < before and m["role"] == "tool" and (m.get("content") or "").startswith(REPORT):
-            m, report = {**m, "content": EARLIER}, True
-        elif i < before and report and m["role"] == "assistant" and not m.get("tool_calls"):
-            m, report = {**m, "content": EARLIER}, False
-        elif m["role"] == "user":
-            report = False
-        out.append(m)
-    return out
 
 
 def ago(when: datetime.datetime, now: datetime.datetime) -> str:

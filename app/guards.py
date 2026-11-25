@@ -70,7 +70,7 @@ DUE_LABEL = re.compile(r"\bThe (?:timer|reminder) '(.*?)': it(?:'s due now| came
 # (timers.to_do); if the model says so, his reply must call a tool (app/speak.py).
 ACTION_WORDS = re.compile(r"\b(?:play|put on|music|songs?|album|playlist|weather|forecast|news|headlines|"
                           r"time|look up|search|find out)\b", re.IGNORECASE)
-# Words that may be a status report asked for: then asked about (news.wants_report), since
+# Words that may be a status report asked for: then asked about (status.wants_report), since
 # "my boss wants a status update" isn't one. If it is, the news tool, every time.
 STATUS_ASKED = re.compile(r"\bstatus (?:report|update)s?\b", re.IGNORECASE)
 # His last reply offered the choice in his own words ("shall I dig into it while I doze?").
