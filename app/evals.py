@@ -112,17 +112,23 @@ def reused(reply: str, examples: list[str], n: int = 6) -> str:
     return next((" ".join(words[i:i + n]) for i in range(len(words) - n + 1) if " ".join(words[i:i + n]) in seen), "")
 
 
+def may_run_long(prompt: str, tags) -> bool:
+    """A reply that may run long: a poem, a story, a song or a joke asked for, or the news (the
+    user: read plainly, the news is fine at length, with a comment of his own where one fits)."""
+    return any(w in prompt.lower() for w in CREATIVE) or "news" in tags
+
+
 def problems_with(prompt: str, tags: set[str], reply: str, tools: list[str], examples: list[str]) -> list[str]:
     """What's wrong with a reply, by the checks that need no judge."""
-    creative = any(w in prompt.lower() for w in CREATIVE)
+    long_ok = may_run_long(prompt, tags)
     words, sentences = len(reply.split()), count_sentences(reply)
     problems = speech_problems(reply)
     # By words: his clipped fragments ("Morning. You're up early.") are several sentences.
-    if not sentences or (sentences > 8 if creative else sentences > 3 and words > 25):
+    if not sentences or (sentences > 8 if long_ok else sentences > 3 and words > 25):
         problems.append(f"{sentences} sentences")
     if copied := reused(reply, examples):
         problems.append(f"reused an example: '{copied}'")
-    if not creative and words > LONG_WORDS:
+    if not long_ok and words > LONG_WORDS:
         problems.append(f"{words} words")
     if m := ASSISTANT.search(reply):
         problems.append(f"assistant: '{m.group(0)}'")
@@ -177,7 +183,7 @@ def persona_scores(rows: list[dict]) -> dict:
     ask = [r for r in rows if "ask" in r["tags"]]
     other = [r for r in rows if "ask" not in r["tags"]]
     tooled = [r for r in rows if set(r["tags"]) - {"ask"}]
-    plain = [r for r in rows if not any(w in r["prompt"].lower() for w in CREATIVE)] or rows
+    plain = [r for r in rows if not may_run_long(r["prompt"], r["tags"])] or rows
     return dict(
         judge=round(float(statistics.mean(scored)), 2) if scored else None, judge_by=by_judge(rows),
         passing=sum(not r["problems"] for r in rows), replies=len(rows),

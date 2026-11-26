@@ -17,6 +17,20 @@ def test_checks_need_no_judge():
     assert "60 words" in evals.problems_with("Tell me about stars.", set(), "word " * 60, [], EXAMPLES)
 
 
+DIGEST = ("Top stories. The council's closing the library on Sundays to save money. A lorry's shed its load "
+          "of cabbages on the A66 near Keswick. Politics. The budget's next week and nobody's looking forward "
+          "to it. World. A volcano's erupted in Iceland, though it's nowhere near anybody. Bit grim, all of it.")
+
+
+def test_the_news_may_run_long_as_a_poem_may():
+    """Read plainly, the news is fine at length (the user, 2026-11-26): six sentences, 51 words."""
+    assert evals.problems_with("What's in the news today?", {"news"}, DIGEST, ["news"], EXAMPLES) == []
+    long = evals.problems_with("Tell me about your day.", set(), DIGEST, [], EXAMPLES)
+    assert "6 sentences" in long and "51 words" in long
+    rows = [row("Morning.", "Morning. Up early?"), row("What's in the news today?", DIGEST, tags={"news"})]
+    assert evals.persona_scores(rows)["median_words"] == 3  # the news isn't an ordinary reply
+
+
 def row(prompt, reply, tags=(), tools=(), score=4, problems=()):
     return dict(prompt=prompt, tags=sorted(tags), reply=reply, tools=list(tools), words=len(reply.split()),
                 sentences=reply.count("."), asked="?" in reply, seconds=1.0, problems=list(problems), score=score,
