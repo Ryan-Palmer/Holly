@@ -34,3 +34,37 @@ def test_passes_on_what_the_search_found_by_name_not_the_crews_words():
 def test_what_scenarios_takes_from_guards_is_still_guards():
     for name in ("FORGOT", "NO_CLOCK", "OFFER", "without_offers"):
         assert getattr(scenarios, name) is getattr(guards, name), name
+
+
+def test_the_side_checks_keep_how_sure_each_answer_was():
+    """Right isn't the whole story: a check answered at 55% is one a new model or a reworded
+    prompt tips first. Each row keeps the least sure of its votes, and the words weighed."""
+    edge = scenarios.MEMORY_LINES[0][0]  # the one answered near the edge
+
+    class Odds:
+        keep_odds, odds = False, None
+
+        def ask(self, system, user, model=None, max_tokens=200, temperature=0.2, reasoning="none"):
+            assert self.keep_odds  # asked for while the check runs
+            near = f"They say: {edge}" in user
+            self.odds = {"PAST": 0.55, "OTHER": 0.45} if near else {"OTHER": 0.97, "PAST": 0.03}
+            return "PAST" if near else "OTHER"
+
+    lm = Odds()
+    rows = scenarios.memory_check(lm, None)
+    assert not lm.keep_odds  # off again after
+    assert (rows[0]["sure"], rows[0]["odds"]) == (0.55, {"PAST": 0.55, "OTHER": 0.45})
+    assert {r["sure"] for r in rows[1:] if r["line"] != edge} == {0.97}
+    side = scenarios.side_checks(lm, None)
+    assert all(r["sure"] in (0.55, 0.97) for r in side)
+
+
+def test_the_scorecard_shows_the_checks_answered_near_the_edge():
+    from app import evals
+    rows = [dict(line="a", right=True, sure=0.55, odds={"PAST": 0.55}), dict(line="b", right=True, sure=0.99),
+            dict(line="c", right=False, sure=0.7), dict(line="d", right=True, sure=None)]
+    c = evals.checks(rows)
+    assert (c["right"], c["of"], c["least_sure"]) == (3, 4, 0.55)
+    assert [r["line"] for r in c["unsure"]] == ["a", "c"]
+    assert evals.sure_line(c) == "; 2 under 80% sure (least 55%)"
+    assert evals.sure_line(evals.checks([dict(line="x", right=True)])) == ""  # no logprobs: nothing said

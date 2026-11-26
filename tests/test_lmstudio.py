@@ -115,3 +115,57 @@ def test_a_hung_lm_studio_after_a_failure_is_left_be():
     lm = LmStudio(CFG)
     lm.http = httpx.Client(base_url=CFG.base_url, transport=httpx.MockTransport(handle))
     lm._load_after_failure(None)  # no exception: the request's own error says why
+
+
+def _answer(text: str, alts: list[tuple[str, float]], first: str | None = None):
+    """A chat completion as LM Studio gives one with logprobs: `alts`, the first word's top
+    candidates and their chances."""
+    import math
+    from types import SimpleNamespace as NS
+    top = [NS(token=t, logprob=math.log(p)) for t, p in alts]
+    tokens = [NS(token=first or alts[0][0], logprob=top[0].logprob, top_logprobs=top)] if alts else []
+    return NS(choices=[NS(message=NS(content=text), logprobs=NS(content=tokens) if alts else None)])
+
+
+def test_how_sure_the_first_word_was_adds_its_spellings_together():
+    from app.lmstudio import first_word_odds
+    odds = first_word_odds(_answer("YES", [("YES", 0.6), ("NO", 0.3), (" yes", 0.1)]).choices[0], "YES")
+    assert odds == {"YES": 0.7, "NO": 0.3} and list(odds) == ["YES", "NO"]
+    assert first_word_odds(_answer("YES", []).choices[0], "YES") is None  # no logprobs given
+
+
+def test_a_side_check_asks_for_odds_only_when_the_evals_keep_them():
+    from types import SimpleNamespace as NS
+    sent: list[dict] = []
+
+    def create(**kwargs):
+        sent.append(kwargs)
+        return _answer("PAST", [("PAST", 0.55), ("OTHER", 0.45)])
+
+    lm = LmStudio(CFG)
+    lm.openai = NS(chat=NS(completions=NS(create=create)))
+    assert lm.ask("PAST or OTHER?", "What did I have for lunch?", max_tokens=4) == "PAST"
+    assert "logprobs" not in sent[-1] and lm.odds is None  # Holly himself: as ever
+    lm.keep_odds = True
+    lm.ask("PAST or OTHER?", "What did I have for lunch?", max_tokens=4)
+    assert sent[-1]["logprobs"] is True and lm.odds == {"PAST": 0.55, "OTHER": 0.45}
+
+
+def test_a_model_that_wont_give_odds_still_answers_the_check():
+    """The odds are extra: refused, the check is asked again without them, not lost as an error."""
+    from types import SimpleNamespace as NS
+    from openai import BadRequestError
+    sent: list[dict] = []
+
+    def create(**kwargs):
+        sent.append(kwargs)
+        if kwargs.get("logprobs"):
+            raise BadRequestError("no logprobs here", body=None,
+                                  response=httpx.Response(400, request=httpx.Request("POST", "http://lm/v1")))
+        return _answer("YES", [])
+
+    lm = LmStudio(CFG)
+    lm.openai = NS(chat=NS(completions=NS(create=create)))
+    lm.keep_odds = True
+    assert lm.ask("YES or NO?", "Yes please.", max_tokens=4) == "YES" and lm.odds is None
+    assert [bool(s.get("logprobs")) for s in sent] == [True, False]

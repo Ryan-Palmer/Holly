@@ -41,12 +41,31 @@ max_tokens = 450
 #   tool_choice: whether it honours "required", which makes a reply call a
 #     tool (true by default). Without it, a reply he redoes because he
 #     claimed a tool he hadn't called is just asked again.
+#   least_thinking, thinking_tokens: for a model that can't stop thinking
+#     (LM Studio offers it no "off"), its least effort, sent when it's asked
+#     not to think, and the tokens added to every request for that thinking.
+#     Sent "none", Inkling thought at its default, high: a 4-token yes or no
+#     came back empty, all thinking.
 # A new model wants a table, and a run of the evals (README) before use.
 [models."google/gemma-4-26b-a4b-qat"]
 stray_words = ["thought"]
 
 [models."google/gemma-4-31b-qat"]
 stray_words = ["thought"]
+
+# Thinking Machines' Inkling 2 Mini (Q4_K_M; MoE, 3.4B active): low effort
+# thought for 70-380 tokens before a yes or no, a judge's score or a reply
+# (1-4 s). 24.4 GB at 30K context, against Gemma's ~13.
+[models."thinkingmachines/inkling-2-mini"]
+least_thinking = "low"
+thinking_tokens = 1500
+
+# Meta's Muse Glimmer (28B, Q4_K_M): much the same thinking at low effort.
+# 20.4 GB at 30K. Its card asks for temperature 1.
+[models."meta/muse-glimmer"]
+least_thinking = "low"
+thinking_tokens = 1500
+temperature = 1.0
 
 [tts.voxcpm]
 # VoxCPM2 clones the voice from a reference clip and its transcript, made by

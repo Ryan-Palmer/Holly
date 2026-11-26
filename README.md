@@ -239,8 +239,12 @@ silent voice and his memory in a temporary folder:
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
   (`MEMORY_LINES` in `app/scenarios.py`), each asked twice; and the other
-  side checks, whether a line asks for a status report and whether a timer
-  come due is a job for one of his tools.
+  side checks, whether a line asks for a status report, whether a timer
+  come due is a job for one of his tools, and whether a reply takes him up
+  on an offer. Each answer's odds (LM Studio's logprobs) say how sure the
+  model was: the scorecard lists those under 80%, right today but the first
+  a new model or a reworded prompt would tip. A model that thinks first is
+  always sure, so they tell you nothing there.
 - **Status reports**: five status reports, written as his are, and his
   answer to where each of the crew is, each line scored by the judges for
   being that character, in that world, and funny.
@@ -281,7 +285,9 @@ JSON for `--compare`. `--only` runs one part: `persona`, `scenarios`,
 `voice` (the latest scorecard's replies, said and heard). `--session` asks
 the persona prompts as one conversation, which shows ruts. Run it with LM
 Studio up and no Holly running. A new model also wants its quirks in a
-`[models]` table in `holly.toml`.
+`[models]` table in `holly.toml`, including, for one that can't stop
+thinking (LM Studio's reasoning options for it have no "off"), its least
+effort and the tokens that thinking takes.
 
 **Turn-taking**, only on demand: `--only turns` scores your own saved
 pauses (`python -m app.turn --save data/turn_clips`, labelled by whether

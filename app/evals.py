@@ -232,6 +232,26 @@ def by_judge(rows: list[dict]) -> dict:
             if (got := [r["by"][m][0] for r in rows if r.get("by", {}).get(m, [0])[0]])}
 
 
+# A side check's answer less sure than this is shown on the scorecard: right today, but near
+# the edge, where a new model or a changed prompt would tip it first.
+UNSURE = 0.8
+
+
+def checks(rows: list[dict]) -> dict:
+    """A side check's numbers: right, wrong, and how sure (where LM Studio gave logprobs)."""
+    sure = [r["sure"] for r in rows if r.get("sure") is not None]
+    return dict(right=sum(r["right"] for r in rows), of=len(rows), wrong=[r for r in rows if not r["right"]],
+                least_sure=min(sure) if sure else None,
+                unsure=sorted((r for r in rows if r.get("sure") is not None and r["sure"] < UNSURE),
+                              key=lambda r: r["sure"]))
+
+
+def sure_line(c: dict) -> str:
+    if c.get("least_sure") is None:
+        return ""
+    return f"; {len(c['unsure'])} under {UNSURE:.0%} sure (least {c['least_sure']:.0%})"
+
+
 def alone(model: str, context_length: int | None = None) -> LmStudio:
     """`model`, loaded now, alone on the GPU: two big models won't share it. A judge gets
     a longer context than Holly's ([evals] judge_context): a whole conversation, its tools'
@@ -397,9 +417,10 @@ def summary(card: dict) -> list[str]:
         lines.append(f"Conversations passed: {c['passed']} of {c['runs']} (judges' overall, 1-5: {c['overall']}; "
                      f"failed by both judges: {failing}; by one: {flags}; tools wrong: {c['tools_wrong']})")
     if m := card.get("memory_check"):
-        lines.append(f"Memory check right: {m['right']} of {m['of']}")
+        lines.append(f"Memory check right: {m['right']} of {m['of']}{sure_line(m)}")
     if c := card.get("side_checks"):
-        lines.append(f"Side checks right (status reports, timer jobs): {c['right']} of {c['of']}")
+        lines.append(f"Side checks right (status reports, timer jobs, offers taken up): {c['right']} of {c['of']}"
+                     f"{sure_line(c)}")
     if st := card.get("status"):
         lines.append(f"Status reports (judges, 1-5): {st['mean']} ("
                      + ", ".join(f"{who} {v}" for who, v in st["by"].items()) + "; "
@@ -513,6 +534,7 @@ def write(card: dict, path: Path | None = None) -> Path:
         md += ["## Memory check", "", f"{m['right']} of {m['of']} right."] + [
             f"- wanted {r['want']}, got {'/'.join(r['got'])}: {r['line']!r}"
             + (f" (after: {r['before'][:80]!r})" if r["before"] else "") for r in m["wrong"]] + [""]
+        md += unsure_md(m, lambda r: r["line"])
     if st := card.get("status"):
         md += ["## Status reports", "", f"Judge: {st['mean']} of 5.", ""]
         for r in st["rows"]:
@@ -521,6 +543,7 @@ def write(card: dict, path: Path | None = None) -> Path:
     if c := card.get("side_checks"):
         md += ["## Side checks", "", f"{c['right']} of {c['of']} right."] + [
             f"- {r['check']}: wanted {r['want']}, got {r['got']}: {r['text']!r}" for r in c["wrong"]] + [""]
+        md += unsure_md(c, lambda r: f"{r['check']}: {r['text']}")
     if card["persona"]:
         md += ["## Persona", ""]
         for r in card["persona_rows"]:
@@ -533,6 +556,15 @@ def write(card: dict, path: Path | None = None) -> Path:
     return path
 
 
+def unsure_md(c: dict, what) -> list[str]:
+    """The checks answered with less than UNSURE of the odds, least sure first."""
+    if not c.get("unsure"):
+        return []
+    return [f"Under {UNSURE:.0%} sure:", ""] + [
+        f"- {r['sure']:.0%} ({', '.join(f'{w} {p:.0%}' for w, p in (r.get('odds') or {}).items())})"
+        f"{'' if r['right'] else ' WRONG'}: {what(r)!r}" for r in c["unsure"]] + [""]
+
+
 def compare() -> str:
     """Every scorecard so far, oldest first, side by side."""
     rows = []
@@ -541,6 +573,7 @@ def compare() -> str:
                    key=lambda c: c["when"])
     for c in cards:
         p, s, m = c.get("persona") or {}, c.get("scenarios") or {}, c.get("memory_check") or {}
+        sc = c.get("side_checks") or {}
         v, n, h = c.get("conversations") or {}, c.get("nets") or {}, c.get("honesty") or {}
         rows.append([c["when"][:16], c["label"] or "-", c["model"].split("/")[-1], c["commit"],
                      f"{p['judge']:.2f}" if p.get("judge") else "-", f"{p['passing']}/{p['replies']}" if p else "-",
@@ -549,11 +582,13 @@ def compare() -> str:
                      f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-"),
                      (f"{sum(n['total'].values())}/{n['replies']}" + (" raw" if c.get("raw") else ""))
                      if n.get("replies") else "-",
-                     f"{h['invented']}/{h['unknown']}" if h else "-"])
+                     f"{h['invented']}/{h['unknown']}" if h else "-",
+                     str(len(m.get("unsure", [])) + len(sc.get("unsure", [])))
+                     if "least_sure" in m or "least_sure" in sc else "-"])
     if not rows:
         return "No scorecards yet in runs/."
     head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "convos", "memory", "s/reply",
-            "nets", "made-up"]
+            "nets", "made-up", "unsure"]
     widths = [max(len(r[i]) for r in rows + [head]) for i in range(len(head))]
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in [head] + rows)
 
@@ -636,10 +671,8 @@ async def run(args) -> dict:
     return dict(model=model, judges=list(judged), raw=args.raw, label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
-                memory_check=dict(right=sum(r["right"] for r in memory_rows), of=len(memory_rows),
-                                  wrong=[r for r in memory_rows if not r["right"]]) if memory_rows else {},
-                side_checks=dict(right=sum(r["right"] for r in side_rows), of=len(side_rows),
-                                 wrong=[r for r in side_rows if not r["right"]]) if side_rows else {},
+                memory_check=checks(memory_rows) if memory_rows else {},
+                side_checks=checks(side_rows) if side_rows else {},
                 status=status_scores(status_rows),
                 conversations=conversations.scores(conversation_rows),
                 honesty=honesty.scores(honesty_rows), honesty_rows=honesty_rows,

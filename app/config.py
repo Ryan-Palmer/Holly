@@ -24,6 +24,10 @@ class LlmConfig:
     # A model's quirks, usually set in its [models."key"] table (see for_model):
     stray_words: tuple[str, ...] = ()  # a sentence of only one of these is dropped, unsaid
     tool_choice: bool = True  # it honours tool_choice "required" (a reply that must call a tool)
+    # A model that can't stop thinking (LM Studio offers it no "off"): its least effort, sent
+    # when it's asked not to think, and the tokens added for that thinking (see LmStudio._reasoning).
+    least_thinking: str = ""
+    thinking_tokens: int = 0
     # Each chat model's settings: [llm]'s, with its [models."key"] table over them ("": none).
     profiles: dict = field(default_factory=dict, compare=False, repr=False)
 
@@ -35,7 +39,8 @@ class LlmConfig:
 
 
 # What a [models."key"] table may set.
-PROFILE_KEYS = ("context_length", "reasoning_effort", "temperature", "max_tokens", "stray_words", "tool_choice")
+PROFILE_KEYS = ("context_length", "reasoning_effort", "temperature", "max_tokens", "stray_words", "tool_choice",
+                "least_thinking", "thinking_tokens")
 
 
 @dataclass(frozen=True)

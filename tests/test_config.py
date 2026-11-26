@@ -86,3 +86,19 @@ def test_side_tasks():
     assert (rec.sent[0]["model"], rec.sent[0]["reasoning_effort"]) == (lm.cfg.model, "none")
     assert asyncio.run(lm.aask("Be brief.", "Why?", "m", 10, temperature=0.0)) == ("Hello there", True)
     assert rec.sent[1]["stream"] and rec.sent[1]["model"] == "m" and rec.sent[1]["temperature"] == 0.0
+
+
+def test_a_model_that_cant_stop_thinking_thinks_least_with_room_to_answer():
+    """Inkling 2 Mini, sent "none", thought at its default, high: a 4-token yes or no came
+    back empty. Its table's least effort is sent instead, with room to think in."""
+    cfg = _llm_config(LLM, {"inkling": {"least_thinking": "low", "thinking_tokens": 1500}})
+    gemma = LmStudio(cfg)
+    side = gemma._side_args("Answer YES or NO.", "Is Keswick in England?", "inkling", 4, 0.0, "none")
+    assert (side["reasoning_effort"], side["max_tokens"]) == ("low", 1504)
+    asked = gemma._side_args("", "", "inkling", 12000, 0.3, "medium")  # a judge told to think: as asked
+    assert (asked["reasoning_effort"], asked["max_tokens"]) == ("medium", 12000)
+    own = gemma._side_args("", "", None, 4, 0.0, "none")  # a model with an "off": unchanged
+    assert (own["reasoning_effort"], own["max_tokens"]) == ("none", 4)
+    inkling = LmStudio(cfg.for_model("inkling"))  # his replies, on it
+    chat = inkling._chat_args([{"role": "user", "content": "Morning"}], None)
+    assert (chat["reasoning_effort"], chat["max_tokens"]) == ("low", 300 + 1500)

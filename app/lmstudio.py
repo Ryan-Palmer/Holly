@@ -3,18 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
 import httpx
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI, BadRequestError, OpenAI
 
 from .config import LlmConfig
 
 
 CHECK_TIMEOUT_S = 5.0  # for LM Studio to say what's loaded (~2 ms when it's well)
+
+
+def first_word_odds(choice, text: str) -> dict[str, float] | None:
+    """How sure the model was of the first word of its answer `text`, from LM Studio's
+    logprobs: each word it weighed there and its chance, most likely first, a word in other
+    cases or spacing added together ("YES", "Yes" and " yes" are one). None if there are none."""
+    logprobs = getattr(choice, "logprobs", None)
+    for t in (logprobs.content or []) if logprobs else []:
+        word = t.token.strip().upper()
+        if word and text.upper().startswith(word):  # the answer's own first word
+            odds: dict[str, float] = {}
+            for alt in t.top_logprobs or [t]:
+                if w := alt.token.strip().upper():
+                    odds[w] = odds.get(w, 0.0) + math.exp(alt.logprob)
+            return {w: round(p, 4) for w, p in sorted(odds.items(), key=lambda x: -x[1])}
+    return None
 
 
 @dataclass
@@ -36,6 +53,10 @@ class LmStudio:
         self.openai = OpenAI(base_url=f"{cfg.base_url}/v1", api_key="lm-studio")
         self.aopenai = AsyncOpenAI(base_url=f"{cfg.base_url}/v1", api_key="lm-studio")
         self._loading = threading.Lock()  # a reply's check and a background job's, not both loading
+        # The evals' window on a yes or no (scenarios.memory_check, side_checks): with keep_odds
+        # on, each ask also brings back the odds of its answer's first word, in `odds`.
+        self.keep_odds = False
+        self.odds: dict[str, float] | None = None
 
     # Model management -------------------------------------------------
 
@@ -111,15 +132,26 @@ class LmStudio:
 
     # Chat ------------------------------------------------------------
 
+    def _reasoning(self, model: str | None, reasoning: str) -> tuple[str, int]:
+        """The effort to send for `reasoning`, and the tokens to add for thinking. A model
+        that can't stop thinking (its table's least_thinking) thinks at its least when asked
+        not to, with thinking_tokens more to think in: sent "none", Inkling 2 Mini thought
+        at its default, high, and a 4-token yes or no came back empty, all of it thinking."""
+        cfg = self.cfg if model in (None, self.cfg.model) else self.cfg.for_model(model)
+        if reasoning == "none" and cfg.least_thinking:
+            return cfg.least_thinking, cfg.thinking_tokens
+        return reasoning, 0
+
     def _chat_args(self, messages: list[dict], model: str | None, tools: list[dict] | None = None,
                    tool_choice: str | None = None) -> dict:
+        effort, more = self._reasoning(model, self.cfg.reasoning_effort)
         args = dict(
             model=model or self.cfg.model,
             messages=messages,
             stream=True,
             temperature=self.cfg.temperature,
-            max_tokens=self.cfg.max_tokens,
-            reasoning_effort=self.cfg.reasoning_effort,
+            max_tokens=self.cfg.max_tokens + more,
+            reasoning_effort=effort,
             stream_options={"include_usage": True},  # token counts, in a last chunk
         )
         if tools:
@@ -193,20 +225,31 @@ class LmStudio:
 
     def _side_args(self, system: str, user: str, model: str | None, max_tokens: int, temperature: float,
                    reasoning: str) -> dict:
-        return dict(model=model or self.cfg.model, temperature=temperature, max_tokens=max_tokens,
-                    reasoning_effort=reasoning, messages=[{"role": "system", "content": system},
+        effort, more = self._reasoning(model, reasoning)
+        return dict(model=model or self.cfg.model, temperature=temperature, max_tokens=max_tokens + more,
+                    reasoning_effort=effort, messages=[{"role": "system", "content": system},
                                                          {"role": "user", "content": user}])
 
     def ask(self, system: str, user: str, model: str | None = None, max_tokens: int = 200,
             temperature: float = 0.2, reasoning: str = "none") -> str:
         """A whole reply, blocking: call it from a worker thread."""
+        args = self._side_args(system, user, model, max_tokens, temperature, reasoning)
+        extra = dict(logprobs=True, top_logprobs=10) if self.keep_odds else {}
         try:
-            reply = self.openai.chat.completions.create(
-                **self._side_args(system, user, model, max_tokens, temperature, reasoning))
+            try:
+                reply = self.openai.chat.completions.create(**args, **extra)
+            except BadRequestError:
+                if not extra:
+                    raise
+                extra = {}  # a model that won't give odds still answers: the check, without them
+                reply = self.openai.chat.completions.create(**args)
         except Exception:
             self._load_after_failure(model)
             raise
-        return (reply.choices[0].message.content or "").strip()
+        text = (reply.choices[0].message.content or "").strip()
+        if self.keep_odds:
+            self.odds = first_word_odds(reply.choices[0], text) if extra else None
+        return text
 
     def _load_after_failure(self, model: str | None) -> None:
         """A request failed: LM Studio's engine may have crashed. The model's loaded again

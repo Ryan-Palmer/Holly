@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime
+import functools
 import json
 import re
 import subprocess
@@ -834,23 +835,55 @@ MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just b
 ]
 
 
+def odds_kept(ask_each):
+    """`ask_each(lm, ...)`'s rows, with how sure each answer was: lm.keep_odds on while it
+    asks, and each vote's `vote_sure(lm)` collected. A check can be right and still near
+    the edge: "sure" is the least sure of its votes (the chance of the first word it gave),
+    and "odds" the words it weighed then. None where LM Studio gave no logprobs."""
+    @functools.wraps(ask_each)
+    def wrapped(lm, *args, **kwargs):
+        keep = getattr(lm, "keep_odds", False)
+        lm.keep_odds = True
+        try:
+            return ask_each(lm, *args, **kwargs)
+        finally:
+            lm.keep_odds = keep
+    return wrapped
+
+
+def vote_sure(lm) -> tuple[float | None, dict | None]:
+    """The last ask's odds: the chance of the word it gave, and its three likeliest words."""
+    odds = getattr(lm, "odds", None)
+    return (max(odds.values()), dict(list(odds.items())[:3])) if odds else (None, None)
+
+
+def _with_sure(row: dict, sures: list[tuple[float | None, dict | None]]) -> dict:
+    known = [s for s in sures if s[0] is not None]
+    least = min(known, key=lambda s: s[0]) if known else (None, None)
+    return dict(row, sure=least[0], odds=least[1])
+
+
+@odds_kept
 def memory_check(lm, model: str | None, votes: int = 2) -> list[dict]:
     """Each of MEMORY_LINES through the memory check, `votes` times (at temperature 0, but
     not always the same): right only if every vote is. A vote LM Studio couldn't give is
     "ERROR", not OTHER: about_the_past's answer then, which passed every OTHER line."""
     from .archive import judged_past
 
-    def vote(line: str, before: str) -> str:
+    def vote(line: str, before: str) -> tuple[str, tuple]:
+        lm.odds = None
         try:
-            return "PAST" if judged_past(lm, model, line, before) else "OTHER"
+            return "PAST" if judged_past(lm, model, line, before) else "OTHER", vote_sure(lm)
         except Exception:
-            return "ERROR"
+            return "ERROR", (None, None)
 
     rows = []
     for line, before, past in MEMORY_LINES:
-        got = [vote(line, before) for _ in range(votes)]
-        rows.append(dict(line=line, before=before, want="PAST" if past else "OTHER", got=got,
-                         right=all(g == ("PAST" if past else "OTHER") for g in got)))
+        votes_ = [vote(line, before) for _ in range(votes)]
+        got = [g for g, _ in votes_]
+        rows.append(_with_sure(dict(line=line, before=before, want="PAST" if past else "OTHER", got=got,
+                                    right=all(g == ("PAST" if past else "OTHER") for g in got)),
+                               [s for _, s in votes_]))
     return rows
 
 
@@ -909,6 +942,7 @@ TAKEN_UP_LINES: list[tuple[tuple[str, str], bool]] = [
 ]
 
 
+@odds_kept
 def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     """STATUS_LINES, ACTION_LABELS and TAKEN_UP_LINES through their checks, `votes` times
     each: right only if every vote is. A vote LM Studio couldn't give is "ERROR", as in
@@ -918,10 +952,11 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     from .timers import to_do
 
     def vote(judge, text: str):
+        lm.odds = None
         try:
-            return judge(text)
+            return judge(text), vote_sure(lm)
         except Exception:
-            return "ERROR"
+            return "ERROR", (None, None)
 
     rows = []
     for name, cases, judge in (("status report", STATUS_LINES, lambda x: wants_report(lm, model, x, quiet=False)),
@@ -929,8 +964,10 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
                                ("an offer taken up", TAKEN_UP_LINES,
                                 lambda x: taken_up(lm, model, x[0], x[1], quiet=False))):
         for text, want in cases:
-            got = [vote(judge, text) for _ in range(votes)]
-            rows.append(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)))
+            votes_ = [vote(judge, text) for _ in range(votes)]
+            got = [g for g, _ in votes_]
+            rows.append(_with_sure(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)),
+                                   [s for _, s in votes_]))
     return rows
 
 
