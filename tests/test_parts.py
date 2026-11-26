@@ -256,3 +256,27 @@ def test_additional_is_said_with_a_dash(said):
     from app.speech_text import split_sentences
     chunks = split_sentences(f"In sport, a draw. {said}")
     assert chunks[0] == "In sport, a draw." and chunks[1].startswith("Additional — ")  # one breath, a dash's pause
+
+
+def test_a_search_answers_what_was_sought_and_what_was_said():
+    """"You can get it now if you like", taking him up on a recipe search, was the search's
+    whole question: "the results don't contain that phrase", 10 times in 10."""
+    from app.search import SearchTool, asked
+
+    assert asked("best fish pie recipe", "You can get it now if you like.") == (
+        "best fish pie recipe (what the crew said: You can get it now if you like.)")
+
+    class Searcher:
+        def look_up(self, query, question):
+            self.got = (query, question)
+            return "Found."
+
+    searcher = Searcher()
+    tool = SearchTool(searcher)
+    tool.look_up = lambda what, fn, turn: _run(fn)
+    asyncio.run(tool.run({"query": "best fish pie recipe"}, Turn("You can get it now if you like.", 1, None)))
+    assert searcher.got == ("best fish pie recipe", asked("best fish pie recipe", "You can get it now if you like."))
+
+
+async def _run(fn):
+    return fn()

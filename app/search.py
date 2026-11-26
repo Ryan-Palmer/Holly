@@ -353,5 +353,14 @@ class SearchTool(LookupTool):
     async def run(self, args: dict, turn: Turn) -> str:
         if not (query := str(args.get("query", "")).strip()):
             return "The search needs a query."
-        found = await self.look_up(f"searching: {query}", lambda: self.searcher.look_up(query, turn.user), turn)
+        found = await self.look_up(f"searching: {query}", lambda: self.searcher.look_up(
+            query, asked(query, turn.user)), turn)
         return found if isinstance(found, str) else Searcher.for_holly(found)
+
+
+def asked(sought: str, user: str) -> str:
+    """The question a page or search answers (Searcher.look_up, answer_from): what he looked
+    for, and what the crew said. Their words alone were it, and "You can get it now if you
+    like", taking him up on a recipe search, had it answer "the results don't contain that
+    phrase", 10 times in 10, with fish pie recipes found."""
+    return f"{sought} (what the crew said: {user})"

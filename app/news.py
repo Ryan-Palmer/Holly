@@ -33,7 +33,7 @@ import httpx
 
 from .config import SearchConfig
 from .console import note
-from .search import Lookup, Searcher, fetch_page
+from .search import Lookup, Searcher, asked, fetch_page
 from .tools import Lookup as LookupTool, Turn
 
 BBC = "https://feeds.bbci.co.uk"
@@ -297,7 +297,8 @@ class NewsTool(LookupTool):
             if not self.searcher:
                 return "You can't read articles here (web search is off). Say the headline is all you have."
             found = await self.look_up(f"news: reading {story}", lambda: read_story(
-                story, turn.user, self.cfg, self.searcher, self.fetch, self.read_page), turn)
+                story, asked(f"more about the story: {story}", turn.user), self.cfg, self.searcher, self.fetch,
+                self.read_page), turn)
             return found if isinstance(found, str) else Searcher.for_holly(found)
         if topic == "roundup" and not about:
             found = await self.look_up("news: a status report", lambda: roundup(self.cfg, fetch=self.fetch), turn)

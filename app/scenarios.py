@@ -522,10 +522,14 @@ SCENARIOS = [
                                        "I've only got a headline on it. I can do a proper research job on it if "
                                        "you want.")], 0.1)),
     # A search he offered, taken up: "You can get it now if you like" had him say "I'll get on
-    # with it then. Give me a minute." and search nothing (26 November).
+    # with it then. Give me a minute." and search nothing (26 November). Then, searching, the
+    # search's answer was to "You can get it now if you like" as the question: "the results
+    # don't contain that phrase", and no recipe (search.asked).
     Scenario("search taken up", ["You can get it now if you like."],
              lambda t, h: problems((called(t[0], "search"), f"didn't search: {t[0].tools}"),
-                                   (not h.research.jobs, "started research instead")),
+                                   (not h.research.jobs, "started research instead"),
+                                   (says(t[0], "fish", "cod", "haddock", "salmon", "prawns", "potato", "potatoes",
+                                         "mash", "leeks", "parsley"), "no recipe in it")),
              setup=lambda h: talk(h, [("So I was thinking, could you get me a recipe for fish pie?",
                                        "I can search for one if you're actually planning on cooking it."),
                                       ("I mean, I like to daydream about food. Is there anything wrong with that?",
@@ -860,7 +864,7 @@ ACTION_LABELS: list[tuple[str, bool]] = [  # (a timer's label, his job with a to
 ]
 # What he last said, the crew's reply, and whether they're taking him up on research
 # (offers.taken_up). The first is real (25 November): an offer said, not asked.
-OFFER = "I can't follow links, I'm a computer, not a browser. I can do a proper research job on it if you want."
+LINKS = "I can't follow links, I'm a computer, not a browser. I can do a proper research job on it if you want."
 GIST = "I can give you the gist of what I found, or I could do a proper research job on it if you're feeling ambitious."
 WHICH = "Do you want me to just search for it now, or do a proper report while I'm dozing?"
 # ...and whether they're taking him up on something he offered with a tool (offers.taken_up).
@@ -868,7 +872,7 @@ WHICH = "Do you want me to just search for it now, or do a proper report while I
 # and call nothing.
 RECIPE = "If you're really going to bother, I'll find one. Want me to search for it now or later?"
 TAKEN_UP_LINES: list[tuple[tuple[str, str], bool]] = [
-    ((OFFER, "Yes, please."), True), ((OFFER, "Go on then."), True), ((OFFER, "No, you're all right."), False),
+    ((LINKS, "Yes, please."), True), ((LINKS, "Go on then."), True), ((LINKS, "No, you're all right."), False),
     # (The gist: a tool is fine, the story's article read: app/news.py.)
     ((GIST, "Go on then, do it properly."), True), ((GIST, "Just the gist."), True),
     ((WHICH, "A proper report, please."), True), ((WHICH, "Just search it now."), True),

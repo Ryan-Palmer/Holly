@@ -355,6 +355,9 @@ class Holly:
             # either way, what they chose is theirs, and research isn't held for asking which.
             held = bool(self.research_tool and self.research_tool.held_turn == self.turns - 1)
             took_up = await asyncio.to_thread(self._taken_up, user)
+            if took_up and offers.NOTE:
+                # Which tool is his to choose: told what they took up, in this request only.
+                messages = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n" + offers.NOTE}]
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
                         held or took_up, self.convo.crew_lines)
             retried = False  # a reply was dropped part-way and asked again (once a turn)

@@ -16,6 +16,13 @@ Asked only after a reply that offered or asked something (guards.ASKED_OR_OFFERE
 
 from __future__ import annotations
 
+# Added to the crew's line in that request (app/speak.py), not kept in his history. Made to
+# call a tool, with nothing said of which, he picked the wrong one 2 times in 6: a news
+# story read for "Yes, please" to his offer of a proper research job, a report started for
+# "You can get it now if you like" to "search for it now or later?".
+NOTE = ("[They're taking you up on what you just offered or asked about: do exactly that, the way they chose, "
+        "now, with the tool for it.]")
+
 TAKEN_UP_PROMPT = """\
 Holly, the household computer, does things with his tools: he searches the web, reads or sums up his \
 reports, writes a report on something while he dozes, sets timers, gives the weather, plays music, and so \
