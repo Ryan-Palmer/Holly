@@ -32,7 +32,7 @@ import time
 import numpy as np
 import torch
 
-from . import archive, cpu, guards, news, research, spotify, status, timers
+from . import archive, cpu, guards, news, offers, research, spotify, status, timers
 from .announce import Announcement, pending
 from .background import Background, context_report
 from .clock import ClockTool
@@ -351,9 +351,10 @@ class Holly:
             asked = len(messages)
             lookups = 0  # slow tools called this reply
             # Their answer to his search-or-report question (the research tool held a start and
-            # had him ask), or their taking him up on research he offered (research.accepted).
+            # had him ask), or their taking him up on something he offered (app/offers.py):
+            # either way, what they chose is theirs, and research isn't held for asking which.
             held = bool(self.research_tool and self.research_tool.held_turn == self.turns - 1)
-            took_up = await asyncio.to_thread(self._took_up_research, user)
+            took_up = await asyncio.to_thread(self._taken_up, user)
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
                         held or took_up, self.convo.crew_lines)
             retried = False  # a reply was dropped part-way and asked again (once a turn)
@@ -367,8 +368,8 @@ class Holly:
             # he guessed what the cats thought of Lister ("a walking disaster area"). (If the
             # model honours it: else a retry is just asked again.)
             required = "required" if self.cfg.llm.tool_choice else None
-            choice = (required if "research" in self.toolbox
-                      and (took_up or (held and guards.REPORT_WANTED.search(user))) else None)
+            choice = (required if took_up
+                      or (held and "research" in self.toolbox and guards.REPORT_WANTED.search(user)) else None)
             # A status report, with one already in his history: he gave one without the tool,
             # three times in three, made up or the last one again; with none, he called it
             # every time. So he must call a tool, and the earlier reports are stubbed before he
@@ -378,8 +379,10 @@ class Holly:
                 messages = status.without_earlier_reports(messages, asked - 1)
                 choice = choice or required
             # A report asked for in so many words (guards.REPORT_ASKED): well into a talk, he
-            # asked "a quick search now, or a proper report?" anyway, calling nothing.
-            if not user.startswith("[") and "research" in self.toolbox and guards.REPORT_ASKED.search(user):
+            # asked "a quick search now, or a proper report?" anyway, calling nothing. With
+            # something to report on (guards.reported_on): "write me a report", alone, isn't.
+            if (not user.startswith("[") and "research" in self.toolbox and guards.REPORT_ASKED.search(user)
+                    and guards.reported_on(user)):
                 choice = choice or required
             # A timer to do something with a tool ("check the weather in Keswick"), not just say.
             if (user.startswith("[") and (labels := [label for label in guards.DUE_LABEL.findall(user)
@@ -625,17 +628,16 @@ class Holly:
                 break
         return " / ".join(reversed(said))
 
-    def _took_up_research(self, user: str) -> bool:
-        """Are the crew taking him up on research he offered, in his own words, in his last
-        reply ("I can do a proper research job on it if you want" / "Yes, please")? The model
-        judges (research.accepted), and only if that reply spoke of research or a report
-        (guards.OFFERED_REPORT): a question mark and a word, alone, missed an offer said as
-        a statement."""
-        if not self.research_tool or user.startswith("["):
+    def _taken_up(self, user: str) -> bool:
+        """Are the crew taking him up on something he offered or asked about doing in his last
+        reply ("Want me to search for it now or later?" / "You can get it now if you like")?
+        As the model judges (app/offers.py); asked only if that reply offered or asked
+        something (guards.ASKED_OR_OFFERED)."""
+        if not self.tools or user.startswith("["):
             return False
         said = next((m.get("content") or "" for m in reversed(self.convo.history)
                      if m["role"] == "assistant" and m.get("content")), "")
-        return bool(guards.OFFERED_REPORT.search(said)) and research.accepted(self.lm, self.model, said, user)
+        return bool(guards.ASKED_OR_OFFERED.search(said)) and offers.taken_up(self.lm, self.model, said, user)
 
     # Speaking up by himself -----------------------------------------------------
 

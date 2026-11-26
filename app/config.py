@@ -76,6 +76,12 @@ class ListenConfig:
     wake_words: tuple[str, ...] = ("holly", "hollie", "holley")
     wake_edge_words: int = 3
     awake_s: float = 30.0  # after he last spoke: no wake word needed, and his face stays awake
+    # The turn-ending model (app/turn.py): "<Hugging Face repo>/<file>", or "" for none (a
+    # turn ends after end_silence_ms, whatever's said).
+    turn_model: str = ""
+    turn_check_ms: int = 200  # silence before it's asked
+    turn_threshold: float = 0.5  # finished, at or above this: he answers then
+    max_silence_ms: int = 1500  # below it, he waits for more, up to this
 
 
 @dataclass(frozen=True)

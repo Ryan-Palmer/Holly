@@ -31,6 +31,7 @@ from .console import DIM, RESET, YELLOW, stamp
 from .mic import Mic
 from .speak import FORGET_HELP, RESET_HELP, Holly, TurnTimes
 from .stt import Transcriber
+from .turn import TurnModel, verdict
 from .vad import TurnDetector
 
 # After Holly finishes, mic audio is ignored this long, so the tail of his
@@ -96,7 +97,16 @@ class ListeningHolly(Holly):
         print(f"{DIM}Loading Whisper {listen.whisper_model} and Silero VAD...{RESET}", flush=True)
         self.stt = await asyncio.to_thread(Transcriber, listen)
         await asyncio.to_thread(self.stt.warm_up)
-        self.detector = TurnDetector(listen)
+        turn_model = None
+        if listen.turn_model:
+            # Whether a pause is the end of what you're saying (app/turn.py). If it can't be
+            # had, a turn ends after a pause, as it did before it.
+            try:
+                turn_model = await asyncio.to_thread(TurnModel, listen.turn_model)
+            except Exception as e:
+                print(f"{YELLOW}The turn-ending model ({listen.turn_model}) couldn't be loaded ({e!r}): a turn "
+                      f"ends after {listen.end_silence_ms} ms of silence.{RESET}", flush=True)
+        self.detector = TurnDetector(listen, turn_model, on_check=self._turn_checked)
         self.mic = Mic(self.cfg.audio.host_api, listen.input_device, listen.input_channels)
         self.mic.start()
         free_gb = gpu_free_gb()
@@ -137,6 +147,11 @@ class ListeningHolly(Holly):
             if hearing and not self.detector.in_speech:
                 hearing = False
                 self.quiet_since = time.perf_counter()
+
+    def _turn_checked(self, p: float, audio) -> None:
+        """At a pause, the turn model's answer, and what he does with it, kept on screen: on the
+        first live try, overwritten, there was no telling why a fragment got an answer."""
+        print(f"\r{DIM}  (a pause: {p:.2f}, {verdict(p, self.cfg.listen)}){RESET}", flush=True)
 
     def _maybe_doze(self) -> None:
         """Once he's asleep and the room is quiet: his notes, then any research

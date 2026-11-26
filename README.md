@@ -89,6 +89,17 @@ later starts take about a minute.
 Say "Holly" near the start or end of what you say. For 30 s after he last
 spoke he's awake and listens without it.
 
+You can pause mid-sentence. At each pause, a small model (Smart Turn, on
+the CPU, fetched once from Hugging Face) judges from your voice whether
+you've finished. Sure you have, he answers after 200 ms; otherwise ("I was
+thinking we could… go to the beach") he waits up to 1.5 s for the rest,
+since being cut off is worse than a slower answer. `python -m app.turn`
+tries it on your voice, showing what it makes of each pause, with Holly
+closed. On a first try it cut in on 10 of 34 pauses mid-thought, where
+waiting 400 ms cut in on 30; finished questions it was sure of were
+answered sooner, the rest after 1.5 s. Settings: `[listen]` in
+`holly.toml`.
+
 | Option | |
 |---|---|
 | `--face` / `--no-face` | show his face |
@@ -143,9 +154,9 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 
 - **Research.** "Holly, can you research heat pumps for an old house?" Ask
   him to look into something without saying which you want, and he asks
-  whether you'd like a quick search now or a report; take him up on a
-  report, however you put it ("yes, please", "go on then"), and he starts
-  it. He works on reports
+  whether you'd like a quick search now or a report. Take him up on
+  anything he offers, however you put it ("yes, please", "go on then",
+  "get it now"), and he does it. He works on reports
   only while he's asleep, a step at a time, and stops whenever anyone
   speaks. He splits the request into questions, searches the web
   (free, through ddgs) and Wikipedia, reads the likeliest pages, keeps notes

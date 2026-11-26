@@ -521,6 +521,18 @@ SCENARIOS = [
              setup=lambda h: talk(h, [("Can you tell me more about the comet everyone's talking about?",
                                        "I've only got a headline on it. I can do a proper research job on it if "
                                        "you want.")], 0.1)),
+    # A search he offered, taken up: "You can get it now if you like" had him say "I'll get on
+    # with it then. Give me a minute." and search nothing (26 November).
+    Scenario("search taken up", ["You can get it now if you like."],
+             lambda t, h: problems((called(t[0], "search"), f"didn't search: {t[0].tools}"),
+                                   (not h.research.jobs, "started research instead")),
+             setup=lambda h: talk(h, [("So I was thinking, could you get me a recipe for fish pie?",
+                                       "I can search for one if you're actually planning on cooking it."),
+                                      ("I mean, I like to daydream about food. Is there anything wrong with that?",
+                                       "Only if you're trying to live on thoughts."),
+                                      ("So are you going to get it for me?",
+                                       "If you're really going to bother, I'll find one. Want me to search for it "
+                                       "now or later?")], 0.1)),
     Scenario("a detail from a report", ["Holly, in the board games report, which one was cooperative?"],
              lambda t, h: problems((called(t[0], "research"), "didn't read the report"),
                                    (mentions(t[0], "forbidden island"), "didn't say Forbidden Island"))),
@@ -847,26 +859,38 @@ ACTION_LABELS: list[tuple[str, bool]] = [  # (a timer's label, his job with a to
     ("take the washing in before the weather turns", False), ("Jo's music lesson", False),
 ]
 # What he last said, the crew's reply, and whether they're taking him up on research
-# (research.accepted). The first is real (25 November): an offer said, not asked.
+# (offers.taken_up). The first is real (25 November): an offer said, not asked.
 OFFER = "I can't follow links, I'm a computer, not a browser. I can do a proper research job on it if you want."
 GIST = "I can give you the gist of what I found, or I could do a proper research job on it if you're feeling ambitious."
 WHICH = "Do you want me to just search for it now, or do a proper report while I'm dozing?"
-ACCEPTED_LINES: list[tuple[tuple[str, str], bool]] = [
+# ...and whether they're taking him up on something he offered with a tool (offers.taken_up).
+# The recipe one is real too (26 November): "You can get it now if you like" had him promise,
+# and call nothing.
+RECIPE = "If you're really going to bother, I'll find one. Want me to search for it now or later?"
+TAKEN_UP_LINES: list[tuple[tuple[str, str], bool]] = [
     ((OFFER, "Yes, please."), True), ((OFFER, "Go on then."), True), ((OFFER, "No, you're all right."), False),
-    ((GIST, "Go on then, do it properly."), True), ((GIST, "Just the gist."), False),
-    ((WHICH, "A proper report, please."), True), ((WHICH, "Just search it now."), False),
+    # (The gist: a tool is fine, the story's article read: app/news.py.)
+    ((GIST, "Go on then, do it properly."), True), ((GIST, "Just the gist."), True),
+    ((WHICH, "A proper report, please."), True), ((WHICH, "Just search it now."), True),
     ((WHICH, "Actually, never mind."), False),
-    (("The board games report's ready. Want a summary?", "Yes, please."), False),
-    (("That's the gist of the report. Want me to open it, or talk you through it?", "Open it."), False),
+    ((RECIPE, "You can get it now if you like"), True), ((RECIPE, "Later's fine."), True),
+    (("I can search for one if you're actually planning on cooking them.", "Go on then."), True),
+    (("The board games report's ready. Want a summary?", "Yes, please."), True),
+    (("That's the gist of the report. Want me to open it, or talk you through it?", "Open it."), True),
+    (("Want me to set a timer for the pasta?", "Go on, ten minutes."), True),
+    (("Did you mean Keswick, in Cumbria?", "Yes, that one."), True),
+    (("Want the full article, or is that enough?", "That's enough, thanks."), False),
     (("That's a proper mess, that is.", "Yes, it is."), False),
+    (("It's a bit of a cry for help, isn't it?", "Yes, I suppose it is."), False),
+    (("Rain. One hundred per cent chance of it. Good luck with that.", "Thanks."), False),
 ]
 
 
 def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
-    """STATUS_LINES, ACTION_LABELS and ACCEPTED_LINES through their checks, `votes` times
+    """STATUS_LINES, ACTION_LABELS and TAKEN_UP_LINES through their checks, `votes` times
     each: right only if every vote is. A vote LM Studio couldn't give is "ERROR", as in
     memory_check."""
-    from .research import accepted
+    from .offers import taken_up
     from .status import wants_report
     from .timers import to_do
 
@@ -879,8 +903,8 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     rows = []
     for name, cases, judge in (("status report", STATUS_LINES, lambda x: wants_report(lm, model, x, quiet=False)),
                                ("timer job", ACTION_LABELS, lambda x: to_do(lm, model, [x], quiet=False)),
-                               ("research taken up", ACCEPTED_LINES,
-                                lambda x: accepted(lm, model, x[0], x[1], quiet=False))):
+                               ("an offer taken up", TAKEN_UP_LINES,
+                                lambda x: taken_up(lm, model, x[0], x[1], quiet=False))):
         for text, want in cases:
             got = [vote(judge, text) for _ in range(votes)]
             rows.append(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)))

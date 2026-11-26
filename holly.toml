@@ -119,6 +119,20 @@ input_channels = []
 start_threshold = 0.5
 end_threshold = 0.35
 end_silence_ms = 400
+# Whether a pause is the end of what you're saying, or only a pause: a model
+# that judges from the audio itself, its rhythm and pitch (app/turn.py: Smart
+# Turn v3.2, pipecat-ai, BSD-2-Clause, ~8 MB on the CPU, ~35 ms; fetched once
+# into the Hugging Face cache). It's asked after turn_check_ms of silence: sure
+# you've finished (turn_threshold or more), he answers then, sooner than
+# end_silence_ms; otherwise he waits for the rest, up to max_silence_ms. Being
+# cut off is worse than a slower answer: a finished turn it isn't sure of
+# (half the questions, tried by voice) is answered after max_silence_ms.
+# Empty turn_model: a turn ends after end_silence_ms, whatever's said.
+# python -m app.turn tries it on your voice.
+turn_model = "pipecat-ai/smart-turn-v3/smart-turn-v3.2-cpu.onnx"
+turn_check_ms = 200
+turn_threshold = 0.5
+max_silence_ms = 1500
 # Turns shorter than this are coughs, clicks and keyboard noise.
 min_speech_ms = 250
 # Audio kept from before speech starts, so the first syllable isn't clipped.

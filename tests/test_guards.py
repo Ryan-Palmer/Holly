@@ -3,7 +3,7 @@
 import pytest
 
 from app.guards import (CLAIMED_RECALL, CLOCK_TIME, COUNTDOWN, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
-                        PROMISED_RESEARCH, REPORT_ASKED, REPORT_WANTED, RESEARCH_ASKED, without_offers)
+                        PROMISED_RESEARCH, REPORT_ASKED, REPORT_WANTED, RESEARCH_ASKED, reported_on, without_offers)
 
 CASES = [
     (COUNTDOWN, ["Six minutes left.", "Four minutes until you're stirring that pasta.", "Two minutes to go.",
@@ -147,3 +147,14 @@ def test_every_net_has_a_name_of_its_own():
                                guards.FORGOTTEN, guards.PROMISED)
     assert all(guards.needs_tool(n) for n in asked_again_with_a_tool)
     assert not guards.needs_tool(guards.STRAY) and not guards.needs_tool(guards.ALONE)
+
+
+@pytest.mark.parametrize("line, on", [
+    ("Can you look into the best dog breeds for a small house and write me a report?", True),
+    ("Write a report on slugs.", True), ("I'd like a report on air fryers.", True),
+    ("Could you do a report on heat pumps?", True), ("Can you put together a short write-up on composting?", True),
+    ("Could you write me a report?", False), ("Hey Holly, could you write me a report please?", False),
+    ("Can you do a report?", False)])
+def test_a_report_asked_for_says_what_on_or_not(line, on):
+    """"Could you write me a report?", nothing more, had him queue "User's requested report"."""
+    assert reported_on(line) is on

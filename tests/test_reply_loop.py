@@ -242,28 +242,47 @@ def test_asking_isnt_promising(make_holly):
 def test_taking_him_up_on_research_he_offered_starts_it(make_holly):
     """"I can do a proper research job on it if you want." / "Yes, please.": no question
     mark, so not taken for an answer; he said he'd started, and called nothing, 5 times in 6.
-    The model judges it now (research.accepted), and a tool must be called."""
+    The model judges it now (offers.taken_up), and a tool must be called."""
+    from app import offers
+
     def side(system, user):
-        return "YES" if system == research.ACCEPTED_PROMPT and user.endswith("They reply: Yes, please.") else ""
+        return "YES" if system == offers.TAKEN_UP_PROMPT and user.endswith("They reply: Yes, please.") else ""
 
     lm = FakeLm(["I can do a proper research job on it if you want.", [START], "It's in hand."], side=side)
     holly = make_holly(lm)
     respond(holly, "Tell me more about chickens.", "Yes, please.")
     assert lm.requests[1]["tool_choice"] == "required"
     assert [j["title"] for j in holly.research.jobs] == ["Keeping chickens"]  # not held: it's their choice
-    assert [r["user"] for r in lm.side_requests if r["system"] == research.ACCEPTED_PROMPT] == [
+    assert [r["user"] for r in lm.side_requests if r["system"] == offers.TAKEN_UP_PROMPT] == [
         "Holly said: I can do a proper research job on it if you want.\nThey reply: Yes, please."]
 
 
+def test_taking_him_up_on_anything_he_offered_has_him_do_it(make_holly):
+    """"Want me to search for it now or later?" / "You can get it now if you like": "I'll get
+    on with it then. Give me a minute.", and nothing called (26 November). Any offer taken up,
+    not only research: a tool must be called."""
+    from app import offers
+
+    lm = FakeLm(["Want me to set a timer for the pasta?",
+                 [("timer", {"action": "set", "duration": "10 minutes", "label": "pasta"})], "Set. Ten minutes."],
+                side=lambda system, user: "YES" if system == offers.TAKEN_UP_PROMPT else "")
+    holly = make_holly(lm)
+    respond(holly, "The pasta's on.", "Go on then, ten minutes.")
+    assert lm.requests[1]["tool_choice"] == "required"
+    assert [t["label"] for t in holly.timers.items] == ["pasta"]
+
+
 def test_turning_research_down_isnt_taking_it_up(make_holly):
+    from app import offers
+
     lm = FakeLm(["I can do a proper research job on it if you want.", "Suit yourself.", "Fifty-six.", "Right."],
-                side=lambda system, user: "NO" if system == research.ACCEPTED_PROMPT else "")
+                side=lambda system, user: "NO" if system == offers.TAKEN_UP_PROMPT else "")
     holly = make_holly(lm)
     respond(holly, "Tell me more about chickens.", "No, you're all right.", "What's seven times eight?",
             "Yes, please.")
     assert lm.requests[1]["tool_choice"] is None and not holly.research.jobs
-    # Nothing of research in his last reply ("Fifty-six."): nothing to judge.
-    assert len([r for r in lm.side_requests if r["system"] == research.ACCEPTED_PROMPT]) == 1
+    # Nothing offered or asked in his last reply ("Suit yourself.", "Fifty-six."): nothing to judge.
+    assert len([r for r in lm.side_requests if r["system"] == offers.TAKEN_UP_PROMPT]) == 1
 
 
 def test_worn_phrases_are_noted_for_one_request(make_holly):
@@ -564,3 +583,12 @@ def test_raw_the_nets_count_and_do_nothing(make_holly):
     assert holly.convo.history[1]["content"] == "Fifty-six. Anything else you need me to work out?"
     assert "Anything else" in lm.requests[1]["messages"][2]["content"]  # nor cut from what he sees
     assert holly.nets == {guards.OFFERED: 1, guards.CLAIMED: 1, guards.ALONE: 1}
+
+
+def test_a_report_with_nothing_to_report_on_is_his_to_ask_about(make_holly):
+    """"Could you write me a report?" made him call a tool, and he queued "User's requested
+    report" (26 November). Nothing to report on: he asks what on."""
+    lm = FakeLm(["On what?"])
+    holly = make_holly(lm)
+    respond(holly, "Could you write me a report?")
+    assert lm.requests[0]["tool_choice"] is None and not holly.research.jobs

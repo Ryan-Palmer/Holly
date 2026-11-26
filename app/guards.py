@@ -75,6 +75,22 @@ REPORT_ASKED = re.compile(
     rf"|\b(?:want|like|need)\s+{_A_REPORT}\s+(?:on|about|into)\b"  # "I'd like a report on"
     r"|\bwrite (?:it|that|this|them) (?:all )?up\b",
     re.IGNORECASE)
+# ...but only with something to report on: "Could you write me a report?", nothing more,
+# was made to call a tool, and he queued research titled "User's requested report" (26
+# November). What's left once the asking's taken out (reported_on) must name something.
+_REPORT_PHRASE = re.compile(rf"\b{_WRITE}\s+(?:(?:me|us)\s+)?(?:up\s+)?{_A_REPORT}|{_A_REPORT}"
+                            r"|\bwrite (?:it|that|this|them) (?:all )?up\b", re.IGNORECASE)
+_ASKING = {"hey", "holly", "can", "could", "would", "will", "you", "please", "i'd", "like", "want", "need",
+           "the", "and", "then", "just", "now", "for", "some", "okay", "right", "yeah", "yes", "well", "mate"}
+
+
+def reported_on(user: str) -> bool:
+    """Does `user`, asking for a report (REPORT_ASKED), say what it's to be on? Then there's
+    research to start; else he asks what on, as anyone would."""
+    rest = _REPORT_PHRASE.sub(" ", user)
+    return any(len(w) > 2 and w not in _ASKING for w in re.findall(r"[a-z']+", rest.lower()))
+
+
 # Timers and reminders come due, in timers.announcement's note: each label, however it's
 # punctuated ("Jo's playlist").
 DUE_LABEL = re.compile(r"\bThe (?:timer|reminder) '(.*?)': it(?:'s due now| came due)")
@@ -87,11 +103,14 @@ ACTION_WORDS = re.compile(r"\b(?:play|put on|music|songs?|album|playlist|weather
 # Words that may be a status report asked for: then asked about (status.wants_report), since
 # "my boss wants a status update" isn't one. If it is, the news tool, every time.
 STATUS_ASKED = re.compile(r"\bstatus (?:report|update)s?\b", re.IGNORECASE)
-# His last reply may have offered research, in his own words ("shall I dig into it while I
-# doze?", "I can do a proper research job on it if you want"): then whether the crew took
-# him up on it is asked of the model (research.accepted, from app/speak.py).
+# His last reply may have offered or asked about doing something, in his own words ("Want me
+# to search for it now or later?", "I can do a proper research job on it if you want"): then
+# whether the crew took him up on it is asked of the model (offers.taken_up, from
+# app/speak.py). Only whether to ask: a question, an offer, or research spoken of.
 OFFERED_REPORT = re.compile(r"\b(?:report|write (?:it|that|them) up|write-up|proper|properly|research|digging|"
                             r"dig into|while I(?:'m)? doz|while I sleep)", re.IGNORECASE)
+ASKED_OR_OFFERED = re.compile(OFFERED_REPORT.pattern + r"|\?|\b(?:I can|I could|if you (?:want|like|fancy|'d like)|shall I|"
+                     r"want me to|I'll find|let me know)\b", re.IGNORECASE)
 # Saying he can't tell the time, when he has the clock tool: told in his rules that the time
 # came only from the clock, he said "I've no clock of my own" (asked what day tomorrow was,
 # which he knew), and read the clock only when told to look at it.

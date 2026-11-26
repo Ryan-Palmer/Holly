@@ -1,7 +1,7 @@
 """The side checks on the real model: is a line asking for a status report
 (status.wants_report), is a timer come due a job for one of his tools (timers.to_do), and are
-the crew taking him up on research he offered (research.accepted)?
-Each labelled case in scenarios.STATUS_LINES, ACTION_LABELS and ACCEPTED_LINES, asked twice.
+the crew taking him up on something he offered (offers.taken_up)?
+Each labelled case in scenarios.STATUS_LINES, ACTION_LABELS and TAKEN_UP_LINES, asked twice.
 Skipped unless run with `pytest -m lmstudio`, with LM Studio up and no Holly running."""
 
 import pytest
@@ -38,12 +38,13 @@ def test_timer_job(lm, label, wanted):
     assert [to_do(lm, lm.cfg.model, [label], quiet=False) for _ in range(2)] == [wanted, wanted]
 
 
-@pytest.mark.parametrize("pair, wanted", scenarios.ACCEPTED_LINES,
-                         ids=[f"{'YES' if w else 'NO'}: {p[1][:30]} / {p[0][:30]}" for p, w in scenarios.ACCEPTED_LINES])
-def test_research_taken_up(lm, pair, wanted):
-    """"Yes, please." to "I can do a proper research job on it if you want." had him say he'd
-    started a report and call nothing: a question mark and a word, alone, missed the offer."""
-    from app.research import accepted
+@pytest.mark.parametrize("pair, wanted", scenarios.TAKEN_UP_LINES,
+                         ids=[f"{'YES' if w else 'NO'}: {p[1][:30]} / {p[0][:30]}" for p, w in scenarios.TAKEN_UP_LINES])
+def test_an_offer_taken_up(lm, pair, wanted):
+    """"Yes, please." to "I can do a proper research job on it if you want.", and "You can get
+    it now if you like" to "Want me to search for it now or later?": he promised, and called
+    nothing. A question mark and a word, alone, missed the first."""
+    from app.offers import taken_up
 
     said, reply = pair
-    assert [accepted(lm, lm.cfg.model, said, reply, quiet=False) for _ in range(2)] == [wanted, wanted]
+    assert [taken_up(lm, lm.cfg.model, said, reply, quiet=False) for _ in range(2)] == [wanted, wanted]
