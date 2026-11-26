@@ -283,6 +283,24 @@ def test_turning_research_down_isnt_taking_it_up(make_holly):
     assert lm.requests[1]["tool_choice"] is None and not holly.research.jobs
     # Nothing offered or asked in his last reply ("Suit yourself.", "Fifty-six."): nothing to judge.
     assert len([r for r in lm.side_requests if r["system"] == offers.TAKEN_UP_PROMPT]) == 1
+    # Passed over: that request says to leave it (persona.PASSED_OVER), with the offer still
+    # in his history; and the next, after nothing offered, doesn't.
+    from app.persona import PASSED_OVER
+
+    assert lm.requests[1]["messages"][-1]["content"].endswith(PASSED_OVER)
+    assert "I can do a proper research job on it if you want." in [m["content"] for m in lm.requests[1]["messages"]]
+    assert all(PASSED_OVER not in r["messages"][-1]["content"] for r in lm.requests[2:])
+
+
+def test_an_offer_taken_up_isnt_noted_as_passed_over(make_holly):
+    from app import offers
+    from app.persona import PASSED_OVER
+
+    lm = FakeLm(["Want me to set a timer for the pasta?",
+                 [("timer", {"action": "set", "duration": "10 minutes", "label": "pasta"})], "Set. Ten minutes."],
+                side=lambda system, user: "YES" if system == offers.TAKEN_UP_PROMPT else "")
+    respond(make_holly(lm), "The pasta's on.", "Go on then, ten minutes.")
+    assert all(PASSED_OVER not in r["messages"][-1]["content"] for r in lm.requests)
 
 
 def test_worn_phrases_are_noted_for_one_request(make_holly):

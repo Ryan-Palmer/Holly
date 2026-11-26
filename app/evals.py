@@ -60,7 +60,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from . import conversations, guards, scenarios
+from . import conversations, guards, honesty, long_talk, report_check, scenarios, sourced
 from .config import ROOT, load_config
 from .lmstudio import LmStudio
 from .speech_text import count_sentences, speech_problems
@@ -152,6 +152,7 @@ async def ask_persona(holly, runs: int = 1, session: bool = False) -> list[dict]
             rows.append(dict(prompt=prompt, tags=sorted(tags), reply=reply, tools=tools, words=len(reply.split()),
                              sentences=count_sentences(reply), asked="?" in reply, seconds=round(seconds, 2),
                              problems=problems_with(prompt, tags, reply, tools, examples), score=0, why="",
+                             told=[m.get("content") or "" for m in history[before:] if m["role"] == "tool"],
                              nets=dict(holly.nets - nets)))
             print(f"  {'ok ' if not rows[-1]['problems'] else 'BAD'} {prompt[:40]:40} {reply[:90]}", flush=True)
     return rows
@@ -245,7 +246,8 @@ def alone(model: str, context_length: int | None = None) -> LmStudio:
 
 
 def judge_all(judges: dict[str, str], persona_rows: list[dict], reports: list[str],
-              conversation_rows: list[dict]) -> list[dict]:
+              conversation_rows: list[dict], honesty_rows: list[dict] | None = None,
+              report_rows: list[dict] | None = None) -> list[dict]:
     """Everything judged, by each judge in turn, each loaded once, alone on the GPU: the
     persona replies and the status report lines scored (the mean counts, and each judge's
     own is kept), the conversations read whole (thinking as hard as `judges` says). The
@@ -267,6 +269,8 @@ def judge_all(judges: dict[str, str], persona_rows: list[dict], reports: list[st
             for o, r in zip(status_rows, rows):
                 o["by"][model] = [r["score"], r["why"]]
         conversations.judge_rows(lm, model, conversation_rows, thinking)
+        honesty.judge(lm, model, honesty_rows or [])
+        report_check.judge(lm, model, report_rows or [], thinking)
     merged(persona_rows)
     merged(status_rows)
     return status_rows
@@ -285,7 +289,7 @@ async def run_scenarios(model: str | None, runs: int, raw: bool = False) -> list
             scenarios.seed(holly)
             turns, wrong = await scenarios.run(holly, sc)
             out.append(dict(name=sc.name, run=n + 1, wrong=wrong, nets=dict(holly.nets),
-                            turns=[dict(said=t.said, reply=t.reply, tools=t.tools) for t in turns]))
+                            turns=[dict(said=t.said, reply=t.reply, tools=t.tools, told=t.told) for t in turns]))
             print(f"  {'ok ' if not wrong else 'BAD'} {sc.name}: {'; '.join(wrong) or turns[-1].reply[:80]}",
                   flush=True)
     return out
@@ -302,6 +306,21 @@ async def run_conversations(model: str | None, runs: int, raw: bool = False) -> 
             print(f"  {'ok ' if not wrong else 'BAD'} {convo.name} (run {n + 1}): {'; '.join(wrong) or 'tools right'}",
                   flush=True)
     return out
+
+
+def number_check(persona_rows: list[dict], scenario_rows: list[dict], conversation_rows: list[dict],
+                 honesty_rows: list[dict] = (), long_rows: list[dict] = ()) -> dict:
+    """Every reply after a tool, across the parts: any number in it his tools didn't give him
+    (app/sourced.py)."""
+    rows = [dict(part="persona", said=r["prompt"], reply=r["reply"], told=r.get("told") or []) for r in persona_rows]
+    rows += [dict(part=f"scenario: {r['name']}", said=t["said"], reply=t["reply"], told=t.get("told") or [])
+             for r in scenario_rows for t in r["turns"]]
+    rows += [dict(part=f"conversation: {r['name']}", said=t["said"], reply=t["reply"], told=t.get("told") or [])
+             for r in conversation_rows for t in r["turns"]]
+    rows += [dict(part="made-up memories", said=r["said"], reply=r["reply"], told=r["told"]) for r in honesty_rows]
+    rows += [dict(part="the long talk", said=t["said"], reply=t["reply"], told=t.get("told") or [])
+             for r in long_rows for t in r["turns"]]
+    return sourced.check(rows)
 
 
 def net_counts(persona_rows: list[dict], scenario_rows: list[dict], conversation_rows: list[dict]) -> dict:
@@ -390,16 +409,39 @@ def summary(card: dict) -> list[str]:
         never = sum(not v for v in n["total"].values())
         lines.append(f"Reply nets {'that would have fired (raw: none acted)' if card.get('raw') else 'fired'}, "
                      f"over {n['replies']} replies: {fired}. {never} of {len(n['total'])} never")
+    if h := card.get("honesty"):
+        lines.append(f"Made-up memories: invented in {h['invented']} of {h['unknown']} answers to what he was never "
+                     f"told (both judges; one alone: {h['flagged']}); what he was told, recalled: {h['recalled']} of "
+                     f"{h['known']}")
+    if lt := card.get("long_talk"):
+        lines.append(f"A long talk folded into his notes, facts kept and in character: {lt['passed']} of {lt['runs']}")
+    if t := card.get("turns"):
+        lines.append(f"Turn-taking on {t['pauses']} saved pauses: cut in on {t['cut_in']} of {t['went_on']} you went on "
+                     f"after (400 ms: {t['cut_in_before']}); of {t['finished']} where you'd finished, {t['sooner']} "
+                     f"answered sooner and {t['slower']} slower than 400 ms (mean wait {t['mean_wait_ms']} ms); "
+                     f"{t['moved']} scored more than 0.1 off what they did when saved")
+    if vo := card.get("voice"):
+        lines.append(f"His voice, said and heard back: mean word error {vo['mean_wer']} over {vo['replies']} replies; "
+                     f"{len(vo['flagged'])} came back badly")
+    if rp := card.get("reports"):
+        m = rp["means"]
+        lines.append(f"Research reports (judges, 1-5): keeps to his notes {m['GROUNDED']}, answers what was asked "
+                     f"{m['ANSWERS']}, reads well {m['CLEAR']}; {rp['written']} of {rp['reports']} written, "
+                     f"{rp['unsupported']} claims his notes don't have, {rp['minutes']} min")
+    if (u := card.get("numbers")) and u["checked"]:
+        lines.append(f"Numbers not from his tools: {len(u['flagged'])} of {u['checked']} replies after a tool")
     lines.append("Used more than once, in all his replies: "
                  + ("; ".join(f"{k} x{v}" for k, v in card["repeated"]) or "nothing"))
     return lines
 
 
-def write(card: dict) -> Path:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    RUNS.mkdir(exist_ok=True)
-    name = re.sub(r"[^a-z0-9]+", "-", f"{card['label'] or card['model']}".lower()).strip("-")
-    path = RUNS / f"evals-{name}-{stamp}"
+def write(card: dict, path: Path | None = None) -> Path:
+    """The scorecard, as JSON and Markdown: at `path` (no suffix), or a new one in runs/."""
+    if path is None:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        RUNS.mkdir(exist_ok=True)
+        name = re.sub(r"[^a-z0-9]+", "-", f"{card['label'] or card['model']}".lower()).strip("-")
+        path = RUNS / f"evals-{name}-{stamp}"
     path.with_suffix(".json").write_text(json.dumps(card, indent=1, ensure_ascii=False), encoding="utf-8")
     md = [f"# Evals: {card['label'] or card['model']}", "", *[f"- {s}" for s in summary(card)], ""]
     if (n := card.get("nets")) and n["replies"]:
@@ -410,6 +452,39 @@ def write(card: dict) -> Path:
                "| Net | Fired | " + " | ".join(parts) + " |", "|---|---|" + "---|" * len(parts)]
         md += [f"| {k} | {v} | " + " | ".join(str(n["by"][p].get(k, 0)) for p in parts) + " |"
                for k, v in n["total"].items()] + [""]
+    if card.get("honesty"):
+        bad = [r for r in card["honesty_rows"] if honesty.wrong(r) or honesty.flagged(r)]
+        md += ["## Made-up memories", "", "Asked what he was never told (and some he was), against the made-up "
+               "memories (app/honesty.py). Both judges saying INVENTED fails it; one alone flags it.", ""]
+        md += [f"- **{honesty.wrong(r) or 'flagged by one judge'}** _{r['said']}_ -> {r['reply']}  "
+               + "".join(f"  \n  {m.split('/')[-1]}: {v['text']}" for m, v in (r.get("verdicts") or {}).items())
+               for r in bad] or ["- Nothing made up, everything recalled."]
+        md += [""]
+    if card.get("long_talk"):
+        md += ["## A long talk, folded into his notes", "", "36 exchanges, four facts said early, the first 30 "
+               "folded into his notes, then each asked about (app/long_talk.py).", ""]
+        for r in card["long_talk_runs"]:
+            md += [f"**Run {r['run']}: {'; '.join(r['wrong']) or 'passed'}**  ", f"_His notes:_ {r['notes']}  "]
+            md += [f"> {t['said']}  \n{t['reply']}  " for t in r["turns"]] + [""]
+    if (vo := card.get("voice")) and vo["flagged"]:
+        md += ["## His voice: came back badly", "", "Said in his voice, heard by Whisper, word for word against what "
+               "he wrote (app/voice_check.py).", ""]
+        md += [f"- _{r['wer']:.2f}_ {r['said']}  \n  heard: {r['heard']}" for r in vo["flagged"]] + [""]
+    if card.get("reports"):
+        md += ["## Research reports", "", "Researched as he does asleep, then judged against his notes "
+               "(app/report_check.py).", ""]
+        for r in card["report_rows"]:
+            md += [f"### {r['title']}: {r['stage']}, {len(r['report'].split())} words, {r['sources']} sources, "
+                   f"{r['minutes']} min" + (f" ({r['error']})" if r["error"] else ""), "", f"_Asked:_ {r['request']}", ""]
+            for m, v in r["verdicts"].items():
+                md += [f"- **{m.split('/')[-1]}**: " + ", ".join(f"{p} {n}" for p, n in v["scores"].items())
+                       + ("; not in his notes: " + " / ".join(f'"{q}"' for q in v["shown"]) if v["shown"] else "")]
+            md += ["", "<details><summary>The report</summary>", "", r["report"], "", "</details>", ""]
+    if (u := card.get("numbers")) and u["flagged"]:
+        md += ["## Numbers not from his tools", "", "In a reply after a tool, a number (10 or more) in nothing it "
+               "told him, nor in what the crew said (app/sourced.py).", ""]
+        md += [f"- {f['part']}: {', '.join(str(x) for x in f['numbers'])} | _{f['said']}_ -> {f['reply']}"
+               for f in u["flagged"]] + [""]
     if s := card["scenarios"]:
         md += ["## Scenarios", "", "| Scenario | Passed |", "|---|---|"]
         md += [f"| {k} | {p} of {n} |" for k, (p, n) in s["by_name"].items()] + [""]
@@ -466,24 +541,42 @@ def compare() -> str:
                    key=lambda c: c["when"])
     for c in cards:
         p, s, m = c.get("persona") or {}, c.get("scenarios") or {}, c.get("memory_check") or {}
-        v, n = c.get("conversations") or {}, c.get("nets") or {}
+        v, n, h = c.get("conversations") or {}, c.get("nets") or {}, c.get("honesty") or {}
         rows.append([c["when"][:16], c["label"] or "-", c["model"].split("/")[-1], c["commit"],
                      f"{p['judge']:.2f}" if p.get("judge") else "-", f"{p['passing']}/{p['replies']}" if p else "-",
                      f"{p['tools_ok']}/{p['tooled']}" if p else "-", f"{s['passed']}/{s['runs']}" if s else "-",
                      f"{v['passed']}/{v['runs']}" if v else "-",
                      f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-"),
                      (f"{sum(n['total'].values())}/{n['replies']}" + (" raw" if c.get("raw") else ""))
-                     if n.get("replies") else "-"])
+                     if n.get("replies") else "-",
+                     f"{h['invented']}/{h['unknown']}" if h else "-"])
     if not rows:
         return "No scorecards yet in runs/."
     head = ["when", "label", "model", "code", "judge", "persona", "tools", "scenarios", "convos", "memory", "s/reply",
-            "nets"]
+            "nets", "made-up"]
     widths = [max(len(r[i]) for r in rows + [head]) for i in range(len(head))]
     return "\n".join("  ".join(c.ljust(w) for c, w in zip(r, widths)) for r in [head] + rows)
 
 
+def turn_regression(cfg) -> dict:
+    """The turn-ending model on your saved pauses (app/turn.py's regression), if there are
+    any: data/turn_clips, from `python -m app.turn --save data/turn_clips`."""
+    from . import turn
+
+    folder = ROOT / "data" / turn.CLIPS
+    if not cfg.listen.turn_model or not (folder / "clips.jsonl").exists():
+        print(f"  (no saved pauses in {folder}, or no turn model: nothing to score)", flush=True)
+        return {}
+    return turn.regression(folder, cfg.listen)
+
+
 async def run(args) -> dict:
     cfg = load_config()
+    if args.only == "turns":  # on demand: no LM Studio, no judges
+        print(f"Turn-taking on your saved pauses, with {cfg.listen.turn_model}:", flush=True)
+        return dict(model=cfg.listen.turn_model, judges=[], raw=False, label=args.label, commit=commit(),
+                    when=datetime.now().isoformat(timespec="seconds"), session=False, persona={}, scenarios={},
+                    turns=turn_regression(cfg), repeated=[], persona_rows=[], scenario_runs=[])
     model = cfg.llm.for_model(args.model).model
     judges = {} if args.no_judge else ({m: cfg.evals.judges.get(m, "none") for m in args.judge} if args.judge
                                        else dict(cfg.evals.judges))
@@ -503,6 +596,20 @@ async def run(args) -> dict:
     if args.only in (None, "conversations"):
         print(f"Conversations, {args.runs} run{'s' * (args.runs != 1)} each, on {model}:", flush=True)
         conversation_rows = await run_conversations(model, args.runs, args.raw)
+    honesty_rows = []
+    if args.only in (None, "honesty"):
+        print(f"Made-up memories, {len(honesty.CASES)} questions, {args.runs} run{'s' * (args.runs != 1)} each, "
+              f"on {model}:", flush=True)
+        honesty_rows = await honesty.ask_all(model, args.runs, args.raw)
+    long_rows = []
+    if args.only in (None, "long"):
+        print(f"A long talk, folded into his notes, {args.runs} run{'s' * (args.runs != 1)}, on {model}:", flush=True)
+        long_rows = await long_talk.run_all(model, args.runs, args.raw)
+    report_rows = []
+    if args.only in (None, "reports") and not args.raw:
+        print(f"Research reports, {len(report_check.QUESTIONS)}, written as he writes them asleep, on {model}:",
+              flush=True)
+        report_rows = await report_check.write_all(model)
     memory_rows, side_rows, reports, status_rows = [], [], [], []
     if args.only in (None, "memory"):
         print(f"Memory check, {len(scenarios.MEMORY_LINES)} lines, on {model}:", flush=True)
@@ -515,10 +622,11 @@ async def run(args) -> dict:
         reports = await scenarios.status_reports(lm, model, 5)
         for report in reports:
             print("  " + report.replace("\n", "\n  ") + "\n", flush=True)
-    judged = judges if persona_rows or reports or conversation_rows else {}
+    judged = judges if persona_rows or reports or conversation_rows or honesty_rows or report_rows else {}
     if judged:
         try:
-            status_rows = await asyncio.to_thread(judge_all, judged, persona_rows, reports, conversation_rows)
+            status_rows = await asyncio.to_thread(judge_all, judged, persona_rows, reports, conversation_rows,
+                                                  honesty_rows, report_rows)
         finally:
             # The judges unloaded: left loaded, the next Holly, or test, loaded his model
             # beside one, and both sat on the GPU.
@@ -534,7 +642,11 @@ async def run(args) -> dict:
                                  wrong=[r for r in side_rows if not r["right"]]) if side_rows else {},
                 status=status_scores(status_rows),
                 conversations=conversations.scores(conversation_rows),
+                honesty=honesty.scores(honesty_rows), honesty_rows=honesty_rows,
+                long_talk=long_talk.scores(long_rows), long_talk_runs=long_rows,
+                reports=report_check.scores(report_rows), report_rows=report_rows,
                 nets=net_counts(persona_rows, scenario_rows, conversation_rows),
+                numbers=number_check(persona_rows, scenario_rows, conversation_rows, honesty_rows, long_rows),
                 # Across the parts: "right you are" opened eight scenario replies, unnoticed. Each
                 # scenario's first run only: its later runs say the same things, rightly.
                 repeated=openings(persona_rows + [dict(reply=t["reply"]) for r in scenario_rows + conversation_rows
@@ -549,7 +661,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="a judge's model, in place of [evals.judges] in holly.toml (again for more)")
     parser.add_argument("--runs", type=int, default=None, help="runs of each scenario (default: holly.toml's)")
     parser.add_argument("--persona-runs", type=int, default=1, help="replies per persona prompt (default 1)")
-    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "memory", "status"],
+    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "honesty", "long", "reports", "memory", "status", "turns",
+                                                 "voice"],
                         help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")
     parser.add_argument("--no-judge", action="store_true", help="skip the judge's scores")
@@ -576,10 +689,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Holly is running ({running[0][:80]}): close him first.")
         return 1
     args.runs = args.runs or load_config().evals.scenario_runs
+    if args.only == "voice":  # the latest full scorecard's replies, said and heard
+        cards = sorted(RUNS.glob("evals-*.json"), key=lambda f: f.stat().st_mtime)
+        latest = next((f for f in reversed(cards) if json.loads(f.read_text(encoding="utf-8")).get("persona_rows")), None)
+        if not latest:
+            print("No scorecard with persona replies in runs/ to take replies from.")
+            return 1
+        voice(latest)
+        return 0
     card = asyncio.run(run(args))
     path = write(card)
     print("\n".join(summary(card)) + f"\n-> {path.with_suffix('.md').relative_to(ROOT)}")
+    if args.only is None and not args.raw:
+        voice(path.with_suffix(".json"))
     return 0
+
+
+def voice(card: Path) -> None:
+    """His replies in that scorecard said in his voice and heard back (app/voice_check.py),
+    in a process of its own: the voice's warm-up is where this PC crashes, and the run's
+    scorecard is kept whatever happens there."""
+    print("\nHis voice, saying his replies:", flush=True)
+    for attempt in range(1, 4):  # a crash at the voice's start-up is this PC's: tried again
+        done = subprocess.run([sys.executable, "-m", "app.voice_check", str(card)], cwd=ROOT)
+        if not done.returncode:
+            return
+        print(f"  (the voice check failed, exit code {done.returncode}, try {attempt} of 3)", flush=True)
+    print("  (the scorecard stands without it)", flush=True)
 
 
 if __name__ == "__main__":

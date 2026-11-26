@@ -40,3 +40,31 @@ def test_what_holly_does_at_a_pause(cfg):
     assert cuts_in({"p": 0.01, "pause_ms": 900}, listen) is False  # not sure you'd finished: he waited
     assert cuts_in({"p": 0.29, "pause_ms": 900}, listen) is False
     assert cuts_in({"p": 0.9, "pause_ms": 300}, listen) is True
+
+
+def test_saved_pauses_are_scored_again(cfg, tmp_path):
+    """`--only turns`: the probe's labelled pauses, by the model as it is now."""
+    import json
+    import wave
+
+    from app.turn import regression
+
+    lines = [dict(file="0001.wav", p=0.01, heard="I was thinking", went_on=True, pause_ms=900),
+             dict(file="0002.wav", p=0.9, heard="I was thinking we could go", went_on=False, pause_ms=None)]
+    for line in lines:
+        with wave.open(str(tmp_path / line["file"]), "wb") as w:
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+            w.writeframes(np.zeros(16000, np.int16).tobytes())
+    (tmp_path / "clips.jsonl").write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+
+    class Model:
+        def __init__(self, *answers):
+            self.answers = list(answers)
+
+        def finished(self, audio):
+            return self.answers.pop(0)
+
+    r = regression(tmp_path, cfg.listen, Model(0.02, 0.95))
+    assert (r["cut_in"], r["cut_in_before"], r["sooner"], r["slower"], r["moved"]) == (0, 1, 1, 0, 0)
+    r = regression(tmp_path, cfg.listen, Model(0.8, 0.2))  # a worse model: cuts in, answers late
+    assert (r["cut_in"], r["sooner"], r["slower"], r["moved"]) == (1, 0, 1, 2)

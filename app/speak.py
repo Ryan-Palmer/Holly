@@ -347,19 +347,17 @@ class Holly:
             chunker = SentenceChunker()
             timing = ReplyTiming()
             print(f"{stamp()}{CYAN}Holly:{RESET} ", end="", flush=True)
-            messages = self.convo.messages_for(user)
-            asked = len(messages)
-            lookups = 0  # slow tools called this reply
             # Their answer to his search-or-report question (the research tool held a start and
             # had him ask), or their taking him up on something he offered (app/offers.py):
             # either way, what they chose is theirs, and research isn't held for asking which.
+            # Or carried on past it: then his request says to leave it (persona.PASSED_OVER).
             held = bool(self.research_tool and self.research_tool.held_turn == self.turns - 1)
             took_up = await asyncio.to_thread(self._taken_up, user)
-            if took_up and offers.NOTE:
-                # Which tool is his to choose: told what they took up, in this request only.
-                messages = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + "\n" + offers.NOTE}]
+            messages = self.convo.messages_for(user, taken_up=took_up)
+            asked = len(messages)
+            lookups = 0  # slow tools called this reply
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
-                        held or took_up, self.convo.crew_lines)
+                        held or bool(took_up), self.convo.crew_lines)
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
@@ -631,16 +629,18 @@ class Holly:
                 break
         return " / ".join(reversed(said))
 
-    def _taken_up(self, user: str) -> bool:
+    def _taken_up(self, user: str) -> bool | None:
         """Are the crew taking him up on something he offered or asked about doing in his last
         reply ("Want me to search for it now or later?" / "You can get it now if you like")?
-        As the model judges (app/offers.py); asked only if that reply offered or asked
-        something (guards.ASKED_OR_OFFERED)."""
+        As the model judges (app/offers.py): True, or False, passed over. None, nothing to
+        judge: that reply offered and asked nothing (guards.ASKED_OR_OFFERED)."""
         if not self.tools or user.startswith("["):
-            return False
+            return None
         said = next((m.get("content") or "" for m in reversed(self.convo.history)
                      if m["role"] == "assistant" and m.get("content")), "")
-        return bool(guards.ASKED_OR_OFFERED.search(said)) and offers.taken_up(self.lm, self.model, said, user)
+        if not guards.ASKED_OR_OFFERED.search(said):
+            return None
+        return offers.taken_up(self.lm, self.model, said, user)
 
     # Speaking up by himself -----------------------------------------------------
 

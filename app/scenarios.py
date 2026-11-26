@@ -180,6 +180,7 @@ class Turn:
     reply: str  # what he said back
     tools: list[tuple[str, dict]]  # the tools he called, with their arguments
     queued: int = 0  # research jobs queued, after it
+    told: list[str] = dataclasses.field(default_factory=list)  # what his tools told him (app/sourced.py)
 
 
 @dataclasses.dataclass
@@ -207,6 +208,16 @@ def mentions(turn: Turn, *words: str) -> bool:
 def says(turn: Turn, *words: str) -> bool:
     """Any of `words` as a whole word: "2" isn't in "12"."""
     return any(re.search(rf"\b{re.escape(w)}\b", turn.reply, re.IGNORECASE) for w in words)
+
+
+def passes_on(turn: Turn) -> bool:
+    """Does his reply pass on a name his tools found ("BBC Food", "Felicity Cloake")? A name is
+    a capital inside a sentence of what they told him, not one in the crew's own words: a
+    search answering their words ("the results don't contain 'You can get it now'") has none."""
+    theirs = set(re.findall(r"[A-Za-z]+", turn.said)) | {"I", "Holly"}
+    names = {w for told in turn.told for sentence in re.split(r"(?<=[.!?:])\s+", told)
+             for w in re.findall(r"[A-Za-z]+", sentence)[1:] if w[0].isupper() and len(w) > 2 and w not in theirs}
+    return any(re.search(rf"\b{re.escape(w)}\b", turn.reply) for w in names)
 
 
 def ahead(days: int) -> str:
@@ -524,12 +535,13 @@ SCENARIOS = [
     # A search he offered, taken up: "You can get it now if you like" had him say "I'll get on
     # with it then. Give me a minute." and search nothing (26 November). Then, searching, the
     # search's answer was to "You can get it now if you like" as the question: "the results
-    # don't contain that phrase", and no recipe (search.asked).
+    # don't contain that phrase", and no recipe (search.asked). A recipe is what goes in one, or
+    # the recipes the search found by name ("one from BBC Food... a Felicity Cloake one").
     Scenario("search taken up", ["You can get it now if you like."],
              lambda t, h: problems((called(t[0], "search"), f"didn't search: {t[0].tools}"),
                                    (not h.research.jobs, "started research instead"),
                                    (says(t[0], "fish", "cod", "haddock", "salmon", "prawns", "potato", "potatoes",
-                                         "mash", "leeks", "parsley"), "no recipe in it")),
+                                         "mash", "leeks", "parsley") or passes_on(t[0]), "no recipe in it")),
              setup=lambda h: talk(h, [("So I was thinking, could you get me a recipe for fish pie?",
                                        "I can search for one if you're actually planning on cooking it."),
                                       ("I mean, I like to daydream about food. Is there anything wrong with that?",
@@ -713,7 +725,8 @@ async def run(holly, scenario: Scenario) -> tuple[list[Turn], list[str]]:
                     args = {}
                 tools.append((c["function"]["name"], args))
         turns.append(Turn(said, (new[-1].get("content") or "") if new else "", tools,
-                          len(holly.research.jobs) if holly.research else 0))
+                          len(holly.research.jobs) if holly.research else 0,
+                          [m.get("content") or "" for m in new if m["role"] == "tool"]))
     if any(not t.reply for t in turns):
         return turns, ["a reply failed"]
     return turns, scenario.check(turns, holly)
@@ -887,6 +900,12 @@ TAKEN_UP_LINES: list[tuple[tuple[str, str], bool]] = [
     (("That's a proper mess, that is.", "Yes, it is."), False),
     (("It's a bit of a cry for help, isn't it?", "Yes, I suppose it is."), False),
     (("Rain. One hundred per cent chance of it. Good luck with that.", "Thanks."), False),
+    # Taken for yes in a full run (26 November): their own news, and a new request of theirs.
+    (("January. That's a long way off. Do you want a recipe for that lasagne now, or are you just telling me "
+      "your life story?", "I start in January. I'm so excited."), False),
+    (("About time. Do you want a recipe for that lasagne now, then?", "I start in January. I'm so excited."), False),
+    (("Science — A comet is coming this weekend and bees can apparently count. Not much to do, is there?",
+      "Can you tell me more about the comet story?"), False),
 ]
 
 

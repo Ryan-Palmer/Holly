@@ -2,7 +2,7 @@
 
 import json
 
-from app.persona import IN_CHARACTER, SPEAKING_UP, Conversation
+from app.persona import IN_CHARACTER, PASSED_OVER, SPEAKING_UP, Conversation
 
 
 def convo(cfg, memory_file=None) -> Conversation:
@@ -27,6 +27,19 @@ def test_in_character_note_in_the_request_only(cfg):
     assert c.messages_for("Again?")[-1]["content"].endswith(IN_CHARACTER)
     assert all(IN_CHARACTER not in (m.get("content") or "") for m in c.messages_for())  # none without a new line
     assert all("Stay yourself" not in (m.get("content") or "") for m in c.history)
+
+
+def test_an_offer_passed_over_is_noted_for_one_request_and_kept(cfg):
+    """A lasagne recipe, offered and passed over, came up in 6 replies in 8. The note says to
+    leave it; the offer stays in his history, to be taken up later."""
+    c = convo(cfg)
+    c.record("I'm making lasagne tonight.", "Lasagne. Want me to find a recipe?")
+    last = c.messages_for("Guess what, I got the job!", taken_up=False)[-1]["content"]
+    assert last == f"Guess what, I got the job!\n{IN_CHARACTER}\n{PASSED_OVER}"
+    assert c.messages_for("Go on then.", taken_up=True)[-1]["content"] == f"Go on then.\n{IN_CHARACTER}"
+    assert PASSED_OVER not in c.messages_for("Guess what, I got the job!")[-1]["content"]  # nothing to judge
+    assert "Lasagne. Want me to find a recipe?" in [m["content"] for m in c.messages_for("Hi.", taken_up=False)]
+    assert all(PASSED_OVER not in (m.get("content") or "") for m in c.history)
 
 
 def test_speaking_up_has_its_own_note(cfg):

@@ -132,7 +132,12 @@ IN_CHARACTER = ("[Stay yourself: brief and deadpan, a few words where a few will
 # let it weld itself to the oven).
 SPEAKING_UP = ("[Stay yourself while you do it: dry and deadpan, a dig or an aside if one fits, with what the "
                "note says kept exactly as given.]")
-
+# When the crew carry on past something he offered or asked (app/offers.py judges it): a
+# lasagne recipe, offered and passed over, came up again in 6 replies in 8, three runs in
+# three (the conversation evals, 26 November). One fixed line, whatever's been offered,
+# and his history kept whole: "that thing you offered earlier" is still there to take up.
+PASSED_OVER = ("[If you've offered to do something and they've carried on without taking you up on it, don't "
+               "offer it again unless they bring it back up.]")
 
 class Conversation:
     def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None,
@@ -219,12 +224,14 @@ class Conversation:
                  and not any(p in w or w in p for w in worn)]
         return worn[:at_most]
 
-    def messages_for(self, user_text: str | None = None) -> list[dict]:
+    def messages_for(self, user_text: str | None = None, taken_up: bool | None = None) -> list[dict]:
         """The full message list to send for a new user line. The time isn't
         here: he asks the clock tool for it (app/clock.py). Without
         `user_text`, just the preamble and history. After `user_text`, notes:
-        to stay in character (IN_CHARACTER), and if he's fallen into a rut
-        (worn_phrases), that he has. They're in this request only: not kept in
+        to stay in character (IN_CHARACTER), if he's fallen into a rut
+        (worn_phrases), that he has, and if they've passed over what he offered
+        (`taken_up` False, app/offers.py), to leave it (PASSED_OVER). They're
+        in this request only: not kept in
         his history, and being last, they leave LM Studio's cache of the rest.
         His replies in the history are sent without their offers of more help
         (guards.OFFER), so he doesn't copy them, older ones included."""
@@ -255,6 +262,8 @@ class Conversation:
             if worn := self.worn_phrases(history=history):
                 user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
                               + ". Put it differently this time.]")
+            if taken_up is False:
+                note += f"\n{PASSED_OVER}"
             tail = [{"role": "user", "content": f"{user_text}\n{note}"}]
         return [*self.preamble, *history, *tail]
 

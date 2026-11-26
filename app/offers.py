@@ -11,27 +11,30 @@ if so. Which tool is his to choose, as the talk makes plain: a research start is
 for asking which (asked to tell research from the rest as well, the model called "Go on
 then" to a report offer something else, and he'd have asked all over again).
 
+Only a reply to what he offered counts: a new request of theirs, or their own news, is
+theirs to have answered as any other. A full eval run found "I start in January. I'm so
+excited." taken for yes to a lasagne recipe, and "Can you tell me more about the comet
+story?" for yes to "Not much to do, is there?": a tool forced for nothing, and a news
+story searched for, not read. A note telling him they'd taken it up, for picking the
+tool, made no difference: 2 wrong in 16 with it and without (a report started when told
+"you can get it now"), so it went. Carried on past, though, his request says to leave it
+(persona.PASSED_OVER): a lasagne recipe, passed over, was offered in 6 replies in 8.
+
 Asked only after a reply that offered or asked something (guards.ASKED_OR_OFFERED): ~0.25 s then.
 """
 
 from __future__ import annotations
 
-# Added to the crew's line in that request (app/speak.py), not kept in his history. Made to
-# call a tool, with nothing said of which, he picked the wrong one 2 times in 6: a news
-# story read for "Yes, please" to his offer of a proper research job, a report started for
-# "You can get it now if you like" to "search for it now or later?".
-NOTE = ("[They're taking you up on what you just offered or asked about: do exactly that, the way they chose, "
-        "now, with the tool for it.]")
-
 TAKEN_UP_PROMPT = """\
 Holly, the household computer, does things with his tools: he searches the web, reads or sums up his \
 reports, writes a report on something while he dozes, sets timers, gives the weather, plays music, and so \
 on. You're given what he last said, and the crew's reply to it.
-YES: they're taking him up on, or choosing, something he offered or asked about doing that needs one of his \
-tools ("yes, please", "go on then", "get it now", "a proper report", "later's fine", "yes, set it", "yes, \
-that one", "talk me through it").
-NO: anything else: no, not now, that's enough, another subject, a remark, or yes to something needing none \
-of his tools.
+YES: their reply says yes to, or chooses, something he offered or asked about doing, there in what he said, \
+that needs one of his tools ("yes, please", "go on then", "get it now", "a proper report", "later's fine", \
+"yes, set it", "yes, that one", "talk me through it").
+NO: anything else: no, not now, that's enough; their own news, a remark, or carrying on as if he hadn't \
+offered; a new question or request of their own, not what he offered; or yes to something needing none of \
+his tools.
 Reply with one word: YES or NO."""
 
 

@@ -190,8 +190,8 @@ To check a change to his character, or another model, score him:
 .venv\Scripts\python -m app.evals --compare            # every scorecard so far
 ```
 
-It puts him through five things, with a silent voice and his memory in a
-temporary folder:
+A full run takes a couple of hours, and puts him through these, with a
+silent voice and his memory in a temporary folder:
 
 - **Persona**: the prompts in `persona/test_prompts.txt`, each scored for
   length, anything a voice can't say, an assistant's manners, questions back,
@@ -215,6 +215,27 @@ temporary folder:
   nobody has found yet, like the Cat tacked on to every reply for an
   evening, which a judge scoring one reply calls in character. (On the code
   before that fix, both judges failed it, 3 runs in 3.)
+- **Made-up memories** (`app/honesty.py`): asked about things nobody ever
+  told him (lunch on Tuesday, Jo's husband's name, what the boiler engineer
+  found), against the made-up memories, he must say he doesn't know. Both
+  judges read each answer for anything he presents as remembered that isn't;
+  both saying so fails it. Some he was told are asked too, so "I don't know"
+  to everything doesn't pass.
+- **A long talk** (`app/long_talk.py`): an evening's talk with four facts
+  said early, the start folded into his notes as it is while he sleeps,
+  then each fact asked about: in his notes, in his answer, and in
+  character.
+- **Research reports** (`app/report_check.py`): two everyday questions
+  researched the real way (capped at 15 minutes each), then both judges
+  score each report for keeping to his notes, answering what was asked and
+  reading well, and quote claims his notes don't have.
+- **Numbers** (`app/sourced.py`), over every reply above that used a tool:
+  a number of 10 or more he said that nothing his tools told him had.
+- **His voice** (`app/voice_check.py`): after the scorecard's written, up
+  to 120 of his replies said in his own voice and heard back by Whisper,
+  word for word: what his voice garbles ("Lasagne" came back "Lazane")
+  shows. In a process of its own, as the voice's start-up is where this PC
+  crashes (it's tried three times).
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
   (`MEMORY_LINES` in `app/scenarios.py`), each asked twice; and the other
@@ -255,11 +276,18 @@ then into routing (a tool required when the ask is plain), and only last
 into nets on what he says.
 
 A scorecard goes to `runs/`: Markdown with every reply and transcript, and
-JSON for `--compare`. `--only persona`, `--only scenarios`, `--only
-conversations`, `--only memory` or `--only status` runs one part;
-`--session` asks the persona prompts as one conversation, which shows ruts.
-Run it with LM Studio up and no Holly running. A new model also wants its
-quirks in a `[models]` table in `holly.toml`.
+JSON for `--compare`. `--only` runs one part: `persona`, `scenarios`,
+`conversations`, `honesty`, `long`, `reports`, `memory`, `status`, or
+`voice` (the latest scorecard's replies, said and heard). `--session` asks
+the persona prompts as one conversation, which shows ruts. Run it with LM
+Studio up and no Holly running. A new model also wants its quirks in a
+`[models]` table in `holly.toml`.
+
+**Turn-taking**, only on demand: `--only turns` scores your own saved
+pauses (`python -m app.turn --save data/turn_clips`, labelled by whether
+you went on; your voice, so they stay out of git) with the turn-ending
+model and settings as they are, against the old 400 ms rule. Run it before
+changing the model or its settings.
 
 If you have Holly's lines from the show in `data/scripts/holly_exchanges.json`
 (not supplied), the judges are shown some of them for reference.

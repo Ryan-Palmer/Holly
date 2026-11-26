@@ -62,6 +62,38 @@ def cuts_in(pause: dict, listen) -> bool:
     return pause.get("pause_ms", 0) >= answers_after(pause["p"], listen)
 
 
+CLIPS = "turn_clips"  # under data/: pauses saved by the probe (--save), labelled; your voice, kept off git
+
+
+def regression(folder, listen, model: "TurnModel | None" = None) -> dict:
+    """Pauses saved and labelled by the probe (`folder`: clips.jsonl and a WAV each), scored
+    again by the model and settings as they are now (`python -m app.evals --only turns`):
+    before changing the model or its settings, how it does on your voice, against the 400 ms
+    rule. Each pause you went on after: cut in on, or not; each where you'd finished: how
+    long before he'd answer."""
+    import json
+    import wave
+    from pathlib import Path
+
+    folder = Path(folder)
+    model = model or TurnModel(listen.turn_model)
+    rows = []
+    for line in (folder / "clips.jsonl").read_text(encoding="utf-8").splitlines():
+        clip = json.loads(line)
+        with wave.open(str(folder / clip["file"])) as w:
+            audio = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
+        rows.append(dict(clip, was=clip["p"], p=round(model.finished(audio), 4)))
+    on = [r for r in rows if r["went_on"]]
+    done = [r for r in rows if not r["went_on"]]
+    waits = [answers_after(r["p"], listen) for r in done]
+    return dict(pauses=len(rows), went_on=len(on), cut_in=sum(cuts_in(r, listen) for r in on),
+                cut_in_before=sum((r.get("pause_ms") or 0) >= listen.end_silence_ms for r in on),
+                finished=len(done), sooner=sum(w < listen.end_silence_ms for w in waits),
+                slower=sum(w > listen.end_silence_ms for w in waits),
+                mean_wait_ms=round(sum(waits) / len(waits)) if waits else 0,
+                moved=sum(abs(r["p"] - r["was"]) > 0.1 for r in rows), rows=rows)
+
+
 def verdict(p: float, listen) -> str:
     """What Holly does with `p` at a pause (app/vad.py)."""
     if p >= listen.turn_threshold:
