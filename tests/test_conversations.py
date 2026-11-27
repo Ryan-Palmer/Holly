@@ -30,6 +30,16 @@ def test_a_judges_reply_is_read():
     assert cv.failed(v) == ["UNASKED", "REPEATS"]  # FACTS: its quote isn't his
 
 
+def test_kindness_is_a_point_of_its_own():
+    # Both judges passed "he probably died doing something incredibly undignified", said to
+    # someone missing their cat, as in character: kindness wasn't a point.
+    said = ["I'm sure he was. Though, knowing your luck, he probably died doing something incredibly undignified."]
+    v = cv.verdict('CHARACTER: PASS\nKIND: FAIL - "knowing your luck, he probably died doing something" - cruel',
+                   said)
+    assert "KIND" in cv.POINTS and "KIND: PASS" in cv.JUDGE_PROMPT
+    assert cv.failed(v) == ["KIND"]
+
+
 def test_a_point_fails_when_both_judges_fail_it_with_his_words():
     gemma = dict(judge="google/gemma", overall=4, **{k: v for k, v in cv.verdict("UNASKED: PASS", REPLIES).items()
                                                      if k != "overall"})
