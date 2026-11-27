@@ -699,10 +699,12 @@ Holly, a household computer, is about to answer what someone has just said to hi
 things they said to him on other days. Is one of them about the very same particular thing in their \
 own life (the same person, pet, plan, object, dish or event) as what they say now, so that remembering \
 it now would come naturally, and show he listens? Sharing a word, a place or a general subject isn't \
-enough: "I need a new kettle" and "the kettle's broken again" are the same thing; "I'm tired" and "I \
-was tired after the gym on Monday" aren't, and nor are "what's the weather in Leeds?" and "my brother \
-lives in Leeds". NONE, too, when what they say now asks him for something (the weather, the news, the \
-time, a search) or is about something just said ("tell me more about that one"): what's in front of him \
+enough, nor is the same kind of thing (another pet, another car, another trip): "I need a new kettle" \
+and "the kettle's broken again" are the same thing; "I'm tired" and "I was tired after the gym on \
+Monday" aren't, and nor are "what's the weather in Leeds?" and "my brother lives in Leeds", or "we \
+might get a dog" and their cat. NONE, too, when what they say now asks him for something (the weather, the news, the \
+time, a search) or is about something just said ("tell me more about that one", "I'll do it Sunday, \
+then", where what "it" is was said just before): what's in front of him \
 is the answer. Red Dwarf and its crew (Lister, Rimmer, the Cat, Kryten) are never their own life.
 Reply with its number, or NONE."""
 

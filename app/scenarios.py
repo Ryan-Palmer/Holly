@@ -934,6 +934,22 @@ MEMORY_OFFERS: list[tuple[str, list[str], int | None]] = [
                                                         "weekends."], None),
     ("June's taking the caravan up again this weekend.", ["June's got a caravan in the Lakes she goes to most "
                                                           "weekends.", "The kettle's broken."], 1),
+    # Replayed through every conversation's lines: a pet in common isn't the same pet (54% sure
+    # of the cat, and flipping between runs).
+    ("Can you look into the best dog breeds for a small house and write me a report?", [
+        "My sister Jo is coming to stay next month. She's a vet up in Keswick.",
+        "Biscuit got stuck on the shed roof again, and Jo had to get the ladder out to fetch him down.",
+        "I've started learning the ukulele."], None),
+    # ...and a line leaning on what was just said (the garden, after the forecast), 92% sure.
+    ("Typical. I'll do it Sunday, then.", ["The boiler's broken again. An engineer's coming on Thursday.",
+                                           "I've started learning the ukulele.",
+                                           "Jo came over and we made lasagne together tonight."], None),
+    # Held out:
+    ("We might get a kitten in the spring.", ["Biscuit got stuck on the shed roof again, and Jo had to get the "
+                                              "ladder out to fetch him down."], None),
+    ("Biscuit used to sit on that shed for hours.", ["The boiler's broken again.", "Biscuit got stuck on the shed "
+                                                     "roof again, and Jo had to get the ladder out to fetch him down."],
+     2),
 ]
 
 
