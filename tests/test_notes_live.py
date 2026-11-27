@@ -117,3 +117,49 @@ def test_asked_for_lines_already_in_his_notes_go(cfg, lm):
         cfg, [(at, "Sam's coming to stay on Saturday.", "Hide the biscuits.")]), 300))
     assert not re.search(r"\basked\b", notes, re.IGNORECASE), notes
     assert "Jo" in notes and "Keswick" in notes and "fish pie" in notes and "Sam" in notes, notes
+
+
+def full_notes(today: dt.date) -> str:
+    """Notes near his budget (~1,000 words of 1,125): months of facts, and weeks of dated news,
+    most of it past."""
+    facts = ["The crew's sister is Jo, a vet in Penrith.", "The crew has a ginger cat called Biscuit.",
+             "The crew works at the library three days a week.", "The crew can't stand mushrooms.",
+             "The crew's brother Sam lives in Manchester and hates the rain."]
+    hobbies = ["jigsaws", "the ukulele", "gardening", "crosswords", "baking bread", "birdwatching", "chess",
+               "walking in the fells", "old films", "model railways", "knitting", "pub quizzes"]
+    facts += [f"The crew enjoys {h}, and has done for years, mostly at weekends." for h in hobbies]
+    # Not "June": with an old friend called June, "Jo's expecting a baby in June!" was dropped, 2 in 2
+    # (a month that's a name in his notes; renamed, kept 2 in 2). Known, not what this tests.
+    friends = ["Jane", "Ed", "Priya", "Tom", "Alice", "Ben", "Carla", "Dev", "Ellen", "Frank", "Grace", "Hugh"]
+    facts += [f"{f} is an old friend of the crew's from school, and they meet up now and then." for f in friends]
+    lately = []
+    for k in range(36, 1, -1):
+        d = today - dt.timedelta(days=k)
+        lately.append(f"{d:%A} {d.day} {d:%B} {d.year}: the crew went to see {friends[k % 12]} "
+                      f"and talked about {hobbies[k % 12]} for most of the afternoon.")
+    return "About the crew:\n" + "\n".join(facts) + "\n\nLately:\n" + "\n".join(lately)
+
+
+def test_full_notes_take_in_the_new_and_keep_what_lasts(cfg, lm):
+    """His notes fill up over months. Past the budget, the fold's output is cut, and what's cut
+    is the end: "Lately", the newest news. Full, they should make room (old news first), not
+    lose what's new, nor what lasts."""
+    today = dt.date.today()
+    earlier = full_notes(today)
+    budget = cfg.persona.memory_tokens * 3 // 4
+    assert budget * 0.85 < len(earlier.split()) <= budget, len(earlier.split())
+    at = dt.datetime.combine(today, dt.time(19, 0))
+    text = transcript(cfg, [(at, "Big news: Jo's expecting a baby in June!", "A small vet. Congratulations."),
+                            (at + dt.timedelta(minutes=5), "Our new neighbour's called Gerald. He keeps bees.",
+                             "Bees. Lock the jam up."),
+                            (at + dt.timedelta(minutes=10), "My dentist appointment's on Tuesday at ten.",
+                             "Floss. Now.")])
+    notes = asyncio.run(write_notes(lm, lm.cfg.model, earlier, text, cfg.persona.memory_tokens))
+    low = notes.lower()
+    assert "baby" in low and "gerald" in low and "bee" in low and "dentist" in low, notes  # the new
+    assert all(w in low for w in ("vet", "biscuit", "library", "mushroom", "sam")), notes  # what lasts
+    assert all(f in notes for f in ("Jane", "Ed", "Priya", "Grace", "Hugh")), notes  # old friends last too
+    assert all(h in low for h in ("ukulele", "chess", "knit", "railway")), notes  # and what they enjoy
+    # Told only "at most N words", it made no room, and crept past the budget towards the cut that
+    # loses the newest news; told how full they are, it dropped the old news and condensed.
+    assert len(notes.split()) <= budget * 0.8, len(notes.split())

@@ -68,6 +68,7 @@ kind of note there's nothing for (never write "none"). Write only the notes, \
 with those two labels and no other headings or markdown."""
 
 
+FULL = 0.8  # of his budget: past it, he's told how full they are, and to make room
 async def write_notes(lm: LmStudio, model: str, earlier: str, transcript: str, max_tokens: int) -> str:
     """Fold `transcript` into the `earlier` notes; returns the new notes.
     Streamed, so cancelling it stops LM Studio writing."""
@@ -76,6 +77,16 @@ async def write_notes(lm: LmStudio, model: str, earlier: str, transcript: str, m
     # (8K tokens of it), Gemma kept only what was in the transcript.
     user = f"The conversation to fold in:\n{transcript}\n\n" + (
         f"His notes so far:\n{earlier}" if earlier else "He has no notes yet.")
+    # Full, they made no room: told only "at most N words", five nights' news went in and a
+    # few lines of weeks-old news came out, and they crept past the budget, towards the cut
+    # (max_tokens below) that loses their last lines, where the newest news is. Told how full,
+    # in numbers, they kept every new thing and condensed, to about 60% of the budget. (Room
+    # made in code first, the oldest past news cut, a new neighbour was dropped 2 times in 2.)
+    if earlier and (have := len(earlier.split())) > words * FULL:
+        user += (f"\n\n(His notes are {have} words, nearly all of the {words} they can have. Everything new "
+                 "in the conversation goes in, every piece of it; and what lasts stays. Make the room from "
+                 "his old notes alone: drop past news that no longer matters, shorten long notes, and join "
+                 "ones that go together.)")
     # Temperature 0: at 0.3, one run in two dropped the cat from a fold. A little over
     # the budget, so a note isn't cut off mid-line; any part line is dropped.
     notes, cut = await lm.aask(NOTES_PROMPT.format(words=words, today=today()), user, model,

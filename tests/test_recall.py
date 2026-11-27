@@ -281,3 +281,42 @@ def test_clear(cfg):
     a.add([entry(dt.datetime(2026, 11, 1, 9), "Hello.")])
     a.clear()
     assert a.count() == 0
+
+
+def test_only_new_vectors_are_read(cfg):
+    """Read whole after each fold, the vectors took 190 ms at a year's archive and 1 s at five,
+    on the first search after he slept. Now only the new ones are read."""
+    class Embedder(FakeLm):
+        def embed(self, texts, model):
+            return BagOfWords().embed(texts, model)
+
+    a = Archive(dataclasses.replace(cfg.recall, embed_model="embedder"), Embedder(), "m")
+    day = dt.datetime(2026, 11, 1, 9)
+    a.add([entry(day + dt.timedelta(hours=k), f"Entry number {k} about gardening and slugs.") for k in range(5)])
+    a._by_meaning(["slugs"])
+    assert a.vectors_read == 5 and len(a._matrix[1]) == 5
+    a._by_meaning(["slugs"])
+    assert a.vectors_read == 5  # nothing new: nothing read
+    a.add([entry(day + dt.timedelta(days=1), "The lasagne was lovely, Jo made it."),
+           entry(day + dt.timedelta(days=1, hours=1), "Lasagne again tomorrow.")])
+    best = a._by_meaning(["lasagne lovely"])
+    assert a.vectors_read == 7 and len(a._matrix[1]) == 7  # only the two new ones
+    assert a.entry(best[0] - 1).startswith("Crew: The lasagne") or "lasagne" in a.entry(best[0] - 1).lower()
+    a.clear()  # anything else: read whole
+    a.add([entry(day, "Slugs ate the lettuces.")])
+    a._by_meaning(["slugs"])
+    assert a.vectors_read == 8 and len(a._matrix[1]) == 1
+
+
+def test_warm_loads_the_vectors_before_any_search(cfg):
+    class Embedder(FakeLm):
+        def embed(self, texts, model):
+            return BagOfWords().embed(texts, model)
+
+    a = Archive(dataclasses.replace(cfg.recall, embed_model="embedder"), Embedder(), "m")
+    a.add([entry(dt.datetime(2026, 11, 1, 9), "Slugs ate the lettuces.")])
+    a.warm()
+    assert a.vectors_read == 1 and len(a._matrix[1]) == 1
+    a._by_meaning(["slugs"])
+    assert a.vectors_read == 1  # the search read nothing
+    Archive(dataclasses.replace(cfg.recall, embed_model=""), Embedder(), "m").warm()  # no model: nothing to do

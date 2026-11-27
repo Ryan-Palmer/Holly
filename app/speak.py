@@ -270,6 +270,8 @@ class Holly:
     async def _start_voice(self, face_server) -> None:
         tts = self.cfg.tts
         audio = self.cfg.audio
+        if self.archive:  # his archive's vectors, loaded while the voice warms up (archive.warm)
+            self._warming = asyncio.create_task(asyncio.to_thread(self._warm_archive))
         self.tts = await asyncio.to_thread(make_tts, self.cfg)
         if tts.voxcpm.compile:
             print(f"{DIM}Warming up the voice (the first start after an install compiles for a few "
@@ -699,6 +701,12 @@ class Holly:
         if not guards.ASKED_OR_OFFERED.search(said):
             return None
         return offers.taken_up(self.lm, self.model, said, user)
+
+    def _warm_archive(self) -> None:
+        try:
+            self.archive.warm()
+        except Exception as e:  # LM Studio's embedding model not up: the first search does it
+            print(f"{DIM}  (the archive's vectors, not loaded: {e!r}){RESET}", flush=True)
 
     def _last_tools(self) -> list[str]:
         """The tools his last reply came from: those called since the crew last spoke."""

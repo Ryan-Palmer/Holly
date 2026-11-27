@@ -166,6 +166,8 @@ class Archive:
                             "(id INTEGER, model TEXT, vec BLOB, PRIMARY KEY (id, model))")
             self.db.commit()
         self._matrix: tuple[int, np.ndarray, np.ndarray] | None = None  # (count, ids, unit vectors)
+        self.vectors_read = 0  # from the database, in all (_vectors): for the tests
+        self._embedded_to: tuple[str, int | None] | None = None  # (model, newest rowid) all embedded up to
         self._pages: list[tuple[str, re.Pattern, list[str]]] | None = None  # (name, its pattern, its pages)
         self._embed_retry_at = 0.0  # after a failure, recall by meaning is off until then
 
@@ -195,6 +197,7 @@ class Archive:
             self.db.execute("DELETE FROM vectors")
             self.db.commit()
             self._matrix = None
+            self._embedded_to = None
 
     def embed_missing(self) -> int:
         """Make vectors for entries that have none (new ones, or ones from before
@@ -204,6 +207,12 @@ class Archive:
         if not model:
             return 0
         with self.lock:
+            # Asked before every search by meaning (a memory offered: every reply): looking for
+            # entries without a vector was 81 ms at five years' archive. Nothing added since it
+            # last looked (the newest rowid the same), nothing to look for.
+            top = (model, self.db.execute("SELECT max(rowid) FROM entries").fetchone()[0])
+            if top == self._embedded_to:
+                return 0
             rows = self.db.execute("SELECT rowid, text FROM entries WHERE rowid NOT IN "
                                    "(SELECT id FROM vectors WHERE model = ?)", (model,)).fetchall()
         for i in range(0, len(rows), EMBED_BATCH):
@@ -213,7 +222,41 @@ class Archive:
                 self.db.executemany("INSERT OR REPLACE INTO vectors (id, model, vec) VALUES (?, ?, ?)",
                                     [(rid, model, _unit(v).tobytes()) for (rid, _), v in zip(batch, vecs)])
                 self.db.commit()
+        self._embedded_to = top
         return len(rows)
+
+    def warm(self) -> None:
+        """Vectors made and loaded now (while he sleeps, after a fold; at startup), not on the
+        next search: a first search at a year's archive took ~0.2 s, at five ~1 s."""
+        model = self.cfg.embed_model
+        if not model:
+            return
+        self.embed_missing()
+        with self.lock:
+            count = self.db.execute("SELECT count(*) FROM vectors WHERE model = ?", (model,)).fetchone()[0]
+            if count and (not self._matrix or self._matrix[0] != count):
+                dims = len(self.db.execute("SELECT vec FROM vectors WHERE model = ? LIMIT 1", (model,)).fetchone()[0]) // 4
+                self._matrix = self._vectors(model, count, dims)
+
+    def _vectors(self, model: str, count: int, dims: int) -> tuple[int, np.ndarray, np.ndarray]:
+        """Every entry's vector, as (count, ids, matrix): only the new ones read, if the old are
+        held. Read whole after each fold, it was 190 ms at a year's archive (45,000 entries)
+        and 1 s at five, on the first search after he slept: often the memory offered, which
+        gives up at 400 ms. New entries come last (rowids rise); anything else (vectors made
+        for old entries, a new model, a clear) and it's read whole. Called holding the lock."""
+        held = self._matrix
+        if held and count > held[0] and len(held[1]):
+            rows = self.db.execute("SELECT id, vec FROM vectors WHERE model = ? AND id > ? ORDER BY id",
+                                   (model, int(held[1].max()))).fetchall()
+            if held[0] + len(rows) == count:
+                self.vectors_read += len(rows)
+                return (count, np.concatenate([held[1], np.array([r[0] for r in rows], dtype=np.int64)]),
+                        np.vstack([held[2], np.stack([np.frombuffer(r[1], np.float32) for r in rows])]))
+        rows = self.db.execute("SELECT id, vec FROM vectors WHERE model = ?", (model,)).fetchall()
+        self.vectors_read += len(rows)
+        return (count, np.array([r[0] for r in rows], dtype=np.int64),
+                np.stack([np.frombuffer(r[1], np.float32) for r in rows]) if rows
+                else np.zeros((0, dims), np.float32))
 
     def _by_meaning(self, texts: list[str], among: set[int] | None = None) -> list[int]:
         """Rowids of the entries closest in meaning to any of `texts`, best first; only
@@ -231,11 +274,7 @@ class Archive:
         with self.lock:
             count = self.db.execute("SELECT count(*) FROM vectors WHERE model = ?", (model,)).fetchone()[0]
             if not self._matrix or self._matrix[0] != count:
-                rows = self.db.execute("SELECT id, vec FROM vectors WHERE model = ?", (model,)).fetchall()
-                ids = np.array([r[0] for r in rows], dtype=np.int64)
-                mat = (np.stack([np.frombuffer(r[1], np.float32) for r in rows]) if rows
-                       else np.zeros((0, queries.shape[1]), np.float32))
-                self._matrix = (count, ids, mat)
+                self._matrix = self._vectors(model, count, queries.shape[1])
         _, ids, mat = self._matrix
         if not len(ids):
             return []

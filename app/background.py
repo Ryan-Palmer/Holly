@@ -114,9 +114,9 @@ class Background:
             return False
         t1 = time.perf_counter()
         prompt = await self.lm.prewarm(convo.messages_for(), self.model, self.tools)
-        if self.archive:  # the archived exchanges' vectors, now rather than at his next recall
+        if self.archive:  # the archived exchanges' vectors, made and loaded now, not at his next search
             try:
-                await asyncio.to_thread(self.archive.embed_missing)
+                await asyncio.to_thread(self.archive.warm)
             except Exception as e:
                 note(f"couldn't embed the archive: {e!r}")
         print(f"{DIM}  ({label}: folded {exchanges} exchanges into his notes, ~{len(notes) // 4} tokens; "
