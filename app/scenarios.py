@@ -1137,12 +1137,35 @@ TAKEN_UP_LINES: list[tuple[tuple[str, str], bool]] = [
 ]
 
 
+TOOL_NAMES = ("search", "research", "news", "weather", "clock", "timer", "spotify", "recall", "status")
+# Which tool each offer taken up needs (offers.offered_tool): (what he said, their reply), and
+# the tools that would do. The second, a search taken up, started a report 2 times in 16.
+OFFERED_TOOL_LINES: list[tuple[tuple, set[str]]] = [  # ((said, reply[, tools his reply came from]), tools)
+    ((LINKS, "Yes, please."), {"research"}), ((LINKS, "Go on then."), {"research"}),
+    ((RECIPE, "You can get it now if you like"), {"search"}), ((RECIPE, "Later's fine."), {"search", "research"}),  # no "search later": a report while he dozes will do
+    ((GIST, "Go on then, do it properly."), {"research"}), ((GIST, "Just the gist."), {"news", "search"}),
+    ((WHICH, "A proper report, please."), {"research"}), ((WHICH, "Just search it now."), {"search"}),
+    (("I can search for one if you're actually planning on cooking them.", "Go on then."), {"search"}),
+    (("The board games report's ready. Want a summary?", "Yes, please."), {"research"}),
+    (("That's the gist of the report. Want me to open it, or talk you through it?", "Open it."), {"research"}),
+    (("Want me to set a timer for the pasta?", "Go on, ten minutes."), {"timer"}),
+    (("Did you mean Keswick, in Cumbria?", "Yes, that one."), {"weather", "search"}),
+    # Held out:
+    (("I could put some music on, if you like. Something cheerful?", "Go on then."), {"spotify"}),
+    (("Want me to remind you about the bins in the morning?", "Yes please, seven o'clock."), {"timer"}),
+    (("I could dig up the latest on that, or write you a proper report on it overnight.", "The report."),
+     {"research"}),
+    (("Want me to look up when the tip opens?", "Yeah, go on."), {"search"}),
+    (("Shall I read you the rest of that story?", "Go on.", ("news",)), {"news"}),  # research, without "news"
+]
+
+
 @odds_kept
 def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     """STATUS_LINES, ACTION_LABELS and TAKEN_UP_LINES through their checks, `votes` times
     each: right only if every vote is. A vote LM Studio couldn't give is "ERROR", as in
     memory_check."""
-    from .offers import taken_up
+    from .offers import offered_tool, taken_up
     from .status import wants_report
     from .timers import to_do
 
@@ -1157,12 +1180,15 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     for name, cases, judge in (("status report", STATUS_LINES, lambda x: wants_report(lm, model, x, quiet=False)),
                                ("timer job", ACTION_LABELS, lambda x: to_do(lm, model, [x], quiet=False)),
                                ("an offer taken up", TAKEN_UP_LINES,
-                                lambda x: taken_up(lm, model, x[0], x[1], quiet=False))):
+                                lambda x: taken_up(lm, model, x[0], x[1], quiet=False)),
+                               ("which tool it needs", OFFERED_TOOL_LINES,
+                                lambda x: offered_tool(lm, model, x[0], x[1], TOOL_NAMES, *x[2:]))):
         for text, want in cases:
             votes_ = [vote(judge, text) for _ in range(votes)]
             got = [g for g, _ in votes_]
-            rows.append(_with_sure(dict(check=name, text=text, want=want, got=got, right=all(g is want for g in got)),
-                                   [s for _, s in votes_]))
+            right = all(g in want for g in got) if isinstance(want, set) else all(g is want for g in got)
+            rows.append(_with_sure(dict(check=name, text=text, want=sorted(want) if isinstance(want, set) else want,
+                                        got=got, right=right), [s for _, s in votes_]))
     return rows
 
 

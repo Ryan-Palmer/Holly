@@ -38,6 +38,40 @@ his tools.
 Reply with one word: YES or NO."""
 
 
+# Which tool, once they've taken him up (taken_up): asked as a question of its own, with what
+# he offered in front of it. Forced to call "a tool", he chose for himself, and "You can get it
+# now if you like", to a search he'd offered, started a report 2 times in 16. One check for
+# every line ("which tool, if any?") got 8 of 80 lines needing none wrong (app/which_tool.py);
+# this is the narrow question, asked only after a yes.
+OFFERED_TOOL_PROMPT = """\
+Holly, the household computer, offered or asked about doing something, and the crew have just
+said yes to it, or chosen. Which of his tools does doing it need?
+search: looking something up on the web now (a recipe, a fact, a price).
+research: a proper written report, started now and written while he dozes; or reading, summing
+up, talking them through or opening a report he wrote himself.
+news: the news, or reading more of a story from the news, as given by the news tool.
+weather: a forecast. clock: the time. timer: setting a timer or a reminder.
+spotify: music. recall: something from before. status: a status report on the Red Dwarf crew.
+If he offered a choice (a quick search now, or a proper report), the one they chose. "Get it
+now", "now's fine" or "later's fine", to a search he offered, is search.
+Reply with one word: the tool's name, or NONE if it's unclear."""
+
+
+def offered_tool(lm, model: str | None, said: str, reply: str, tools, used=()) -> str | None:
+    """The tool what he offered in `said`, taken up by `reply`, needs: one of `tools` (those he
+    has), or None if the model can't say (then he's left to choose, as before). `used`: the
+    tools his reply came from: "Shall I read you the rest of that story?" / "Go on." was
+    research, from his words alone; it was a news story, as the news tool said."""
+    after = f" (after using the {' and '.join(used)} tool{'s' * (len(used) > 1)})" if used else ""
+    try:
+        text = lm.ask(OFFERED_TOOL_PROMPT, f"Holly said{after}: {said}\nThey reply: {reply}", model, max_tokens=4,
+                      temperature=0).strip().lower()
+    except Exception:
+        return None
+    word = text.split()[0].strip(".,:;!\"'") if text else ""
+    return word if word in tools else None
+
+
 def taken_up(lm, model: str | None, said: str, reply: str, quiet: bool = True) -> bool:
     """Is the crew's `reply` to his `said` taking him up on something he offered with his
     tools? If it can't be asked, False (as before), or with `quiet` off (the evals), the

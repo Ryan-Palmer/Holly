@@ -361,6 +361,14 @@ class Holly:
                                                         self._memory_for(user))
             messages = self.convo.messages_for(user, taken_up=took_up, memory=self.memory)
             asked = len(messages)
+            # Taken up: which tool, from what he offered (offers.offered_tool), named in his
+            # request, as "required" alone can't: left to choose, a search taken up started a report.
+            if took_up and (tool := await asyncio.to_thread(
+                    offers.offered_tool, self.lm, self.model, self._last_reply(), user, set(self.toolbox.by_name),
+                    self._last_tools())):
+                last = messages[asked - 1]
+                messages = [*messages[:asked - 1], {**last, "content": last["content"] + (
+                    f"\n[They've taken you up on what you offered: that's the {tool} tool, so call it.]")}]
             lookups = 0  # slow tools called this reply
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
                         held or bool(took_up), self.convo.crew_lines)
@@ -687,11 +695,23 @@ class Holly:
         judge: that reply offered and asked nothing (guards.ASKED_OR_OFFERED)."""
         if not self.tools or user.startswith("["):
             return None
-        said = next((m.get("content") or "" for m in reversed(self.convo.history)
-                     if m["role"] == "assistant" and m.get("content")), "")
+        said = self._last_reply()
         if not guards.ASKED_OR_OFFERED.search(said):
             return None
         return offers.taken_up(self.lm, self.model, said, user)
+
+    def _last_tools(self) -> list[str]:
+        """The tools his last reply came from: those called since the crew last spoke."""
+        used: list[str] = []
+        for m in reversed(self.convo.history):
+            if m["role"] == "user":
+                break
+            used += [c["function"]["name"] for c in m.get("tool_calls") or [] if c["function"]["name"] not in used]
+        return used[::-1]
+
+    def _last_reply(self) -> str:
+        return next((m.get("content") or "" for m in reversed(self.convo.history)
+                     if m["role"] == "assistant" and m.get("content")), "")
 
     # Speaking up by himself -----------------------------------------------------
 
