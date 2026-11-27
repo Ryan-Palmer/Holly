@@ -48,6 +48,24 @@ _DAY_WORDS = re.compile(
     r"\b(the day after tomorrow|day after tomorrow|tomorrow|tonight|today|yesterday|last night|"
     r"(?:(?:next|this|on|by|until|till|coming|last)\s+)?(?:" + "|".join(WEEKDAYS) + r"))\b",
     re.IGNORECASE)
+MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December"]
+# A month used as a month: after a word that says so ("in June", "by March", "the 14th of June",
+# "last June"), not a name ("June's coming round", "ask June"): some months are names too.
+# With an old friend called June in his notes,
+# "Jo's expecting a baby in June!" was noted as "June is expecting a baby in June 2027", 3 runs
+# in 3; and in a busier fold, dropped. Dated, as the day words are, a month can't be a person.
+_MONTH_WORDS = re.compile(
+    r"\b((?:in|by|until|till|since|from|during|for|through|over|before|after|of|next|last|this|"
+    r"early|late|mid)(?:\s+(?:early|late|mid|the end of|the start of))?\s+(" + "|".join(MONTHS) + r"))\b(?!'s)",
+    re.IGNORECASE)
+_ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+             "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth", "seventeenth",
+             "eighteenth", "nineteenth", "twentieth", "twenty-first", "twenty-second", "twenty-third",
+             "twenty-fourth", "twenty-fifth", "twenty-sixth", "twenty-seventh", "twenty-eighth", "twenty-ninth",
+             "thirtieth", "thirty-first"]
+_DAY_OF = re.compile(r"(?:\b(\d{1,2})(?:st|nd|rd|th)?|\b(" + "|".join(o.replace("-", "[- ]") for o in reversed(_ORDINALS))
+                     + r"))\s+$", re.IGNORECASE)
 # Whether a sentence is about the past or the future, for a bare weekday in it ("I went
 # to the dentist on Monday", "Jo's coming on Saturday"). A future word wins: "I said
 # I'd ring on Monday" is ahead. Regular "-ed" verbs aren't all listed: "excited about
@@ -97,7 +115,48 @@ def date_days(text: str, said: datetime.date) -> str:
         past = not _FUTURE.search(sentence) and bool(_PAST.search(sentence))
         return f"{m.group(1)} [{day(resolve_day(m.group(1), said, past))}]"
 
-    return _DAY_WORDS.sub(dated, text)
+    def sentence_of(m: re.Match) -> str:
+        start = max(text.rfind(c, 0, m.start()) for c in ".!?") + 1
+        ends = [i for i in (text.find(c, m.end()) for c in ".!?") if i >= 0]
+        return text[start:min(ends) if ends else len(text)]
+
+    def month_dated(m: re.Match) -> str:
+        sentence = sentence_of(m)
+        past = not _FUTURE.search(sentence) and bool(_PAST.search(sentence))
+        name = m.group(2).capitalize()
+        before = m.group(1).split()[0]
+        # "The third of December": the day too. Marked "[December 2026]", the note said only
+        # "December 2026: dentist at ten", and the third was lost.
+        if before.lower() == "of" and (d := _DAY_OF.search(text, 0, m.start())):
+            n = int(d.group(1)) if d.group(1) else _ORDINALS.index(d.group(2).lower().replace(" ", "-")) + 1
+            year = month_year(name, "", said, past)
+            try:
+                when = datetime.date(year, MONTHS.index(name) + 1, n)
+                if not past and when < said:
+                    when = when.replace(year=year + 1)
+                return f"{m.group(1)} [{day(when)}]"
+            except ValueError:
+                pass
+        return f"{m.group(1)} [{name} {month_year(name, before, said, past)}]"
+
+    text = _DAY_WORDS.sub(dated, text)
+    return _MONTH_WORDS.sub(month_dated, text)
+
+
+def month_year(name: str, before: str, said: datetime.date, past: bool = False) -> int:
+    """The year a month means, said on `said`: "last June" the one before, "next June" the
+    one after this month, "this June" this year's; otherwise the next one coming, or with
+    `past` (a sentence about what happened), the last one gone."""
+    m, now, before = MONTHS.index(name) + 1, said.month, before.lower()
+    if before == "last":
+        return said.year if m < now else said.year - 1
+    if before == "next":
+        return said.year if m > now else said.year + 1
+    if before == "this":
+        return said.year
+    if past:
+        return said.year if m <= now else said.year - 1
+    return said.year if m >= now else said.year + 1
 
 
 def set_aside(path: Path, why: str) -> Path:

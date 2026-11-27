@@ -135,3 +135,28 @@ def test_the_week_around_today_counts_the_days():
     assert "Saturday 21 November (in 3 days)" in week
     assert "Wednesday 25 November (in 7 days, a week today)" in week
     assert "1 December" in week_around(dt.date(2026, 11, 29))  # into the next month
+
+
+def test_a_month_used_as_a_month_is_dated_and_a_name_isnt():
+    """With an old friend called June in his notes, "Jo's expecting a baby in June!" was noted
+    as "June is expecting a baby in June 2027". Dated, a month can't be a person."""
+    on = dt.date(2026, 11, 27)
+    assert date_days("Jo's expecting a baby in June!", on) == "Jo's expecting a baby in June [June 2027]!"
+    assert date_days("June's coming round on Saturday.", on) == \
+        "June's coming round on Saturday [Saturday 28 November 2026]."
+    assert date_days("Ask June about it.", on) == "Ask June about it."
+    assert date_days("June's birthday is in June, on the 14th.", on) == \
+        "June's birthday is in June [June 2027], on the 14th."
+    assert date_days("June and I are off in May.", on) == "June and I are off in May [May 2027]."
+    assert date_days("I may go.", on) == "I may go."
+    assert "[June 2026]" in date_days("We went to Whitby in June.", on)  # the past: the last one
+    assert "[November 2027]" in date_days("next November", on)
+    assert "[November 2025]" in date_days("last November", on)
+    assert "[November 2026]" in date_days("this November", on) and "[November 2026]" in date_days("in November", on)
+    assert "[January 2027]" in date_days("Back by the end of January.", on)
+    # A day before it, the day too: marked with the month alone, "the third of December" lost its third.
+    assert date_days("My dentist's on the third of December, at ten.", on) == \
+        "My dentist's on the third of December [Thursday 3 December 2026], at ten."
+    assert "[Monday 14 June 2027]" in date_days("the 14th of June", on)
+    assert "[Thursday 31 December 2026]" in date_days("the thirty-first of December", on)
+    assert "[Monday 23 November 2026]" in date_days("We met on the 23rd of November.", on)  # past: this year's
