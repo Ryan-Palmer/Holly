@@ -196,7 +196,8 @@ silent voice and his memory in a temporary folder:
 - **Persona**: the prompts in `persona/test_prompts.txt`, each scored for
   length, anything a voice can't say, an assistant's manners, questions back,
   the tool it needs, lines recited from his examples, and repetition. The
-  judges score each reply 1-5 for sounding like Holly.
+  reply judge scores each reply 1-5 as you would: it's shown your own scored
+  replies and notes (`persona/judge_examples.json`) and no rules of ours.
 - **Scenarios** (`app/scenarios.py`): conversations with made-up memories
   that need his tools and memory (recall, the clock and the days ahead,
   timers set and come due, status reports on made-up news, search or
@@ -264,7 +265,12 @@ says over a whole conversation (Gemma not at all: its thinking ran to
 28,000 tokens of "I'll check one more time", with no verdict). `--judge MODEL`, given
 once or more, judges with others instead; `--no-judge` skips them.
 Scorecards from before the second judge (25 November 2026) are Gemma's
-alone.
+alone. The persona replies are the exception: one judge, Qwen
+(`reply_judge`), calibrated on your scores, scores them, since 27 November
+2026 (`--compare` marks the older persona scores "old": rules of ours, not
+comparable). Of four judges tried, it agreed with your order best; adding
+Gemma or a thinking judge pulled it down. Like them all, it still scores a
+quip that makes no sense well: your ear is the check for that.
 
 **Reply nets.** Holly's reply loop has nets that make up for what a model
 gets wrong: an offer of more help not said, a timer counted down unasked, a
@@ -294,9 +300,6 @@ pauses (`python -m app.turn --save data/turn_clips`, labelled by whether
 you went on; your voice, so they stay out of git) with the turn-ending
 model and settings as they are, against the old 400 ms rule. Run it before
 changing the model or its settings.
-
-If you have Holly's lines from the show in `data/scripts/holly_exchanges.json`
-(not supplied), the judges are shown some of them for reference.
 
 ## Tests
 

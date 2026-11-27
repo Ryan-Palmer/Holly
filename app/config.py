@@ -221,6 +221,7 @@ class EvalsConfig:
     judges: dict = field(default_factory=lambda: {"google/gemma-4-26b-a4b-qat": "none",
                                                   "qwen/qwen3.8-27b": "medium"}, compare=False)
     judge_context: int = 49152  # tokens: a whole conversation, its tools' answers, and thinking
+    reply_judge: str = "qwen/qwen3.8-27b"  # scores the persona replies alone, as the user would
 
 
 @dataclass(frozen=True)

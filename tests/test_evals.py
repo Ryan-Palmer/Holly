@@ -68,7 +68,10 @@ def test_scorecard_and_compare(tmp_path, monkeypatch):
     assert "Conversations passed: 1 of 1" in "\n".join(evals.summary(card))
     table = evals.compare().splitlines()
     assert table[0].split()[:3] == ["when", "label", "model"]
-    assert "some-model" in table[1] and "1/2" in table[1] and "3.00" in table[1] and "1/1" in table[1]
+    assert "some-model" in table[1] and "1/2" in table[1] and "3.00 old" in table[1] and "1/1" in table[1]
+    card.update(when="2026-11-28T09:00", label="calibrated", reply_judges=["qwen/qwen3.8-27b"])
+    evals.write(card)
+    assert "3.00 " in evals.compare().splitlines()[2] and "old" not in evals.compare().splitlines()[2]
 
 
 def test_two_judges_scores_are_averaged_and_each_kept():
@@ -77,6 +80,53 @@ def test_two_judges_scores_are_averaged_and_each_kept():
     assert rows[0]["score"] == 3 and rows[0]["why"] == "a: dry / b: chirpy"
     assert rows[1]["score"] == 3  # no score from one judge: the other's
     assert evals.by_judge(rows) == {"google/a": 3.5, "qwen/b": 2}
+
+
+SCORED = [
+    dict(said="Tell me a joke.", tools=[], told=[], reply="A joke? Lister's haircut.", score=4, note="Snappy."),
+    dict(said="tell me a JOKE", tools=[], told=[], reply="Knock knock.", score=2, note=""),
+    dict(said="What's the weather?", tools=["weather"], told=["Keswick: rain, 9 C."],
+         reply="Wet. Nine degrees.", score=5, note="Grounded and short."),
+]
+
+
+def test_the_reply_judge_is_shown_the_users_scores_but_not_for_the_same_line():
+    """Shown the user's scores for other replies to the same line, the judges scored by likeness
+    and agreed with the user less (27 November 2026): those are left out."""
+    system = evals.judge_prompt("Tell me a joke!", SCORED)
+    assert "Lister's haircut" not in system and "Knock knock" not in system
+    assert ("Said to him: What's the weather?\nWhat his tools told him (weather):\nKeswick: rain, 9 C.\n"
+            "His reply: Wet. Nine degrees.\nTheir score: 5. Their note: Grounded and short.") in system
+    assert "Knock knock.\nTheir score: 2" in evals.judge_prompt("Morning, Holly.", SCORED)  # no note, none shown
+    assert evals.said_to_him("What's on?", "Dunno.", ["search"], []).splitlines()[1].startswith(
+        "He used his tools (search), but what they told him wasn't kept")
+    assert "He used no tools." in evals.said_to_him("Hi.", "Hi.")
+
+
+def test_the_users_scored_replies_ship_with_the_evals():
+    shipped = evals.load_examples()
+    assert len(shipped) >= 77 and all(1 <= e["score"] <= 5 and e["said"] and e["reply"] for e in shipped)
+
+
+def test_persona_replies_are_scored_by_the_reply_judge_alone(monkeypatch):
+    asked = []
+
+    class Lm:
+        def ask(self, system, user, model, max_tokens=200, temperature=0.2, reasoning="none"):
+            asked.append((model, system, user))
+            return "SCORE: 4. Dry enough."
+
+    monkeypatch.setattr(evals, "alone", lambda model, context=None: Lm())
+    monkeypatch.setattr(evals, "load_examples", lambda: SCORED)
+    rows = [dict(prompt="Tell me a joke.", reply="No.", tools=[], told=[])]
+    judges = {"google/gemma-4-26b-a4b-qat": "none", "qwen/qwen3.8-27b": "medium"}
+    evals.judge_all(judges, rows, [], [])
+    assert rows[0]["by"] == {"qwen/qwen3.8-27b": [4, "Dry enough."]} and rows[0]["score"] == 4
+    assert [m for m, _, _ in asked] == ["qwen/qwen3.8-27b"] and "Lister's haircut" not in asked[0][1]
+    # Judged by others (--judge), each given scores them, the same way.
+    rows = [dict(prompt="Morning.", reply="Morning.", tools=[], told=[])]
+    evals.judge_all({"google/gemma-4-26b-a4b-qat": "none"}, rows, [], [])
+    assert list(rows[0]["by"]) == ["google/gemma-4-26b-a4b-qat"]
 
 
 def test_compare_with_nothing(tmp_path, monkeypatch):

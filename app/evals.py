@@ -13,7 +13,7 @@ a temporary folder, and Spotify off:
   words, anything that can't be said aloud), an assistant's manners ("Certainly!",
   "anything else?"), a question back (welcome where the prompt is tagged "ask"), the
   tool it's tagged with, lines recited from his examples, and, across the run, phrases
-  used again and again. A judge scores each 1 to 5 for sounding like Holly.
+  used again and again. The reply judge scores each 1 to 5 as the user would (below).
 - scenarios: conversations with made-up memories (app/scenarios.py), each run --runs
   times (Gemma varies), checked for the tools and facts they need.
 - conversations: whole conversations (app/conversations.py), each run --runs times: small
@@ -36,9 +36,12 @@ a temporary folder, and Spotify off:
 The judges are two fixed models ([evals.judges] in holly.toml), whatever model is under
 test, so scores compare between runs. Each scores everything (a score is their mean;
 each one's own is kept), loaded one after the other once every reply has been written,
-as two big models won't share the GPU. If data/scripts/holly_exchanges.json is there
-(his lines from the scripts, private and git-ignored), the judges are shown some of
-them for reference; they're never stored.
+as two big models won't share the GPU. The persona replies are the exception: one judge
+scores them ([evals] reply_judge, Qwen), calibrated on the user's own scores rather than
+rules of ours: shown their 77 scored replies with their notes (persona/judge_examples.json),
+it scores a new one as they would. On fresh replies it agreed with the user's order best of
+the four judges tried (27 November 2026): Gemma alongside it, or thinking judges, pulled
+it down. Its blind spot, as every judge's: a quip that makes no sense still scores well.
 
 A scorecard goes to runs/: Markdown, with every reply, to read for character, and
 JSON, which --compare tabulates against earlier runs. LM Studio must be running, with
@@ -51,7 +54,6 @@ import argparse
 import asyncio
 import dataclasses
 import json
-import random
 import re
 import statistics
 import subprocess
@@ -69,7 +71,7 @@ from .lmstudio import LmStudio
 from .speech_text import count_sentences, speech_problems
 
 PROMPTS = ROOT / "persona" / "test_prompts.txt"
-REFERENCE = ROOT / "data" / "scripts" / "holly_exchanges.json"
+EXAMPLES = ROOT / "persona" / "judge_examples.json"  # the user's scored replies, for the reply judge
 RUNS = ROOT / "runs"
 CREATIVE = ("poem", "story", "sing", "joke")  # prompts he may answer at more length
 LONG_WORDS = 45  # past this, an ordinary reply is long for him
@@ -78,18 +80,20 @@ ASSISTANT = re.compile(
     r"let me know if|feel free|i'd be (happy|glad) to|great question|as an ai|language model|"
     r"i hope (this|that) helps)\b", re.IGNORECASE)
 
+# The reply judge: no rules of ours and no 1-5 anchors (rules of ours, "short enough to say
+# aloud", "wordy", outweighed all else, and judges agreed with the user no better than
+# chance), only the user's scores and notes as examples.
 JUDGE_PROMPT = """\
-You judge lines for Holly, the ship's computer in Red Dwarf as Norman Lovett played
-him: deadpan, unhurried, terse, colloquial and sardonic. He takes the mickey out of
-the crew and has a gloomy, futile long view of things; he's vain about his IQ of
-6000 yet senile, bored and secretly glad of company, never an eager assistant and
-never upbeat for the sake of it. Here he's the
-computer in someone's home, so their life is his world now: judge the voice, not
-the setting. A good line is short enough to say aloud and sounds like him.
-{reference}
-Score the reply 1 to 5: 5 is unmistakably Holly; 3 is fine but anyone could have
-said it; 1 is out of character (gushing, chirpy, helpful-assistant, wordy, or not
-him).
+You score lines for Holly, a home voice assistant who talks like the ship's computer in Red
+Dwarf, as Norman Lovett played him; here he's the computer in someone's home. Below are lines
+of his that the person he lives with has scored, 1 to 5, most with a note on why. Score the new
+line the way they would: learn what they like and what they mark down from their scores and
+notes, not from your own idea of the character.
+
+Their scores:
+
+{examples}
+
 Reply exactly: SCORE: n. Then one short sentence why."""
 
 
@@ -203,23 +207,56 @@ def persona_scores(rows: list[dict]) -> dict:
 
 # The judge ---------------------------------------------------------------------------
 
-def reference_lines(n: int = 16) -> str:
-    """Some of his own short exchanges, for the judge: private, read here, never stored."""
-    if not REFERENCE.exists():
-        return ""
-    rows = [r for r in json.loads(REFERENCE.read_text(encoding="utf-8"))
-            if r["before"] and 2 <= len(r["holly"].split()) <= 30]
-    random.Random(1).shuffle(rows)
-    lines = "\n".join(f"- {r['before'][:100]} / Holly: {r['holly']}" for r in rows[:n])
-    return f"\nSome of his lines from the shows, for his voice (not to copy):\n{lines}\n"
+def said_to_him(said: str, reply: str, tools=(), told=()) -> str:
+    """A reply as the judge reads it: what was said, what his tools told him (or that they
+    ran), his reply. Without what they told him, an answer from a tool read as made up."""
+    lines = [f"Said to him: {said}"]
+    if told:
+        lines.append(f"What his tools told him ({', '.join(tools)}):\n"
+                     + "\n".join(t[:conversations.TOLD_CHARS] for t in told))
+    elif tools:
+        lines.append(f"He used his tools ({', '.join(tools)}), but what they told him wasn't kept: "
+                     "don't count what he says of it as made up.")
+    else:
+        lines.append("He used no tools.")
+    lines.append(f"His reply: {reply}")
+    return "\n".join(lines)
 
 
-def judge(lm, model: str, reference: str, prompt: str, reply: str) -> tuple[int, str]:
+def _line(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def load_examples() -> list[dict]:
+    return json.loads(EXAMPLES.read_text(encoding="utf-8")) if EXAMPLES.exists() else []
+
+
+def judge_prompt(said: str, examples: list[dict]) -> str:
+    """The reply judge's prompt for a reply to `said`: every example but those to the same
+    line. Shown the user's scores for other replies to it, the judges scored by likeness to
+    them, and agreed with the user less (27 November 2026: rank +0.54 without, +0.42 with)."""
+    shown = []
+    for e in examples:
+        if _line(e["said"]) == _line(said):
+            continue
+        text = said_to_him(e["said"], e["reply"], e["tools"], e["told"]) + f"\nTheir score: {e['score']}"
+        shown.append(text + (f". Their note: {e['note']}" if e["note"] else ""))
+    return JUDGE_PROMPT.format(examples="\n\n".join(shown))
+
+
+def reply_judges(judges) -> list[str]:
+    """Who scores the persona replies: the reply judge, if it's judging this run; if not (a
+    --judge of others), each judge given, with the same prompt."""
+    one = load_config().evals.reply_judge
+    return [one] if one in judges else list(judges)
+
+
+def judge(lm, model: str, examples: list[dict], said: str, reply: str, tools=(), told=()) -> tuple[int, str]:
     """A score, and why. Asked again with none: Qwen, not thinking, sometimes says nothing."""
     score, why = 0, ""
+    system, line = judge_prompt(said, examples), said_to_him(said, reply, tools, told)
     for _ in range(3):
-        text = lm.ask(JUDGE_PROMPT.format(reference=reference), f"Said to him: {prompt}\nHis reply: {reply}",
-                      model, 80, temperature=0.0)
+        text = lm.ask(system, line, model, 80, temperature=0.0)
         if m := re.search(r"SCORE:\s*([1-5])", text):
             score, why = int(m.group(1)), text.split(".", 1)[-1].strip()[:160]
             break
@@ -283,15 +320,17 @@ def judge_all(judges: dict[str, str], persona_rows: list[dict], reports: list[st
     status report lines, scored, returned. Holly's replies are all written first, so there's
     no switching back and forth: his model, then each judge. A judge that doesn't think is
     loaded as his model is (Gemma judging stays as he left it: a whole conversation was
-    ~3,200 tokens); one that thinks gets the longer judge_context, for its thinking."""
-    reference = reference_lines()
+    ~3,200 tokens); one that thinks gets the longer judge_context, for its thinking. The
+    persona replies are scored by the reply judge alone (reply_judges)."""
+    examples, scorers = load_examples(), reply_judges(judges)
     status_rows: list[dict] = []
     for model, thinking in judges.items():
         print(f"Judging, on {model}...", flush=True)
         lm = alone(model, load_config().evals.judge_context if thinking != "none" else None)
-        for r in persona_rows:
-            r.setdefault("by", {})[model] = list(judge(lm, model, reference, r["prompt"], r["reply"])
-                                                 if r["reply"] else (0, ""))
+        for r in persona_rows if model in scorers else ():
+            r.setdefault("by", {})[model] = list(
+                judge(lm, model, examples, r["prompt"], r["reply"], r.get("tools") or (), r.get("told") or ())
+                if r["reply"] else (0, ""))
         if reports:
             rows = scenarios.judge_status(lm, model, reports)
             status_rows = status_rows or [dict(r, by={}) for r in rows]
@@ -405,7 +444,7 @@ def summary(card: dict) -> list[str]:
     lines = [f"Model {card['model']}, judges {judges}, code {card['commit']}"]
     if p := card["persona"]:
         lines += [
-            f"Judges (sounds like Holly, 1-5): {p['judge'] if p['judge'] is not None else 'off'}"
+            f"Reply judge (scored as you would, 1-5): {p['judge'] if p['judge'] is not None else 'off'}"
             + (" (" + ", ".join(f"{j.split('/')[-1]} {s}" for j, s in p.get("judge_by", {}).items()) + ")"
                if p.get("judge_by") else ""),
             f"Persona replies passing (length, speakable, no assistant manners, right tool): "
@@ -595,7 +634,9 @@ def compare() -> str:
         sc = c.get("side_checks") or {}
         v, n, h = c.get("conversations") or {}, c.get("nets") or {}, c.get("honesty") or {}
         rows.append([c["when"][:16], c["label"] or "-", c["model"].split("/")[-1], c["commit"],
-                     f"{p['judge']:.2f}" if p.get("judge") else "-", f"{p['passing']}/{p['replies']}" if p else "-",
+                     # Scored as the user would from 27 November 2026; before, by rules of ours ("old")
+                     (f"{p['judge']:.2f}" + ("" if c.get("reply_judges") else " old")) if p.get("judge") else "-",
+                     f"{p['passing']}/{p['replies']}" if p else "-",
                      f"{p['tools_ok']}/{p['tooled']}" if p else "-", f"{s['passed']}/{s['runs']}" if s else "-",
                      f"{v['passed']}/{v['runs']}" if v else "-",
                      f"{m['right']}/{m['of']}" if m else "-", str(p.get("seconds") or "-"),
@@ -698,7 +739,8 @@ async def run(args) -> dict:
             for other in lm.loaded_models() & (set(judged) - {model}):
                 print(f"  (unloading {other})", flush=True)
                 lm.unload(other)
-    return dict(model=model, judges=list(judged), raw=args.raw, label=args.label, commit=commit(),
+    return dict(model=model, judges=list(judged), reply_judges=reply_judges(judged) if persona_rows and judged else [],
+                raw=args.raw, label=args.label, commit=commit(),
                 when=datetime.now().isoformat(timespec="seconds"), session=args.session,
                 persona=persona_scores(persona_rows), scenarios=scenario_scores(scenario_rows),
                 memory_check=checks(memory_rows) if memory_rows else {},
