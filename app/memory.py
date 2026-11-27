@@ -60,7 +60,10 @@ said: never guess likes or dislikes from what someone asked about.
 
 If he has notes already, start from them: keep every note that still holds, \
 change any the conversation has changed, drop past events once they no \
-longer matter, then add what's new. Leave out greetings, small talk, and any \
+longer matter, then add what's new. A plan that's called off, moved or done, \
+or anything else that's changed, is its own note rewritten, never a second \
+note beside the first: "Saturday 5 December: the party's off", not that and \
+"Saturday 5 December: party at the pub". Leave out greetings, small talk, and any \
 kind of note there's nothing for (never write "none"). Write only the notes, \
 with those two labels and no other headings or markdown."""
 

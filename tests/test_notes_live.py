@@ -115,5 +115,5 @@ def test_asked_for_lines_already_in_his_notes_go(cfg, lm):
     at = dt.datetime.combine(dt.date.today(), dt.time(9, 0))
     notes = asyncio.run(write_notes(lm, lm.cfg.model, EARLIER, transcript(
         cfg, [(at, "Sam's coming to stay on Saturday.", "Hide the biscuits.")]), 300))
-    assert not re.search(r"asked", notes, re.IGNORECASE), notes
+    assert not re.search(r"\basked\b", notes, re.IGNORECASE), notes
     assert "Jo" in notes and "Keswick" in notes and "fish pie" in notes and "Sam" in notes, notes

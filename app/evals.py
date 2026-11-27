@@ -26,6 +26,9 @@ a temporary folder, and Spotify off:
   line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES); and
   the other side checks, whether a line asks for a status report and whether a timer
   come due is a job for a tool (scenarios.STATUS_LINES, ACTION_LABELS).
+- folds: a week of made-up talk folded into his notes night after night (app/many_folds.py):
+  lasting facts kept, changes taken in (a plan off, moved or done is one note, not two),
+  nothing invented; checked in code after every fold.
 - status: five status reports (app/status.py), written as his are, and his answer to where
   each of the crew is, each line scored by the judges for being that character, in that
   world, and funny.
@@ -60,7 +63,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from . import conversations, guards, honesty, long_talk, report_check, scenarios, sourced
+from . import conversations, guards, honesty, long_talk, many_folds, report_check, scenarios, sourced
 from .config import ROOT, load_config
 from .lmstudio import LmStudio
 from .speech_text import count_sentences, speech_problems
@@ -442,6 +445,9 @@ def summary(card: dict) -> list[str]:
                      f"{h['known']}")
     if lt := card.get("long_talk"):
         lines.append(f"A long talk folded into his notes, facts kept and in character: {lt['passed']} of {lt['runs']}")
+    if fo := card.get("folds"):
+        lines.append(f"A week folded night after night, nothing wrong after any fold: {fo['passed']} of {fo['runs']} "
+                     f"({fo['folds_wrong']} folds with something wrong)")
     if t := card.get("turns"):
         lines.append(f"Turn-taking on {t['pauses']} saved pauses: cut in on {t['cut_in']} of {t['went_on']} you went on "
                      f"after (400 ms: {t['cut_in_before']}); of {t['finished']} where you'd finished, {t['sooner']} "
@@ -493,6 +499,13 @@ def write(card: dict, path: Path | None = None) -> Path:
         for r in card["long_talk_runs"]:
             md += [f"**Run {r['run']}: {'; '.join(r['wrong']) or 'passed'}**  ", f"_His notes:_ {r['notes']}  "]
             md += [f"> {t['said']}  \n{t['reply']}  " for t in r["turns"]] + [""]
+    if card.get("folds"):
+        md += ["## A week folded into his notes", "", "Seven days of made-up talk, folded in night after night "
+               "(app/many_folds.py). What was wrong after each fold, and his notes at the end.", ""]
+        for r in card["fold_runs"]:
+            md += [f"**Run {r['run']}**  "] + [f"- {f['day']}: {'; '.join(f['wrong']) or 'nothing wrong'}"
+                                               for f in r["folds"]]
+            md += ["", "_His notes at the end:_", "", "    " + r["folds"][-1]["notes"].replace("\n", "\n    "), ""]
     if (vo := card.get("voice")) and vo["flagged"]:
         md += ["## His voice: came back badly", "", "Said in his voice, heard by Whisper, word for word against what "
                "he wrote (app/voice_check.py).", ""]
@@ -652,6 +665,11 @@ async def run(args) -> dict:
     if args.only in (None, "long"):
         print(f"A long talk, folded into his notes, {args.runs} run{'s' * (args.runs != 1)}, on {model}:", flush=True)
         long_rows = await long_talk.run_all(model, args.runs, args.raw)
+    fold_rows = []
+    if args.only in (None, "folds") and not args.raw:
+        print(f"A week of talk, folded into his notes night after night, {args.runs} run{'s' * (args.runs != 1)}, "
+              f"on {model}:", flush=True)
+        fold_rows = await many_folds.run_all(model, args.runs)
     report_rows = []
     if args.only in (None, "reports") and not args.raw:
         print(f"Research reports, {len(report_check.QUESTIONS)}, written as he writes them asleep, on {model}:",
@@ -689,6 +707,7 @@ async def run(args) -> dict:
                 conversations=conversations.scores(conversation_rows),
                 honesty=honesty.scores(honesty_rows), honesty_rows=honesty_rows,
                 long_talk=long_talk.scores(long_rows), long_talk_runs=long_rows,
+                folds=many_folds.scores(fold_rows), fold_runs=fold_rows,
                 reports=report_check.scores(report_rows), report_rows=report_rows,
                 nets=net_counts(persona_rows, scenario_rows, conversation_rows),
                 numbers=number_check(persona_rows, scenario_rows, conversation_rows, honesty_rows, long_rows),
@@ -732,7 +751,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="a judge's model, in place of [evals.judges] in holly.toml (again for more)")
     parser.add_argument("--runs", type=int, default=None, help="runs of each scenario (default: holly.toml's)")
     parser.add_argument("--persona-runs", type=int, default=1, help="replies per persona prompt (default 1)")
-    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "honesty", "long", "reports", "memory", "status", "turns", "search",
+    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "honesty", "long", "reports", "memory", "status", "turns", "search", "folds",
                                                  "voice"],
                         help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")
