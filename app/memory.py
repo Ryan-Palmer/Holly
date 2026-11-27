@@ -51,7 +51,11 @@ much they talk about it), and their family by how they're related to them \
 
 Leave out what the crew asked him for (recipes, stories, poems, \
 explanations, how-tos): what he said back needn't be remembered. Leave out \
-his own jokes and insults about them: they aren't facts. Note only what was \
+that they asked him for something at all (the weather, the time, the news, a \
+status report, a search, a report): "asked for the weather in Keswick" or \
+"asked for a report on X" is never a note, and if his notes so far have any \
+such lines, delete them. Leave out his own jokes and insults about them: \
+they aren't facts. Note only what was \
 said: never guess likes or dislikes from what someone asked about.
 
 If he has notes already, start from them: keep every note that still holds, \

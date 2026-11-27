@@ -64,3 +64,56 @@ def test_a_recalled_show_memory_isnt_noted_as_the_crew(cfg, lm):
     crew = notes.split("Lately:")[0]
     assert "Keswick" in notes, notes
     assert not re.search(r"\b(?:Lister|Rimmer|Cloister)\b", crew), notes
+
+
+def call(name: str, args: str, result: str, reply: str, crew: str, at: str) -> list[dict]:
+    return [{"role": "user", "content": crew, "at": at},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": name, "type": "function", "function": {
+                "name": name, "arguments": args}}]},
+            {"role": "tool", "tool_call_id": name, "content": result},
+            {"role": "assistant", "content": reply}]
+
+
+def test_what_they_asked_for_isnt_a_note(cfg, lm):
+    """His notes said "asked for the weather at Keswick", "asked for a status report", "asked
+    for a report on dashcams": what they asked him for, a line each, and nothing to keep (his
+    reports and archive have them). What they told him about themselves stays."""
+    c = Conversation(cfg.persona, "", None, None)
+    at = dt.datetime.combine(dt.date.today() - dt.timedelta(days=1), dt.time(18, 0)).isoformat()
+    c.history += [
+        *call("weather", '{"place": "Keswick"}', "Keswick tomorrow: rain, 4 to 9 degrees.", "Rain. Naturally.",
+              "What's the weather doing in Keswick tomorrow?", at),
+        *call("status", "{}", "Lister lost a bet with a skutter. Rimmer filed a complaint.",
+              "Lister lost a bet with a skutter. Rimmer filed a complaint.", "Status report, please.", at),
+        *call("research", '{"action": "start", "title": "Dashcams"}', "Queued: research on 'Dashcams'.",
+              "I'll look into it.", "Can you write me a report on dashcams for my mum's car?", at),
+        {"role": "user", "content": "My mum's just bought a new car, a little red hatchback.", "at": at},
+        {"role": "assistant", "content": "Red. Bold."},
+        {"role": "user", "content": "Sam's coming to stay on Saturday.", "at": at},
+        {"role": "assistant", "content": "Hide the biscuits."}]
+    notes = asyncio.run(write_notes(lm, lm.cfg.model, "", c.transcript(len(c.history)), 300))
+    assert not re.search(r"\b(?:asked|requested|wanted)\b", notes, re.IGNORECASE), notes
+    assert not re.search(r"\bstatus report|\bLister\b", notes, re.IGNORECASE), notes
+    assert "Sam" in notes and re.search(r"\bcar\b|hatchback", notes, re.IGNORECASE), notes
+
+
+EARLIER = """About the crew:
+The crew's sister is Jo
+Jo is a vet in Keswick
+The crew likes fish pie
+
+Lately:
+Wednesday 25 November 2026: the crew asked for a status report
+Wednesday 25 November 2026: the crew asked for the weather in Keswick
+Wednesday 25 November 2026: the crew asked for a report on dashcams for their mum's car
+Wednesday 25 November 2026: the crew asked for the weather in Keswick for Thursday 26 November"""
+
+
+def test_asked_for_lines_already_in_his_notes_go(cfg, lm):
+    """Once written, an "asked for" line was kept fold after fold: told to start from his
+    notes and keep what still holds, it kept four of four (27 November)."""
+    at = dt.datetime.combine(dt.date.today(), dt.time(9, 0))
+    notes = asyncio.run(write_notes(lm, lm.cfg.model, EARLIER, transcript(
+        cfg, [(at, "Sam's coming to stay on Saturday.", "Hide the biscuits.")]), 300))
+    assert not re.search(r"asked", notes, re.IGNORECASE), notes
+    assert "Jo" in notes and "Keswick" in notes and "fish pie" in notes and "Sam" in notes, notes
