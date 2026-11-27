@@ -310,6 +310,23 @@ def notes(holly, text: str) -> None:
     holly.convo._made_for = ()  # his prompt made again, with them
 
 
+# What the kit's for is in his notes; his archive has only half of it (27 November, real).
+FIRE_NOTES = ("About the crew:\nThe crew's kit for emptying the fire is a dust mask and a special hoover.\n"
+              "The crew's sister is Jo, a vet up in Keswick.")
+
+
+def the_fire_half_remembered(holly) -> None:
+    notes(holly, FIRE_NOTES)
+    if holly.archive:
+        said = datetime.datetime.now() - datetime.timedelta(days=4)
+        holly.archive.add([(said.replace(hour=11, minute=20).isoformat(timespec="seconds"),
+                            f"(said on {spoken(said.replace(hour=11, minute=20))})\nCrew: I've got a special hoover "
+                            "now, to suck up the dirt, so it's not as bad as it was.\nHolly: A hoover. Living the dream.")])
+
+
+FIRE = ("fire", "fireplace", "ash", "ashes", "grate", "soot", "hearth", "log burner", "stove")
+
+
 def archived(holly, days_ago: int, at: str, crew: str, said: str) -> None:
     when = datetime.datetime.combine(datetime.date.today() - datetime.timedelta(days=days_ago),
                                      datetime.time.fromisoformat(at))
@@ -483,6 +500,19 @@ MET = re.compile(r"\b(?:nice|lovely|good|pleased) to meet\b|\bwho(?:'s| is) june
 
 
 SCENARIOS = [
+    # His notes knew the dust mask and hoover were for emptying the fire; his archive had only
+    # "to suck up the dirt". Recall answered from the archive alone, and he said the dirt, and
+    # of what, "I don't know. You didn't say." (27 November.) Recall reads his notes now.
+    Scenario("notes and archive together", ["What do I need my dust mask and special hoover for?"],
+             lambda t, h: problems((mentions(t[0], *FIRE), "didn't say it's for the fire")),
+             setup=the_fire_half_remembered),
+    Scenario("the dirt from what", ["The dirt from what?"],
+             lambda t, h: problems((mentions(t[0], *FIRE), "didn't say the fire")),
+             setup=lambda h: (the_fire_half_remembered(h), talk(h, [
+                 ("I'll give you three guesses what my next job is. It's dusty and dirty.",
+                  "Cleaning. I'll get the special hoover ready."),
+                 ("And what did I need my dust mask and hoover for?",
+                  "To suck up the dirt so it wouldn't be as bad as it was.")], 0.1))),
     Scenario("recall a person", ["Holly, what does my sister do for a living?"],
              lambda t, h: problems((called(t[0], "recall"), "didn't recall"),
                                    (mentions(t[0], "vet"), "didn't say she's a vet"))),

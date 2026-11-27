@@ -70,9 +70,11 @@ TOOL = {
 
 JUDGE_PROMPT = """\
 Today is {today}. You are the memory of Holly, the ship's computer from Red Dwarf.
-Below are entries from his past conversations with the crew, each with when it
-was said, and from the ship's records about Red Dwarf and its crew, then a
-question about them. Use only what the entries say, never anything else. Reply
+Below are his notes on earlier conversations, if he has any (kept up to date,
+and right), entries from his past conversations with the crew, each with when
+it was said, and from the ship's records about Red Dwarf and its crew, then a
+question about them. What the notes say counts as much as any entry, and
+where an entry tells only part of something, the notes may tell the rest. Use only what the entries say, never anything else. Reply
 in exactly one of these forms:
 
 ANSWER: two or three short, plain sentences that answer the question from the
@@ -495,20 +497,25 @@ class Archive:
             found |= {r[0]: (r[1], r[2]) for r in rows}
         return list(found.values())
 
-    def recall(self, query: str, question: str, said: str = "", asked: str = "") -> Lookup:
+    def recall(self, query: str, question: str, said: str = "", asked: str = "", notes: str = "") -> Lookup:
         """Look `query` up, and answer `question` (what Holly asks, or failing that
         what the crew said) from what's found, and from `said`: the crew's lines
         still in his history (Conversation.crew_lines), which aren't archived yet.
-        `asked`: the crew's own words, tried too if his question finds nothing."""
+        `asked`: the crew's own words, tried too if his question finds nothing.
+        `notes`: his notes on older talk, read with what's found: his notes said "the kit
+        for emptying the fire is a dust mask and a special hoover", the archive only that
+        the hoover was "to suck up the dirt", and recall answered from the archive alone;
+        told "this is your memory of it, and it's right", he said the dirt, and of what,
+        "I don't know. You didn't say"."""
         t0 = time.perf_counter()
         query, question = MISHEARD.sub("Kryten", query), MISHEARD.sub("Kryten", question)
         # "The Cat's name in the episode Gunmen of the Apocalypse?" got NOTHING from the
         # judge, taking it as the Cat's own name ("no name other than The Cat"); without
         # "the episode", "The Riviera Kid".
         question = THE_EPISODE.sub(" ", question).replace("  ", " ")
-        hits, entries, about, dated = self._found(query, question, said)
+        hits, entries, about, dated = self._found(query, question, said, notes)
         t1 = time.perf_counter()
-        if not hits:
+        if not hits and not notes:
             return self._nothing(query, t1 - t0, 0)
         text = self._judge(entries, dated, query, about)
         missed = text.upper().startswith("NOTHING") and bool(asked)
@@ -523,7 +530,7 @@ class Archive:
             # "I" as the crew, found it. Only after a miss: his question is usually better
             # ("what was it called?" names what "it" is).
             own = in_their_words(asked)
-            found = self._found(own, own, said)
+            found = self._found(own, own, said, notes)
             if found[0] and not (again := self._judge(found[1], found[3], own, found[2])).upper().startswith(
                     "NOTHING"):
                 hits, text = found[0], again
@@ -543,9 +550,11 @@ class Archive:
         if not text or head.strip().upper().startswith("NOTHING"):
             return self._nothing(query, t1 - t0, t2 - t1, len(hits))
         answer = rest.strip() if head.strip().upper() == "ANSWER" else text
-        return Lookup(query, answer, len(hits), (t1 - t0) * 1000, (t2 - t1) * 1000, [query])
+        # Answered from his notes alone, it's still found.
+        return Lookup(query, answer, max(len(hits), 1), (t1 - t0) * 1000, (t2 - t1) * 1000, [query])
 
-    def _found(self, query: str, question: str, said: str) -> tuple[list[tuple[str | None, str]], str, str, str]:
+    def _found(self, query: str, question: str, said: str,
+               notes: str = "") -> tuple[list[tuple[str | None, str]], str, str, str]:
         """What a search finds, and how the judge is shown it: (the hits, the entries
         as text, which days it's about, and the question with its days as dates)."""
         hits = self.search(query, question=question)
@@ -555,6 +564,8 @@ class Archive:
         if said:
             hits.insert(0, (None, f"(Said in this conversation, by the crew:)\n{said}"))
         entries = "\n\n".join(text[:ENTRY_CHARS] for _, text in sorted(hits, key=lambda h: h[0] or ""))
+        if notes:  # first, and whole: they're short, and kept to a budget
+            entries = f"(His notes on earlier conversations:)\n{notes}" + (f"\n\n{entries}" if entries else "")
         about = f"\n(The question is about {', '.join(day(d) for d in days)}.)" if days else ""
 
         # The question's "yesterday" as its date, for the judge: told the day, and how an
@@ -813,7 +824,9 @@ class RecallTool(LookupTool):
             print(f"{DIM}  (recalling a report: reading '{reports[0]['title']}' instead){RESET}", flush=True)
             return research.handle({"action": "read", "title": reports[0]["title"]})
         said = turn.crew_lines()
-        found = await self.look_up(f"recalling: {query}", lambda: self.archive.recall(query, question, said, turn.user), turn)
+        notes = turn.notes()
+        found = await self.look_up(f"recalling: {query}",
+                                   lambda: self.archive.recall(query, question, said, turn.user, notes), turn)
         if isinstance(found, str):
             return found
         if found.results:

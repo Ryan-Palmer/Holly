@@ -34,6 +34,7 @@ class Turn:
     filler: Callable[[str], None] = lambda kind: None  # play a stock line of this kind now (on the event loop)
     answering_choice: bool = False  # the crew are answering his search-or-report question
     crew_lines: Callable[[], str] = lambda: ""  # what they've said in his history (Conversation.crew_lines)
+    notes: Callable[[], str] = lambda: ""  # his notes on older talk (Conversation.memory)
 
 
 class Tool:

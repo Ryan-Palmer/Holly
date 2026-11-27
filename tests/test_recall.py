@@ -221,18 +221,19 @@ class Remembers:
     def __init__(self):
         self.calls = []
 
-    def recall(self, query, question, said="", asked=""):
-        self.calls.append((query, question, said, asked))
+    def recall(self, query, question, said="", asked="", notes=""):
+        self.calls.append((query, question, said, asked, notes))
         return Lookup(query, "Jo and her mum June are coming tomorrow.", 1, 1.0, 1.0, [query])
 
 
 def test_the_recall_tool_passes_the_crews_lines_and_their_own_words():
     memory = Remembers()
-    turn = Turn("Holly, who's coming over tomorrow?", 3, SimpleNamespace(search_ms=0.0), crew_lines=lambda: SAID)
+    turn = Turn("Holly, who's coming over tomorrow?", 3, SimpleNamespace(search_ms=0.0), crew_lines=lambda: SAID,
+                notes=lambda: "About the crew:\nJo is the crew's sister.")
     told = asyncio.run(RecallTool(memory).run(
         {"query": "visit tomorrow", "question": "Who is coming over tomorrow?"}, turn))
     assert memory.calls == [("visit tomorrow", "Who is coming over tomorrow?", SAID,
-                             "Holly, who's coming over tomorrow?")]
+                             "Holly, who's coming over tomorrow?", "About the crew:\nJo is the crew's sister.")]
     assert told.startswith("Jo and her mum June are coming tomorrow.\n(This is your memory of it")
 
 
@@ -320,3 +321,27 @@ def test_warm_loads_the_vectors_before_any_search(cfg):
     a._by_meaning(["slugs"])
     assert a.vectors_read == 1  # the search read nothing
     Archive(dataclasses.replace(cfg.recall, embed_model=""), Embedder(), "m").warm()  # no model: nothing to do
+
+
+
+def test_recall_reads_his_notes_with_the_archive(cfg):
+    """His notes said the kit was for emptying the fire; the archive only that the hoover was
+    "to suck up the dirt". Answered from the archive alone, he said the dirt."""
+    seen = []
+
+    def judge(system, user):
+        seen.append(user)
+        return "ANSWER: For emptying the fire."
+
+    a = archive(cfg, FakeLm(side=judge))
+    a.add([entry(dt.datetime(2026, 11, 23, 9), "I got a special hoover to suck up the dirt.")])
+    notes = "About the crew:\nThe crew's kit for emptying the fire is a dust mask and a special hoover."
+    found = a.recall("special hoover", "What's the special hoover for?", notes=notes)
+    assert found.answer == "For emptying the fire." and found.results
+    assert seen[-1].startswith("(His notes on earlier conversations:)\nAbout the crew:")
+    assert "suck up the dirt" in seen[-1]
+    # Nothing in the archive, the notes alone are read.
+    found = a.recall("fireplace", "What do I clean with the hoover?", notes=notes)
+    assert found.answer == "For emptying the fire." and found.results
+    # No notes, nothing found: as before.
+    assert not a.recall("llamas", "Who has llamas?").results

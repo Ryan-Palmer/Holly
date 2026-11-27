@@ -373,7 +373,7 @@ class Holly:
                     f"\n[They've taken you up on what you offered: that's the {tool} tool, so call it.]")}]
             lookups = 0  # slow tools called this reply
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
-                        held or bool(took_up), self.convo.crew_lines)
+                        held or bool(took_up), self.convo.crew_lines, lambda: self.convo.memory)
             retried = False  # a reply was dropped part-way and asked again (once a turn)
             # "required": the reply must call a tool. So on a retry, and when the crew have just
             # chosen a report in answer to his search-or-report question: then he said "I'll get
