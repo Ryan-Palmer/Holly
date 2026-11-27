@@ -81,15 +81,6 @@ def test_saying_he_cant_tell_the_time_is_redone_with_the_clock(make_holly):
     assert "no clock" not in " ".join(holly.tts.said)
 
 
-def test_a_tool_call_written_as_text_is_never_said(make_holly):
-    lm = FakeLm(['recall{query:<|"|>Lister<|"|>}<tool_call|>', [("recall", {"query": "Lister"})], "Not much."],
-                side=lambda system, user: "NOTHING")
-    holly = make_holly(lm)
-    respond(holly, "Do you miss Lister?")
-    assert not any("<|" in s for s in holly.tts.said) and lm.requests[1]["tool_choice"] == "required"
-    assert holly.convo.history[-1]["content"] == "Not much."
-
-
 def test_a_stray_thought_is_dropped_and_asked_again(make_holly):
     lm = FakeLm(["Thought. ", "Hello there."])
     holly = make_holly(lm)
@@ -156,20 +147,6 @@ def test_recall(make_holly):
     respond(holly, "What does Jo do?")
     told = lm.requests[1]["messages"][-1]["content"]
     assert told.startswith("A vet.\n(This is your memory of it")
-
-
-@pytest.mark.parametrize("claim, user", [
-    ("I've checked my records and there's nothing on her.", "Who's Jo?"),
-    ("Sorry, the name's gone a bit foggy.", "Do you remember Jo?"),
-])
-def test_saying_he_looked_without_recall_is_redone_with_recall(make_holly, claim, user):
-    lm = FakeLm([claim, [("recall", {"query": "Jo"})], "Your sister. The vet."], side=judge_says("ANSWER: A vet."))
-    holly = make_holly(lm)
-    with_jo(holly)
-    respond(holly, user)
-    assert claim.split(".")[0] not in " ".join(holly.tts.said)  # never said
-    assert lm.requests[1]["tool_choice"] == "required"
-    assert tools_called(holly) == ["recall"] and holly.convo.history[-1]["content"] == "Your sister. The vet."
 
 
 def test_asked_if_he_remembers_he_must_look(make_holly):
@@ -580,10 +557,10 @@ def test_each_net_is_counted_as_it_fires(make_holly):
     from app import guards
     lm = FakeLm(["Fifty-six. Anything else you need me to work out?",
                  "A jigsaw. The Cat's having a standoff with a mirror. He's losing.",
-                 "I've checked my records.", [("recall", {"query": "Jo"})], "Nothing on her."])
+                 "Thought.", "Hello there."])
     holly = make_holly(lm)
-    respond(holly, "What's seven times eight?", "What should I get her?", "Who's Jo?")
-    assert holly.nets == {guards.OFFERED: 1, guards.ASIDE_CUT: 1, guards.CLAIMED: 1}  # the aside's rest: once
+    respond(holly, "What's seven times eight?", "What should I get her?", "Hello.")
+    assert holly.nets == {guards.OFFERED: 1, guards.ASIDE_CUT: 1, guards.STRAY: 1}  # the aside's rest: once
     assert holly.tts.said[:2] == ["Fifty-six.", "A jigsaw."]
 
 
@@ -591,16 +568,16 @@ def test_raw_the_nets_count_and_do_nothing(make_holly):
     """evals --raw: the model as it is. What a net would cut is said and kept, and nothing's
     asked again; each is still counted."""
     from app import guards
-    lm = FakeLm(["Fifty-six. Anything else you need me to work out?", "I've checked my records.", "Yeah?"])
+    lm = FakeLm(["Fifty-six. Anything else you need me to work out?", "I'll look into it while I doze.", "Yeah?"])
     holly = make_holly(lm)
     holly.nets_act = holly.convo.clean = False
-    respond(holly, "What's seven times eight?", "Who's Jo?", "Hey Holly")
+    respond(holly, "What's seven times eight?", "Can you research slugs for me?", "Hey Holly")
     assert len(lm.requests) == 3  # nothing asked again
-    assert " ".join(holly.tts.said) == ("Fifty-six. Anything else you need me to work out? I've checked my records. "
+    assert " ".join(holly.tts.said) == ("Fifty-six. Anything else you need me to work out? I'll look into it while I doze. "
                                         "Yeah?")
     assert holly.convo.history[1]["content"] == "Fifty-six. Anything else you need me to work out?"
     assert "Anything else" in lm.requests[1]["messages"][2]["content"]  # nor cut from what he sees
-    assert holly.nets == {guards.OFFERED: 1, guards.CLAIMED: 1, guards.ALONE: 1}
+    assert holly.nets == {guards.OFFERED: 1, guards.PROMISED: 1, guards.ALONE: 1}
 
 
 def test_a_report_with_nothing_to_report_on_is_his_to_ask_about(make_holly):

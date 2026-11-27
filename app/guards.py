@@ -10,22 +10,12 @@ from __future__ import annotations
 
 import re
 
-# A claim to have looked in his memory: "I've used the recall tool, but...", "I've
-# checked my records", "not in my files". Said without calling recall, it stuck: copied
-# from his history, he said it a dozen times in a row and recalled only when told to.
-# Checking his notes is fine (they're in his prompt): "I've checked my notes: Jo's a vet".
-# Saying something isn't in them is a claim to have looked.
-CLAIMED_RECALL = re.compile(
-    r"\brecall tool\b|\b(?:used|checked|searched|looked (?:through|in)|consulted|scanned|gone through) "
-    r"(?:through |in )?(?:my |the |your )?(?:own )?(?:records|archives?|files|memory banks?|data ?banks?|"
-    r"memory)\b|\bnot in my (?:records|archives?|files|memory|notes)\b|\b(?:no|any) records? (?:of|about|on)\b",
-    re.IGNORECASE)
-# Asked if he remembered something, he said he didn't, without calling recall ("the name's
-# gone a bit foggy", of Queeg; "lovely to meet you", to the crew's own girlfriend), and
-# recalled only when told to use it: his senility is for trivia, not for what's in his
-# archive. So asked about his memory, he can't say he doesn't remember until he's looked.
-MEMORY_ASKED = re.compile(r"\b(?:remember|recall|forgot(?:ten)?|forget|do you know (?:who|what|about)|"
-                          r"who(?:'s| is| was)|you met)\b", re.IGNORECASE)
+# A reply saying he doesn't remember ("the name's gone a bit foggy", "slipped my mind"): the
+# evals' scenarios check for it where he should have looked (app/scenarios.py). It was a net
+# too, with "I've checked my records" said without recall, and a tool call written out as
+# text: none of the three fired on Gemma, Inkling, Muse or Qwen, over ~1,300 replies in the
+# evals and 144 real ones, nor with the nets counting and not acting, so they came out
+# (27 November): his history no longer teaches them.
 FORGOT = re.compile(r"\b(?:don't|do not|can't|cannot|couldn't) (?:quite |really |honestly )?(?:remember|recall|"
                     r"place|bring (?:it|that|them|her|him) to mind)\b|\bslipped my mind\b|\bgone (?:a bit )?"
                     r"(?:foggy|fuzzy|blurry|hazy)\b|\bnot sticking\b|\bno idea who\b|\bnever heard of\b|"
@@ -123,11 +113,6 @@ _AMPM = r"\s?(?:am|pm|a\.m\.|p\.m\.)(?=\W|$)"
 CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}(?:" + _AMPM + r"|\b)|\b\d{1,2}" + _AMPM + r"|\b(?:\d{1,2}|"
                         + "|".join(_HOURS) + r")\s+o'clock\b", re.IGNORECASE)
 NEAR_MIN = 15  # an hour alone ("4 pm", "five o'clock") is said of a time this close to it
-# A tool call written out as text, in the model's own markup: asked "Do you miss Lister?",
-# Gemma's reply was `recall{query:<|"|>Lister<|"|>,...}<tool_call|>`, to be read aloud.
-# Matched as written, and as the sentence chunker leaves it (without "|" or "_"):
-# `recall{query:<"Lister<"}<toolcall`.
-TOOL_MARKUP = re.compile(r"<\||\|>|<tool_?call|<\"|\b\w+\{\w+:")
 # A closing offer of more help, a receptionist's: "Anything else you need me to dig up?",
 # "I'll be here if you need anything". At the end of reply after reply it became his
 # voice, and he copied it from his history every turn. Not said, and kept out of what he
@@ -194,12 +179,9 @@ GUESSED = " [That time was a guess, not from the clock: it's probably wrong.]"
 # with --raw, how often they would have, acting on nothing (app/evals.py). One a new model
 # never trips can come out. Asked again (unsaid, and a word alone):
 STRAY = "a stray word"
-MARKUP = "he wrote a tool call out as text"
 COUNTED = "he counted a timer down without the timer tool"
 TIMED = "he gave a time of day without the clock"
 NO_CLOCK_SAID = "he said he couldn't tell the time without calling the clock"
-CLAIMED = "he said he'd looked in his memory without calling recall"
-FORGOTTEN = "he said he didn't remember without calling recall"
 PROMISED = "he promised research without calling the research tool"
 ALONE = "a word alone"
 # Not said, nor kept (app/speak.py); and marked in his history:
@@ -208,32 +190,26 @@ GUESS_CUT = "a guessed time, not said"
 COUNT_CUT = "a countdown, not said"
 ASIDE_CUT = "a crew aside, not said"
 GUESS_MARKED = "a guessed time, marked as one in his history"
-NETS = (STRAY, MARKUP, COUNTED, TIMED, NO_CLOCK_SAID, CLAIMED, FORGOTTEN, PROMISED, ALONE,
+NETS = (STRAY, COUNTED, TIMED, NO_CLOCK_SAID, PROMISED, ALONE,
         OFFERED, GUESS_CUT, COUNT_CUT, ASIDE_CUT, GUESS_MARKED)
 
 
-def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researched: bool, can_recall: bool,
+def unsaid(sentence: str, user: str, *, stray: set[str], researched: bool,
            can_research: bool, answering_choice: bool, clocked: bool = False, can_clock: bool = False,
            counting: bool = False, told: list[str] | None = None) -> str | None:
-    """Why `sentence`, from a reply to `user`, mustn't be said, if it mustn't. `recalled`,
-    `researched`, `clocked`: he's called those tools in this reply; `can_...`: he has them;
+    """Why `sentence`, from a reply to `user`, mustn't be said, if it mustn't. `researched`,
+    `clocked`: he's called those tools in this reply; `can_...`: he has them;
     `answering_choice`: the crew are answering his search-or-report question; `counting`:
     a timer's set and he hasn't called the timer tool in this reply, so any count down is
     his guess; `told`: what he's been given this turn (the crew's line, tools' answers)."""
     if sentence.strip().strip(".!").lower() in stray:  # Gemma's lone "thought"
         return STRAY
-    if TOOL_MARKUP.search(sentence):
-        return MARKUP
     if counting and COUNTDOWN.search(sentence) and TIME_ASKED.search(user):
         return COUNTED  # (unasked, it isn't said: speak.py)
     if told is not None and can_clock and TIME_ASKED.search(user) and guessed_time(sentence, told):
         return TIMED  # (unasked, it isn't said: speak.py)
     if not clocked and can_clock and NO_CLOCK.search(sentence):
         return NO_CLOCK_SAID
-    if not recalled and can_recall and CLAIMED_RECALL.search(sentence):
-        return CLAIMED
-    if not recalled and can_recall and MEMORY_ASKED.search(user) and FORGOT.search(sentence):
-        return FORGOTTEN
     # Asked for research, or answering his search-or-report question ("go on then, write it
     # up"): he said he'd started a report and called nothing, four times in six. A question
     # isn't a promise: "shall I have a proper look while I doze?" is him asking which the
@@ -247,7 +223,7 @@ def unsaid(sentence: str, user: str, *, stray: set[str], recalled: bool, researc
 
 def needs_tool(why: str) -> bool:
     """Is a sentence dropped for this reason (from unsaid) redone with a tool required?"""
-    return any(w in why for w in ("recall", "research", "clock", "timer", "tool call"))
+    return any(w in why for w in ("research", "clock", "timer"))
 
 
 def minutes(time: str) -> tuple[set[int], bool]:

@@ -42,11 +42,11 @@ def test_holly_uses_his_models_profile(make_holly, cfg):
 def test_without_tool_choice_a_redo_is_just_asked_again(make_holly, cfg):
     import dataclasses
 
-    lm = FakeLm(["I've checked my records: nothing.", "No idea, sorry."])
+    lm = FakeLm(["I'll look into it while I doze.", "No idea, sorry."])
     no_choice = dataclasses.replace(cfg, llm=dataclasses.replace(cfg.llm, tool_choice=False,
                                                                  profiles={"": {"tool_choice": False}}))
     holly = make_holly(lm, cfg=no_choice)
-    asyncio.run(holly.respond("Who's Jo?"))
+    asyncio.run(holly.respond("Can you research slugs for me?"))
     assert [r["tool_choice"] for r in lm.requests] == [None, None]
 
 

@@ -53,28 +53,23 @@ def test_his_toolbox_has_every_rule_once(make_holly):
 
 
 def unsaid(sentence, user="Hello.", **kw):
-    state = dict(stray={"thought"}, recalled=False, researched=False, can_recall=True, can_research=True,
+    state = dict(stray={"thought"}, researched=False, can_research=True,
                  answering_choice=False) | kw
     return guards.unsaid(sentence, user, **state)
 
 
 def test_unsaid():
     assert unsaid("Thought.") == guards.STRAY
-    assert "recall" in unsaid("I've checked my records.")
-    assert unsaid("I've checked my records.", recalled=True) is None
-    assert unsaid("I've checked my records.", can_recall=False) is None
-    assert "didn't remember" in unsaid("I don't remember her.", "Do you remember Jo?")
-    assert unsaid("I don't remember her.", "Tell me a story.") is None
+    assert unsaid("I've checked my records.") is None  # (the net that caught it never fired: it came out)
     assert "research" in unsaid("I'll look into it while I doze.", "Research slugs.")
     assert unsaid("Shall I look into it while I doze?", "Research slugs.") is None  # a question, not a promise
     assert "research" in unsaid("I'm on it.", "Yes please.", answering_choice=True)
     assert unsaid("I'm on it.", "Yes please.") is None
-    assert guards.needs_tool(unsaid("I've checked my records.")) and not guards.needs_tool(guards.STRAY)
+    assert guards.needs_tool(unsaid("I'm on it.", "Yes please.", answering_choice=True))
+    assert not guards.needs_tool(guards.STRAY)
     assert "clock" in unsaid("It's Tuesday, I think. I've no clock of my own.", can_clock=True)
     assert unsaid("I've no clock of my own.", can_clock=True, clocked=True) is None
     assert guards.needs_tool(unsaid("No idea what time it is.", can_clock=True))
-    leaked = unsaid('recall{query:<|"|>Lister<|"|>}<tool_call|>')
-    assert leaked == guards.MARKUP and guards.needs_tool(leaked)
     assert unsaid("Lister? Miss him? Like a hole in the head.") is None
 
 

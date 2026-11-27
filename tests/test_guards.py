@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.guards import (CLAIMED_RECALL, CLOCK_TIME, COUNTDOWN, FORGOT, MEMORY_ASKED, NO_CLOCK, OFFER, OFFERED_REPORT,
+from app.guards import (CLOCK_TIME, COUNTDOWN, FORGOT, NO_CLOCK, OFFER, OFFERED_REPORT,
                         PROMISED_RESEARCH, REPORT_ASKED, REPORT_WANTED, RESEARCH_ASKED, reported_on, without_offers)
 
 CASES = [
@@ -18,12 +18,6 @@ CASES = [
      ["Want a summary?", "Quick search now, or shall I dig into it while I doze?", "How long for?",
       "It didn't list anything else.", "Is there anything in the fridge?", "It had no other data.",
       "Do you want me to open it?", "I'll be here, doing absolutely nothing."]),
-    (CLAIMED_RECALL, ["I've used the recall tool, but nothing.", "I've checked my records.", "It's not in my files.",
-                      "I have no record of that.", "It's not in my notes."],
-     ["I remember it well.", "Let me think.", "The record player's broken.", "Take notes.",
-      "I've checked my notes: Jo's a vet."]),
-    (MEMORY_ASKED, ["Do you remember Jo?", "Who's Jo?", "Have you forgotten my sister?", "Do you know who June is?"],
-     ["What's the weather like?", "Play some music."]),
     (FORGOT, ["I don't remember her.", "Name's gone a bit foggy.", "It's slipped my mind.", "Doesn't ring a bell.",
               "I can't quite place him.", "I don't have anything in my notes about a problem.",
               "I didn't have that in my files.", "I've got nothing on the company.", "Nothing in my notes."],
@@ -143,8 +137,7 @@ def test_every_net_has_a_name_of_its_own():
     """Counted by name (app/speak.py), so the evals show which a model still trips."""
     from app import guards
     assert len(set(guards.NETS)) == len(guards.NETS)
-    asked_again_with_a_tool = (guards.MARKUP, guards.COUNTED, guards.TIMED, guards.NO_CLOCK_SAID, guards.CLAIMED,
-                               guards.FORGOTTEN, guards.PROMISED)
+    asked_again_with_a_tool = (guards.COUNTED, guards.TIMED, guards.NO_CLOCK_SAID, guards.PROMISED)
     assert all(guards.needs_tool(n) for n in asked_again_with_a_tool)
     assert not guards.needs_tool(guards.STRAY) and not guards.needs_tool(guards.ALONE)
 
