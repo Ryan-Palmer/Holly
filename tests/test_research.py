@@ -228,3 +228,24 @@ def test_clear(cfg, web):
 
 def test_for_reading():
     assert R.for_reading("# T\n\n## Summary\nA [1, 2]. B [3].\n\n## Sources\n\n1. x") == "# T\n\n## Summary\nA. B."
+
+
+def test_list_a_day_or_a_week(cfg):
+    r = research(cfg)
+    now = dt.datetime(2026, 11, 23, 20, 0)  # a Monday
+    for i, (title, days) in enumerate([("Dashcams", 1), ("Heat pumps", 5), ("Board games", 12)]):
+        when = (now - dt.timedelta(days=days)).isoformat(timespec="seconds")
+        r.shelf.add({"id": f"r{i}", "title": title, "request": title, "asked": when, "finished": when,
+                     "stage": "done", "file": f"r{i}.md", "summary": "", "announced": True}, title)
+    week = r.handle({"action": "list", "title": "last week"}, now)
+    assert week.startswith("Reports from last week: 'Dashcams': finished") and "'Heat pumps'" in week
+    assert "Board games" not in week
+    assert r.handle({"action": "list", "title": "Tuesday"}, now) == "No reports asked for or finished Tuesday."
+
+
+def test_when_a_report_finished_is_said_as_the_crew_would():
+    # Listed as "Friday 27 November 2026", "the report from this morning" wasn't seen to be it.
+    now = dt.datetime(2026, 11, 27, 12, 30)
+    assert R.when_finished("2026-11-27T07:05:00", now) == "this morning (Friday 27 November 2026)"
+    assert R.when_finished("2026-11-26T20:33:00", now) == "yesterday evening (Thursday 26 November 2026)"
+    assert R.when_finished("2026-11-24T15:00:00", now) == "Tuesday 24 November 2026"

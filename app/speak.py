@@ -194,6 +194,11 @@ class Holly:
         self.player: Player | FacePlayer | None = None
         self.resuming: asyncio.Task | None = None  # at startup: the last session into his notes
         self.turns = 0  # replies so far this session
+        # Memories offered him unasked (_memory_for): each archive entry once a session, and
+        # when the last was; this turn's, for the evals and the console.
+        self.offered: set[int] = set()
+        self.offered_turn = -10**6
+        self.memory = ""
         # The nets on his replies (guards.NETS), each as it fires: they make up for a model's
         # habits, and the evals show which a model still trips. With nets_act off (evals
         # --raw) they're counted, and do nothing: the model as it is.
@@ -352,8 +357,9 @@ class Holly:
             # either way, what they chose is theirs, and research isn't held for asking which.
             # Or carried on past it: then his request says to leave it (persona.PASSED_OVER).
             held = bool(self.research_tool and self.research_tool.held_turn == self.turns - 1)
-            took_up = await asyncio.to_thread(self._taken_up, user)
-            messages = self.convo.messages_for(user, taken_up=took_up)
+            took_up, self.memory = await asyncio.gather(asyncio.to_thread(self._taken_up, user),
+                                                        self._memory_for(user))
+            messages = self.convo.messages_for(user, taken_up=took_up, memory=self.memory)
             asked = len(messages)
             lookups = 0  # slow tools called this reply
             turn = Turn(user, self.turns, times, lambda kind: self._say_filler(times, kind),
@@ -397,10 +403,17 @@ class Holly:
                 if await asyncio.to_thread(archive.about_the_past, self.lm, self.model, user,
                                            self._last_exchange()):
                     choice = required
+                    if self.memory:  # recall will answer it properly: no memory offered beside it
+                        last = messages[asked - 1]
+                        messages = [*messages[:asked - 1],
+                                    {**last, "content": last["content"].replace(f"\n[{self.memory}]", "")}]
+                        self.memory = ""
 
             def told() -> list[str]:
-                """What he's been given this turn: the crew's line, and his tools' answers."""
-                return [user] + [m.get("content") or "" for m in messages[asked:] if m["role"] == "tool"]
+                """What he's been given this turn: the crew's line, a memory offered, and his
+                tools' answers."""
+                return ([user] + ([self.memory] if self.memory else [])
+                        + [m.get("content") or "" for m in messages[asked:] if m["role"] == "tool"])
 
             def crew_unasked() -> bool:
                 """Nobody asked about the crew of Red Dwarf, nor just before, and he's giving no
@@ -628,6 +641,44 @@ class Holly:
             if m["role"] == "user" and (users := users + 1) == exchanges:
                 break
         return " / ".join(reversed(said))
+
+    async def _memory_for(self, user: str) -> str:
+        """A memory to offer him with `user`: what the crew said on another day about the same
+        thing (archive.memory_offered), as a note for his request; or "". Not for a line too
+        short to be about anything, nor more than once every `offer_every` replies, nor the same
+        memory twice; and dropped, so as not to hold up his reply, if not found in `offer_ms`
+        (one short question to the model: it ends soon after anyway)."""
+        cfg = self.cfg.recall
+        if (not (cfg.offer_memories and self.archive) or user.startswith("[") or len(user.split()) < 4
+                or self.turns - self.offered_turn < cfg.offer_every):
+            return ""
+
+        def find() -> tuple[int, str, str] | None:
+            found = [m for m in self.archive.memories(user) if m[0] not in self.offered]
+            n = archive.memory_offered(self.lm, self.model, user, found)
+            return next((m for m in found if m[0] == n), None)
+
+        t0 = time.perf_counter()
+        try:
+            got = await asyncio.wait_for(asyncio.to_thread(find), cfg.offer_ms / 1000)
+        except asyncio.TimeoutError:
+            print(f"{DIM}  (a memory to offer: not found in {cfg.offer_ms} ms){RESET}", flush=True)
+            return ""
+        except Exception as e:  # LM Studio busy or gone: he answers as he would have
+            print(f"{DIM}  (a memory to offer: {e!r}){RESET}", flush=True)
+            return ""
+        if not got:
+            return ""
+        n, day, said = got
+        self.offered.add(n)
+        self.offered_turn = self.turns
+        print(f"{DIM}  (a memory offered, {(time.perf_counter() - t0) * 1000:.0f} ms: {day}: {said[:80]}){RESET}",
+              flush=True)
+        when = f"on {day} " if day else ""
+        # "The crew", as he calls them: told "they told you" of a memory naming Jo, he called the
+        # crew Jo ("I'm sorry, Jo").
+        return (f"From your memory, which may or may not fit: {when}the crew told you: \"{said}\" Bring it up only "
+                "if it fits naturally, in your own words, as something you remember; never force it.")
 
     def _taken_up(self, user: str) -> bool | None:
         """Are the crew taking him up on something he offered or asked about doing in his last

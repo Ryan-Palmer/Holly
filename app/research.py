@@ -41,7 +41,7 @@ from .console import DIM, RESET
 from .guards import REPORT_WANTED
 from .lmstudio import LmStudio
 from .persona import day, today
-from .reports import Reports, telling
+from .reports import Reports, days_named, telling
 from .search import PROVIDERS, _clean, fetch_page
 from .tools import Tool, Turn
 
@@ -55,15 +55,18 @@ TOOL = {
                        "while you doze between conversations, and you're told when the report is ready. Also: "
                        "sum up a finished report, read the whole of one (to talk the crew through it or answer "
                        "details), or open one on the crew's screen, found from the crew's own words for it, "
-                       "among all your reports; list research under way or finished this week; or cancel some.",
+                       "among all your reports; list research under way or finished this week, or the reports "
+                       "from a day or a week; or cancel some.",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": list(ACTIONS)},
                 "title": {"type": "string", "description":
                           "A short title: 'Heat pumps for an old house'. For cancel, summary, read or open: which "
-                          "one, in the crew's words ('the heat pump one'); empty for the latest report; to "
-                          "cancel everything, 'all'."},
+                          "one, in the crew's words, with any day they gave ('the heat pump one', 'yesterday's "
+                          "report', 'the one from this morning', 'the one from Wednesday'): it finds the one from "
+                          "then; empty for the latest report; to cancel everything, 'all'. For list: empty for "
+                          "lately, or the day or week asked about ('last week', 'this morning', 'Tuesday')."},
                 "request": {"type": "string", "description":
                             "For start: what the crew want to know, in full, with anything they asked to be "
                             "covered or left out."},
@@ -184,6 +187,19 @@ def slug(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:50] or "report"
 
 
+def when_finished(iso: str, now: datetime.datetime) -> str:
+    """When a report finished, as the crew would put it: listed as "Friday 27 November 2026",
+    "the report from this morning" wasn't seen to be the one finished at 7 that day."""
+    t = datetime.datetime.fromisoformat(iso)
+    part = "morning" if t.hour < 12 else "afternoon" if t.hour < 18 else "evening"
+    ago = (now.date() - t.date()).days
+    if ago == 0:
+        return f"this {part} ({day(t.date())})"
+    if ago == 1:
+        return f"yesterday {part} ({day(t.date())})"
+    return day(t.date())
+
+
 def announcement(job: dict) -> str:
     """What Holly is told, as the crew's turn, when a job is finished (or given up)."""
     if job["stage"] == "failed":
@@ -258,7 +274,7 @@ class Research:
             return f"The research tool has no action {action!r}; use one of: {', '.join(ACTIONS)}."
         title = " ".join(str(args.get("title") or "").split())
         if action == "list":
-            return self._listing()
+            return self._listing(title, now)
         if action == "cancel":
             with self._lock:
                 gone = [j for j in self._matching(title) if j["stage"] in UNFINISHED]
@@ -269,12 +285,12 @@ class Research:
                 return f"No research under way called {title!r}. " + self._listing()
             return "Cancelled: " + ", ".join(j["title"] for j in gone) + "."
         if action in ("open", "summary", "read"):
-            if not (picks := self.shelf.find(title)):
+            if not (picks := self.shelf.find(title, now=now)):
                 return f"There's no finished report on {title!r}. " + self._listing()
             if len(picks) > 1 or (action == "open" and not picks[0].get("sure")):
                 return self.which(picks)
             job = picks[0]
-            finished = day(datetime.date.fromisoformat(job["finished"][:10]))
+            finished = when_finished(job["finished"], now)
             path = self.cfg.dir / job["file"]
             # Others nearly as likely: if the crew say it's the wrong one, Holly knows the right title.
             also = (" (If the crew meant another: there's also " + " and ".join(f"'{t}'" for t in job["also"])
@@ -333,9 +349,20 @@ class Research:
     def finished_titles(self) -> list[str]:
         return self.shelf.titles()
 
-    def _listing(self) -> str:
+    def _listing(self, when: str = "", now: datetime.datetime | None = None) -> str:
         """What's under way, and what's finished lately: not every report ever, which
-        at a few a day would soon be hundreds."""
+        at a few a day would soon be hundreds. Or, given days ("last week", "Wednesday"),
+        the reports from then."""
+        now = now or datetime.datetime.now()
+        if spans := days_named(when, now.date()):
+            then = self.shelf.on(spans, at_most=LIST_MAX + 1)
+            if not then:
+                return f"No reports asked for or finished {when}."
+            lines = [f"'{r['title']}': finished {when_finished(r['finished'], now)}"
+                     for r in then[:LIST_MAX]]
+            more = (" And more besides, not listed: ask the crew what it was about, and find it with their "
+                    "words for it." if len(then) > LIST_MAX else "")
+            return f"Reports from {when}: " + "; ".join(lines) + "." + more
         lines = []
         for j in self.jobs:
             if j["stage"] == "plan":
@@ -347,7 +374,7 @@ class Research:
                                              else ""))
         recent, older = self.shelf.recent(days=LIST_DAYS, at_most=LIST_MAX)
         for r in recent:
-            when = day(datetime.date.fromisoformat(r["finished"][:10]))
+            when = when_finished(r["finished"], now)
             lines.append(f"'{r['title']}': finished {when}" if r["stage"] == "done" else
                          f"'{r['title']}': given up {when} ({r['error']})")
         if not lines and not older:

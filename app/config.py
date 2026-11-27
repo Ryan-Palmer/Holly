@@ -148,6 +148,12 @@ class RecallConfig:
     min_similarity: float = 0.5
     summary_max_tokens: int = 200
     fillers: tuple[str, ...] = ()
+    # A memory offered, unasked: what the crew said on another day about what they're telling
+    # him now, found as they finish (app/speak.py), to bring up if it fits. At most one every
+    # offer_every replies, each memory once a session; dropped if not found in offer_ms.
+    offer_memories: bool = True
+    offer_every: int = 3
+    offer_ms: int = 400
 
 
 @dataclass(frozen=True)

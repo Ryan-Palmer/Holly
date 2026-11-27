@@ -33,3 +33,9 @@ def test_scenario(loaded, tmp_path, scenario):
     scenarios.seed(holly)
     turns, wrong = asyncio.run(scenarios.run(holly, scenario))
     assert not wrong, f"{wrong}: " + " / ".join(f"{t.said!r} -> {t.reply!r} {t.tools}" for t in turns)
+
+
+def test_ordinal():
+    from app.scenarios import ordinal
+    assert [ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 30)] == [
+        "1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "30th"]

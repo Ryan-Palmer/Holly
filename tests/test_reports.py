@@ -135,3 +135,46 @@ def test_recent_and_clear(tmp_path):
     assert s.titles(2) == ["Board games for ten-year-olds", "Christmas presents for a ten-year-old"]
     assert sorted(s.clear()) == [f"r{i}.md" for i in range(len(SHELF))]
     assert s.find("the espresso one", now=NOW) == []
+
+
+def test_days_named_and_taken_out():
+    monday = NOW.date()
+    assert RP.days_named("yesterday's report", monday) == [(dt.date(2026, 11, 22), dt.date(2026, 11, 22))]
+    assert RP.days_named("the one from this morning", monday) == [(monday, monday)]
+    assert RP.days_named("last week's reports", monday) == [(dt.date(2026, 11, 16), dt.date(2026, 11, 22))]
+    assert RP.days_named("the espresso one", monday) == []
+    assert RP.without_days("the ten-year-old one from Saturday morning") == "the ten-year-old one from"
+    assert RP.without_days("the report from 13 November") == "the report from"
+
+
+def test_a_day_says_which_report(tmp_path):
+    # "Yesterday's report" was the newest, whichever day that was; "this morning" searched for "morning".
+    s = shelf(tmp_path)
+    picks = s.find("the one from Saturday", now=NOW)
+    assert titles(picks) == ["Board games for ten-year-olds"] and picks[0]["sure"]
+    assert titles(s.find("the report from Wednesday", now=NOW)) == ["Keeping chickens in the garden"]
+    assert titles(s.find("the report from 13 November", now=NOW)) == ["Budget espresso machines"]
+    assert s.find("the one from Tuesday", now=NOW) == []
+    week = s.find("last week's report", now=NOW)
+    assert titles(week) == ["Christmas presents for a ten-year-old", "Board games for ten-year-olds",
+                            "Keeping chickens in the garden"] and not any(p.get("sure") for p in week)
+    # Asked for yesterday, finished this morning: either day finds it.
+    s.add(dict(job(7, "Puppy training", "How do we train a puppy?", "Short sessions.", 0.45),
+               asked=(NOW - dt.timedelta(days=1)).isoformat(timespec="seconds")), "Short sessions, often.")
+    assert titles(s.find("this morning's report", now=NOW)) == ["Puppy training"]
+    assert set(titles(s.find("the one I asked for yesterday", now=NOW))) == {
+        "Puppy training", "Christmas presents for a ten-year-old"}
+
+
+def test_a_day_and_what_it_was_about(tmp_path):
+    s = shelf(tmp_path)
+    picks = s.find("the ten-year-old one from Saturday", now=NOW)  # two ten-year-old reports: the day decides
+    assert titles(picks) == ["Board games for ten-year-olds"] and picks[0]["sure"]
+    # A day misremembered: what it was about still finds it.
+    assert titles(s.find("the espresso one from Tuesday", now=NOW)) == ["Budget espresso machines"]
+
+
+def test_a_date_said_aloud():
+    assert RP.days_named("the report from the 19th of November", NOW.date()) == [
+        (dt.date(2026, 11, 19), dt.date(2026, 11, 19))]
+    assert RP.without_days("the report from the 19th of November") == "the report from the"

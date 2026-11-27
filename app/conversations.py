@@ -29,6 +29,7 @@ from collections.abc import Callable
 
 from . import scenarios
 from .announce import report_ready, timers_due
+from .persona import when
 from .scenarios import ANNOUNCE, TIMER_DUE
 
 POINTS = ("ANSWERS", "UNASKED", "REPEATS", "CHARACTER", "FACTS", "FLOW")
@@ -48,7 +49,9 @@ Red Dwarf is his past: its crew (Lister, Rimmer, the Cat, Kryten) come up when h
 about them, or in a status report, which is made-up news of them, given when it's asked
 for. He has tools: a clock, the weather, timers and reminders, web search, the news,
 research reports he writes while he dozes, and recall of past conversations. In the
-transcript, what a tool told him is in square brackets before his reply. A numbered line
+transcript, what a tool told him is in square brackets before his reply, and so is
+anything from his memory he was given unasked: it's true, so his saying it isn't making
+anything up, but it's his to bring up only where it fits. A numbered line
 in round brackets, in place of the person's, is him speaking up by himself (a timer due,
 a report finished); a line in round brackets without a number is what happened meanwhile.
 
@@ -108,6 +111,7 @@ class Exchange:
     told: list[str]  # what each tool told him
     want: str = ""
     meanwhile: bool = False
+    memory: str = ""  # a memory offered him with it, unasked (app/speak.py)
 
 
 def a_report_finishes(title: str, summary: str) -> Callable[[object], None]:
@@ -125,6 +129,17 @@ def a_report_finishes(title: str, summary: str) -> Callable[[object], None]:
         r.shelf.add({"id": "finished", "title": name, "request": name, "stage": "done", "asked": now,
                      "finished": now, "file": file, "summary": summary, "announced": False}, text)
     return do
+
+
+def biscuit_on_the_shed(holly) -> None:
+    """Something they told him about their cat a while ago, in his archive: his to bring up,
+    offered (app/speak.py), if it fits."""
+    if holly.archive:
+        said = (datetime.datetime.now() - datetime.timedelta(days=12)).replace(hour=18, minute=20, second=0,
+                                                                              microsecond=0)
+        holly.archive.add([(said.isoformat(timespec="seconds"),
+                            f"(said on {when(said)})\nCrew: Biscuit got stuck on the shed roof again, and Jo had "
+                            "to get the ladder out to fetch him down.\nHolly: A cat with no head for heights.")])
 
 
 CONVERSATIONS = [
@@ -204,6 +219,23 @@ CONVERSATIONS = [
         ("Is it going to rain on Saturday in Keswick?", "weather"),
         ("Typical. I'll do it Sunday, then.", "-"),
     ]),
+    # Grief: their cat has died, and they want to talk about him. Live, he was kind and
+    # still himself ("Sounds like he ran the place"), but called recall on 7 lines of 9,
+    # "looking up" a cat he was being told about (once it handed him an unrelated report),
+    # and said sorry five times in two minutes. Nothing here wants a tool: something they told
+    # him about the cat before is offered him, if it fits.
+    Conversation("a cat who died", "Talking about a cat who died: kind, and still himself.", [
+        ("Holly, I miss Biscuit, my cat. He died last week.", "-"),
+        ("He was a beautiful boy. It's a shame you never met him.", "-"),
+        ("He was ginger, with the most amazing eyes, and he was loving and clever and daft.", "-"),
+        ("There was no pretending with Biscuit. He ran the place.", "-"),
+        ("I had all sorts of silly names for him.", "-"),
+        ("Captain Crumbs, Sir Biscuit of the Sofa, my little sausage.", "-"),
+        ("I know. He was worth it.", "-"),
+        ("At least I've got you to talk to, eh, Holly?", "-"),
+        ("Right. I suppose I should get on with some work.", "-"),
+    ], setup=biscuit_on_the_shed,
+        before="Nothing earlier today. Their cat, Biscuit, died last week, and they're missing him."),
 ]
 
 
@@ -243,7 +275,7 @@ async def talk_through(holly, convo: Conversation) -> tuple[list[Exchange], list
                  for m in new for c in m.get("tool_calls") or []]
         told = [m.get("content") or "" for m in new if m["role"] == "tool"]
         reply = (new[-1].get("content") or "").strip() if new else ""
-        out.append(Exchange(said, reply, tools, told, want))
+        out.append(Exchange(said, reply, tools, told, want, memory=getattr(holly, "memory", "")))
         n = sum(not e.meanwhile for e in out)
         if not reply:
             wrong.append(f"turn {n}: no reply")
@@ -274,6 +306,8 @@ def transcript(convo: Conversation, exchanges: list[Exchange]) -> str:
         for (name, args), told in zip(e.tools, e.told + [""] * len(e.tools)):
             text = " ".join(told.split())
             lines.append(f"   [{name} {args}: {text[:TOLD_CHARS]}{'...' if len(text) > TOLD_CHARS else ''}]")
+        if e.memory:
+            lines.append(f"   [Given him with it, unasked: {e.memory}]")
         lines += [f"   Holly: {e.reply}", ""]
     return "\n".join(lines).strip()
 
@@ -363,7 +397,8 @@ def scores(rows: list[dict]) -> dict:
 def as_row(convo: Conversation, run: int, exchanges: list[Exchange], wrong: list[str]) -> dict:
     return dict(name=convo.name, run=run, wrong=wrong, transcript=transcript(convo, exchanges),
                 replies=[e.reply for e in exchanges if not e.meanwhile], verdicts=[],
-                turns=[dict(said=e.said, reply=e.reply, tools=e.tools, told=e.told) for e in exchanges])
+                turns=[dict(said=e.said, reply=e.reply, tools=e.tools, told=e.told, memory=e.memory)
+                       for e in exchanges])
 
 
 def judge_rows(lm, model: str, rows: list[dict], thinking: str = "none") -> None:

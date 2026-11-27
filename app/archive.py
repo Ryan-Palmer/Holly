@@ -118,13 +118,17 @@ EARLIER_PICKED = 4  # lines said earlier on a day about "tonight", for a questio
 
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
           "october", "november", "december"]
-_DATE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(" + "|".join(MONTHS) + r")\b", re.IGNORECASE)
+# "21 November", "the 21st of November": said the second way, it wasn't read as a day.
+_DATE = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(" + "|".join(MONTHS) + r")\b", re.IGNORECASE)
 
 ENTRY_CHARS = 1500  # of each entry, for the judge: a long story needn't be read whole
 EMBED_CHARS = 2000  # of each entry, for its vector: nomic-embed reads 2,048 tokens at most
 EMBED_BATCH = 32
 # nomic-embed wants to be told which side of a search a text is on.
 DOC_PREFIX, QUERY_PREFIX = "search_document: ", "search_query: "
+OFFER_EACH = 3  # memories to offer him: the best this many by keyword, and in meaning
+OFFER_WORDS = 4  # the crew's words in one, at least
+OFFER_CHARS = 300  # of the crew's words in one, at most
 DAY_ENTRIES = 20  # at most, for a day asked about
 DAY_PICKED = 12  # of them, at most, matching what was asked: the rest spread across the day
 NAMED_PAGES = 3  # pages of the ship's records found by name, at most
@@ -331,28 +335,54 @@ class Archive:
 
     # Finding --------------------------------------------------------------
 
+    def _key_words(self, text: str) -> list[str]:
+        """The words of `text` to search for."""
+        # A month is left out only as part of a date ("21 November"): April, May and
+        # June are names too, and a search for one alone had no words left.
+        # "may", without its capital, is the verb.
+        # Day words too ("last night", "until Monday"): the day is found by days_in, and
+        # "night" as a word to match would pick that day's "good night" first.
+        out = []
+        for w in re.findall(r"[A-Za-z0-9']+", _DATE.sub(" ", _DAY_WORDS.sub(" ", text))):
+            if w == "may":
+                continue
+            w = w.lower().removesuffix("'s").strip("'")
+            if len(w) > 1 and w not in self.stopwords and w not in out:
+                out.append(w)
+        return out
+
+    def memories(self, line: str, n: int = OFFER_EACH) -> list[tuple[int, str, str]]:
+        """What the crew said on other days that might go with `line`, to offer him: the
+        best `n` by keyword and the closest `n` in meaning, each (rowid, its day, their
+        words). Their words only: not his old replies, to copy, nor a tool's answer with its
+        instructions to him then; and the day, not the time (a time in his reply is cut
+        unless asked for). Nothing too short to be about anything ("Evening, Holly")."""
+        ids: list[int] = []
+        if words := self._key_words(line):
+            with self.lock:
+                ids += [r[0] for r in self.db.execute(
+                    "SELECT rowid FROM entries WHERE entries MATCH ? ORDER BY bm25(entries) LIMIT ?",
+                    (" OR ".join(f'"{w}"' for w in words), n))]
+        ids += [i for i in self._by_meaning([line])[:n] if i not in ids]
+        if not ids:
+            return []
+        with self.lock:
+            texts = dict(self.db.execute(f"SELECT rowid, text FROM entries WHERE rowid IN ({','.join('?' * len(ids))})",
+                                         ids).fetchall())
+        out = []
+        for i in ids:
+            day, said = crew_said(texts.get(i, ""))
+            if len(said.split()) >= OFFER_WORDS:
+                out.append((i, day, said))
+        return out
+
     def search(self, query: str, on: datetime.date | None = None,
                question: str = "") -> list[tuple[str | None, str]]:
         """Entries from days `query` or `question` (what was asked) names, matching
         `query`'s key words, and closest in meaning to either. `on` is today, for
         working out the days."""
         on = on or datetime.date.today()
-
-        def key_words(text: str) -> list[str]:
-            # A month is left out only as part of a date ("21 November"): April, May and
-            # June are names too, and a search for one alone had no words left.
-            # "may", without its capital, is the verb.
-            # Day words too ("last night", "until Monday"): the day is found by days_in, and
-            # "night" as a word to match would pick that day's "good night" first.
-            out = []
-            for w in re.findall(r"[A-Za-z0-9']+", _DATE.sub(" ", _DAY_WORDS.sub(" ", text))):
-                if w == "may":
-                    continue
-                w = w.lower().removesuffix("'s").strip("'")
-                if len(w) > 1 and w not in self.stopwords and w not in out:
-                    out.append(w)
-            return out
-
+        key_words = self._key_words
         words = key_words(query)
         found: dict[int, tuple[str | None, str]] = {}
         # The day may be in either: asked "what did we talk about yesterday?", he searched
@@ -636,6 +666,11 @@ decided or told him, people in their life and their news, earlier conversations,
 happened on Red Dwarf (its crew, places, adventures).
 OTHER: everything else. Things they're telling him now, remarks and reactions, how Holly feels about \
 something, facts about the world, news, weather, the time, sums, requests and chat.
+Telling isn't asking. Someone telling him about the past (what a person or a pet was like, what they did, \
+what they used to call them, someone who's died, their own childhood) is telling him now: OTHER, however \
+long ago it was, and so is carrying on telling him, after he's answered (the names they called them, more \
+of what they were like). It's PAST only when they want him to remember it: a question, or "do you \
+remember...", "remind me...", "did I tell you...".
 Judge only what they say now. "Just before" is there so you can tell what a follow-up question refers to \
 ("and who was in charge of them?" asks more about that memory: PAST). A remark or reaction ("fair enough", \
 "typical", "ha, that sounds right") is OTHER, and so is a question or remark about the news, weather, time \
@@ -649,6 +684,50 @@ up to?" after it is OTHER. A research report he wrote before is PAST. Asking whe
 or what they're doing ("where's Kryten?", "is Lister about?"), is OTHER: he makes that up, with nothing to \
 remember.
 Reply with one word: PAST or OTHER."""
+
+
+# A memory offered, unasked (app/speak.py): what the crew said on another day, given him with
+# what they've just said, to bring up if it fits. Telling him about their cat, he'd called
+# recall on line after line to look it up; better he's handed what he knows, and needn't.
+# But a search always finds something ("a new drill" found "Left, left, left"), and a memory
+# dragged in is worse than none: so the model says whether one is about the same thing. Told
+# only that, it matched a place named in passing: the weather in Keswick brought up Jo, who
+# lives there, 6 times in 12 conversations, and he worked her in every time. How sure it was
+# (log probabilities) didn't tell those apart: 97 to 99%, as sure as of the right ones.
+OFFER_PROMPT = """\
+Holly, a household computer, is about to answer what someone has just said to him. Below it are some \
+things they said to him on other days. Is one of them about the very same particular thing in their \
+own life (the same person, pet, plan, object, dish or event) as what they say now, so that remembering \
+it now would come naturally, and show he listens? Sharing a word, a place or a general subject isn't \
+enough: "I need a new kettle" and "the kettle's broken again" are the same thing; "I'm tired" and "I \
+was tired after the gym on Monday" aren't, and nor are "what's the weather in Leeds?" and "my brother \
+lives in Leeds". NONE, too, when what they say now asks him for something (the weather, the news, the \
+time, a search) or is about something just said ("tell me more about that one"): what's in front of him \
+is the answer. Red Dwarf and its crew (Lister, Rimmer, the Cat, Kryten) are never their own life.
+Reply with its number, or NONE."""
+
+
+def crew_said(entry: str) -> tuple[str, str]:
+    """An archive entry's day ("Tuesday 24 November") and what the crew said in it."""
+    m = re.search(r"\(said on (\w+ \d+ \w+) \d{4}", entry)
+    day = m.group(1) if m else ""
+    said = " ".join(line[len("Crew: "):].strip() for line in entry.splitlines() if line.startswith("Crew: "))
+    said = " ".join(said.split())
+    return day, said if len(said) <= OFFER_CHARS else said[:OFFER_CHARS].rsplit(" ", 1)[0] + " ..."
+
+
+def memory_offered(lm: LmStudio, model: str | None, line: str, memories: list[tuple[int, str, str]]) -> int | None:
+    """Which of `memories` (Archive.memories) is about what's just been said, as the model
+    judges it: its rowid, or None. Raises if LM Studio can't answer."""
+    if not memories:
+        return None
+    listed = "\n".join(f"{k}. ({day}) {said}" if day else f"{k}. {said}"
+                        for k, (_, day, said) in enumerate(memories, 1))
+    text = lm.ask(OFFER_PROMPT, f"They say now: {line}\n\nOn other days they said:\n{listed}", model,
+                  max_tokens=4, temperature=0)
+    m = re.match(r"\W*(\d+)", text)
+    k = int(m.group(1)) if m else 0
+    return memories[k - 1][0] if 1 <= k <= len(memories) else None
 
 
 def judged_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:

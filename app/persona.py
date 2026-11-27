@@ -224,13 +224,15 @@ class Conversation:
                  and not any(p in w or w in p for w in worn)]
         return worn[:at_most]
 
-    def messages_for(self, user_text: str | None = None, taken_up: bool | None = None) -> list[dict]:
+    def messages_for(self, user_text: str | None = None, taken_up: bool | None = None,
+                     memory: str = "") -> list[dict]:
         """The full message list to send for a new user line. The time isn't
         here: he asks the clock tool for it (app/clock.py). Without
         `user_text`, just the preamble and history. After `user_text`, notes:
         to stay in character (IN_CHARACTER), if he's fallen into a rut
         (worn_phrases), that he has, and if they've passed over what he offered
-        (`taken_up` False, app/offers.py), to leave it (PASSED_OVER). They're
+        (`taken_up` False, app/offers.py), to leave it (PASSED_OVER); and a
+        `memory` offered (app/speak.py), to bring up if it fits. They're
         in this request only: not kept in
         his history, and being last, they leave LM Studio's cache of the rest.
         His replies in the history are sent without their offers of more help
@@ -262,6 +264,8 @@ class Conversation:
             if worn := self.worn_phrases(history=history):
                 user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
                               + ". Put it differently this time.]")
+            if memory:
+                user_text += f"\n[{memory}]"
             if taken_up is False:
                 note += f"\n{PASSED_OVER}"
             tail = [{"role": "user", "content": f"{user_text}\n{note}"}]

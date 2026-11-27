@@ -25,11 +25,13 @@ from pathlib import Path
 
 import numpy as np
 
-from .archive import DOC_PREFIX, QUERY_PREFIX, STOPWORDS, _unit
+from .archive import _DATE, DOC_PREFIX, QUERY_PREFIX, STOPWORDS, _unit, days_in
+from .persona import _DAY_WORDS
 
 # Words that don't say which report: "the report on heat pumps" is "heat pumps".
 REPORT_NOISE = {"the", "a", "an", "on", "about", "of", "for", "my", "that", "this", "one", "report", "reports",
-                "research", "summary", "open", "show", "me", "it", "you", "did", "do", "into", "read", "found"}
+                "research", "summary", "open", "show", "me", "it", "you", "did", "do", "into", "read", "found",
+                "asked", "wrote", "written", "finished", "got", "gave", "made", "from"}
 # The best is taken as the one meant only if it scores SURE and the next best under MARGIN of it:
 # "Strength Training for Longevity" at 10.9 beat "Beginner running plans" for "getting fit", and
 # by a score alone, the wrong one would have been read. Short of that, Holly gets a shortlist,
@@ -57,6 +59,34 @@ RECENT_BOOST, RECENT_HALF_DAYS = 0.3, 7.0
 EMBED_RETRY_S = 60.0  # after the embedding model failed, finding by meaning is off this long
 COLUMNS = ("n", "id", "title", "request", "summary", "file", "asked", "finished", "stage", "error", "announced",
            "tries", "retry", "work_s")
+
+
+# A day the crew name a report by ("yesterday's report", "the one from Wednesday", "this
+# morning's", "last week's"): one asked for or finished then. The day words were dropped
+# from the search, so "yesterday's report" was the newest, whichever day that was; and
+# "this morning" searched for "morning", and found nothing.
+_TODAY = re.compile(r"\b(?:earlier\s+)?this\s+(?:morning|afternoon|evening)\b|\bearlier\s+on\b", re.IGNORECASE)
+_WEEK = re.compile(r"\b(this|last)\s+week\b", re.IGNORECASE)
+PART_OF_DAY = {"morning", "afternoon", "evening", "night", "earlier"}  # "yesterday morning" is yesterday's
+
+
+def days_named(words: str, on: datetime.date) -> list[tuple[datetime.date, datetime.date]]:
+    """The days `words` name, as spans (first, last), looking back from `on`."""
+    spans = [(d, d) for d in days_in(words, on)]
+    if _TODAY.search(words):
+        spans.append((on, on))
+    for m in _WEEK.finditer(words):
+        monday = on - datetime.timedelta(days=on.weekday())
+        spans.append((monday, on) if m.group(1).lower() == "this"
+                     else (monday - datetime.timedelta(days=7), monday - datetime.timedelta(days=1)))
+    return spans
+
+
+def without_days(words: str) -> str:
+    """What's left to say which report, the days taken out."""
+    for pattern in (_WEEK, _TODAY, _DATE, _DAY_WORDS):
+        words = pattern.sub(" ", words)
+    return " ".join(w for w in words.split() if w.lower().strip("'s") not in PART_OF_DAY)
 
 
 def telling(words: str) -> set[str]:
@@ -183,6 +213,15 @@ class Reports:
             total = self.db.execute("SELECT count(*) FROM reports").fetchone()[0]
         return rows, total - len(rows)
 
+    def on(self, spans: list[tuple[datetime.date, datetime.date]], at_most: int = -1) -> list[dict]:
+        """The finished reports asked for or finished on those days (days_named), newest first."""
+        if not spans:
+            return []
+        either = " OR ".join(["substr(asked, 1, 10) BETWEEN ? AND ? OR substr(finished, 1, 10) BETWEEN ? AND ?"]
+                             * len(spans))
+        args = tuple(d.isoformat() for a, b in spans for d in (a, b, a, b))
+        return self._rows(f"stage = 'done' AND ({either})", args, limit=at_most)
+
     def has(self, report_id: str) -> bool:
         with self.lock:
             return self.db.execute("SELECT 1 FROM reports WHERE id = ?", (report_id,)).fetchone() is not None
@@ -226,13 +265,22 @@ class Reports:
         if exact := self._rows("stage = 'done' AND lower(title) = ?", (words.lower(),), limit=1):
             exact[0]["sure"] = True
             return exact
+        now = now or datetime.datetime.now()
+        spans = days_named(words, now.date())
+        if spans:
+            words = without_days(words)
         asked = telling(words)
+        then = self.on(spans) if spans else []
+        if not asked and spans:
+            # Only a day: the one from then, sure if it's the only one; else those, newest first.
+            if len(then) == 1:
+                then[0]["sure"] = True
+            return then[:CHOICES]
         if not asked:
             latest = self._rows("stage = 'done'", limit=1)
             for r in latest:
                 r["sure"] = True  # "the report": the latest
             return latest
-        now = now or datetime.datetime.now()
         # "The dog one" for "Puppy training basics": none of the crew's words in it, and too
         # short for its meaning to stand out. So Gemma says what such a report would contain
         # ("dog, puppy, training, pet"), and those are looked for too, counting for less than
@@ -245,6 +293,11 @@ class Reports:
             except Exception as e:  # LM Studio busy or gone: the crew's words alone
                 print(f"  (couldn't widen the search for a report: {e!r})", flush=True)
         scored = self._scored(f"{words}: {', '.join(sorted(extra))}" if extra else words, asked, extra, now)
+        if spans:
+            # A day and what it was about ("the ten-year-old one from Saturday"): those from then,
+            # if any match; if none do, the day was misremembered, and what it was about decides.
+            ns = {r["n"] for r in then}
+            scored = [x for x in scored if x[2]["n"] in ns] or scored
         self.last_scores = [(round(s, 2), r["title"]) for s, _, r in scored[:5]]  # for the console and tests
         floor = max(least, OFFER)
         if not scored or scored[0][0] <= floor:

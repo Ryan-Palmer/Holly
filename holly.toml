@@ -295,6 +295,14 @@ fillers = [
     "Let me think. It rings a bell.",
     "One moment. I'm having a rummage.",
 ]
+# Memories offered, unasked: as the crew finish speaking, what they said on
+# other days about the same thing (the model judges which, if any) goes with
+# their line, for him to bring up if it fits. At most one every offer_every
+# replies, each memory once a session; dropped if not found within offer_ms,
+# so it never holds up his reply.
+offer_memories = true
+offer_every = 3
+offer_ms = 400
 
 [timers]
 # Timers and reminders (app/timers.py): "set a timer for 20 minutes", "remind

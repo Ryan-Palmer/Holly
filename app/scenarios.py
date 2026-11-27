@@ -202,6 +202,15 @@ def problems(*checks: tuple[bool, str]) -> list[str]:
     return [why for ok, why in checks if not ok]
 
 
+def days_ago(n: int) -> datetime.date:
+    return datetime.date.today() - datetime.timedelta(days=n)
+
+
+def ordinal(n: int) -> str:
+    """21 as "21st", as it's said."""
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
 def mentions(turn: Turn, *words: str) -> bool:
     return any(w.lower() in turn.reply.lower() for w in words)
 
@@ -557,6 +566,15 @@ SCENARIOS = [
              lambda t, h: problems((called(t[0], "research"), "didn't look the report up"),
                                    (mentions(t[0], "grinder", "portafilter", "espresso", "300"),
                                     "nothing from the report"))),
+    # A report by the day it was done: the day words were dropped, so it was the newest report,
+    # the board games one, whichever day was said.
+    Scenario("a report by its day", lambda: [f"Holly, what did the report from the {ordinal(days_ago(8).day)} of "
+                                             f"{days_ago(8):%B} say?"],
+             lambda t, h: problems((called(t[0], "research"), "didn't look the report up"),
+                                   (mentions(t[0], "grinder", "portafilter", "espresso", "coffee"),
+                                    "not the coffee machine report"),
+                                   (not mentions(t[0], "board game", "ticket to ride", "carcassonne"),
+                                    "gave the newest report"))),
     Scenario("a report announced", [ANNOUNCE],
              lambda t, h: problems((mentions(t[0], "puppy", "puppies", "dog"), "didn't say which report"),
                                    ("?" in t[0].reply, "didn't ask about a summary"),
@@ -747,6 +765,8 @@ PAST, OTHER = True, False
 CREW_REPORT = ("Lister launched an investment scheme in dehydrated curry paste. Rimmer filed a grievance about "
                "a droid in his personal space. The Cat was disqualified from a grooming contest. Kryten apologised to "
                "a piston. Additional — Space Corps Directive 723 bans recreating Swindon.")
+BISCUIT = ("Holly, I miss Biscuit, my cat. He died last week. / I'm sorry. He was a decent little bloke, "
+           "wasn't he?")
 MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just before, a memory?)
     # Made up: memories, and follow-ups to one.
     ("What did we do yesterday?", "", PAST), ("What did we cook on Sunday?", "", PAST),
@@ -832,6 +852,88 @@ MEMORY_LINES: list[tuple[str, str, bool]] = [  # (what they say, the talk just b
     ("Where's Kryten?", "", OTHER), ("What's Rimmer doing?", "", OTHER), ("Is Lister about?", "", OTHER),
     ("What's the Cat up to these days?", "Morning. / Morning. Coffee?", OTHER),
     ("How did Kryten end up on Red Dwarf?", "", PAST), ("What happened to Rimmer's brothers?", "", PAST),
+    # Telling him about someone, in the past tense, isn't asking him to remember (27 November:
+    # about their cat who'd died, four lines of nine were memories, and made to call a tool, he
+    # called the clock, a timer and a status report). Asking him still is.
+    ("He was a beautiful boy. It's a shame you never met him.", BISCUIT, OTHER),
+    ("He was ginger, with the most amazing eyes, and he was loving and clever and daft.", BISCUIT, OTHER),
+    ("There was no pretending with Biscuit. He ran the place.", BISCUIT, OTHER),
+    ("I had all sorts of silly names for him.", BISCUIT, OTHER),
+    ("Captain Crumbs, Sir Biscuit of the Sofa, my little sausage.", "I had all sorts of silly names for him. / "
+     "I bet. Cats are very good at making us look foolish.", OTHER),
+    # Live, with the talk just before as he's given it, this one was still a memory, 3 runs in 3.
+    ("Captain Crumbs, Sir Biscuit of the Sofa, my little sausage.", "There was no pretending with Biscuit. He ran "
+     "the place. / Sounds like he had the right idea. Most things do. / I had all sorts of silly names for him. / "
+     "I'm sure they were top-notch. Most of them probably involved food or his general sense of superiority.",
+     OTHER),
+    ("I know. He was worth it.", BISCUIT, OTHER),
+    ("What did I used to call Biscuit?", "", PAST), ("Do you remember when Biscuit got stuck up the tree?", "", PAST),
+    ("What was Biscuit's favourite spot again?", BISCUIT, PAST),
+    # Held out:
+    ("My grandad was a miner, you know. He worked down the pit for forty years.", "", OTHER),
+    ("We had a dog called Bramble when I was a kid. She was terrified of the hoover.", "", OTHER),
+    ("Jo used to live in Keswick before she moved down here.", "Jo's coming round later. / Lock up the biscuits.",
+     OTHER),
+    ("She was always the clever one at school.", "My sister Jo's got a new job. / Good for her.", OTHER),
+    ("Did I ever tell you what Bramble did to the hoover?", "", PAST),
+]
+
+
+# Memories offered (archive.memory_offered): what's just been said, what the crew said on
+# other days, and which of those, if any, is about the same thing (its number, or None).
+# Some near misses are real ones, names changed: "a new drill" found "Left, left, left" first.
+DRILLS = "Could you research all the drill accessories, the power tools and batteries, for a present?"
+MEMORY_OFFERS: list[tuple[str, list[str], int | None]] = [
+    ("I'm thinking about getting a new drill.", ["Left, left, left, left.", DRILLS], 2),
+    ("The train was late again tonight.", ["We spent all last night training some new judges.",
+                                           "Evening, Holly, how are you doing tonight?"], None),
+    ("I miss Biscuit, my cat. He died last week.", ["Biscuit got stuck on the shed roof again, and Jo had to get "
+                                                    "the ladder out.", "The boiler's broken again."], 1),
+    ("Jo's coming over tomorrow for tea.", ["We made fish pie, it was lovely.", "My sister Jo is coming to stay "
+                                            "next month. She's a vet up in Keswick."], 2),
+    ("I'm so tired today.", ["I was shattered after the gym on Monday.", "The boiler's broken again."], None),
+    ("The engineer's finally here to fix the boiler.", ["I've started learning the ukulele.", "The boiler's "
+                                                        "broken again. An engineer's coming on Thursday."], 2),
+    ("I fancy lasagne for tea tonight.", ["Jo came over and we made lasagne together tonight."], 1),
+    ("What's the weather doing tomorrow?", ["Is it going to rain on Saturday in Keswick?"], None),
+    ("My mum's thinking about getting a dashcam for her car.", ["Can you look into dashcams for my mum's new "
+                                                                "car? She wants one that records the back too."], 1),
+    ("I watched a film last night, it was rubbish.", ["I'm going to watch a film tonight, something funny."], None),
+    ("Ha, typical Rimmer.", ["Status report, please.", "What was Rimmer really like?"], None),
+    ("I've just finished the washing up, finally.", ["The washing machine's making a horrible noise again."],
+     None),
+    # Held out: never seen while the prompt was written.
+    ("Jo's dog had her puppies!", ["My sister Jo is a vet up in Keswick.", "Jo's dog Pepper is expecting puppies "
+                                   "any day now."], 2),
+    ("I need to sort the garden out this weekend.", ["The mower's broken, so the garden's turning into a jungle.",
+                                                     "I watched a gardening programme last night."], 1),
+    ("I've got the dentist tomorrow, dreading it.", ["Jo's coming to stay next month.", "I went to the dentist on "
+                                                     "Tuesday and he said I need a filling."], 2),
+    ("Work was mental today.", ["I'm going to have a bath.", "Ha, that sounds about right."], None),
+    ("Let's have fish pie tonight.", ["The kettle's broken.", "We made fish pie, it was lovely."], 2),
+    ("Kryten would love this mess.", ["What's Kryten up to these days?"], None),
+    ("My back's killing me.", ["I was shattered after the gym on Monday."], None),
+    # In the conversations (27 November), each 97% sure or more, and each worked in by him: a
+    # place named in passing, and a follow-up to what he'd just said.
+    ("What's the weather doing tomorrow in Keswick?", ["My sister Jo is coming to stay next month. She's a vet up "
+                                                       "in Keswick."], None),
+    ("Morning. What's the weather going to be like in Cumbria today?", [
+        "We made fish pie, it was lovely.", "My sister Jo is coming to stay next month. She's a vet up in Keswick."],
+     None),
+    ("Tell me more about the first one.", ["The boiler's broken again. An engineer's coming on Thursday."], None),
+    ("Where would I get one in Keswick?", ["My sister Jo is coming to stay next month. She's a vet up in Keswick."],
+     None),
+    ("Jo's going to be so proud.", ["We made fish pie, it was lovely.", "My sister Jo is coming to stay next "
+                                    "month. She's a vet up in Keswick."], 2),
+    # Held out:
+    ("Any news from Manchester today?", ["My brother Sam lives in Manchester and hates the rain."], None),
+    ("Sam's coming round tonight.", ["We made fish pie, it was lovely.", "My brother Sam lives in Manchester and "
+                                     "hates the rain."], 2),
+    ("What did that article say?", ["I read an article about heat pumps last week."], None),
+    ("Is it going to snow in the Lakes this weekend?", ["June's got a caravan in the Lakes she goes to most "
+                                                        "weekends."], None),
+    ("June's taking the caravan up again this weekend.", ["June's got a caravan in the Lakes she goes to most "
+                                                          "weekends.", "The kettle's broken."], 1),
 ]
 
 
