@@ -472,6 +472,7 @@ def a_pasta_timer(holly) -> None:
 
 def a_failed_search(holly) -> None:
     holly.searcher._search = lambda query: ([], "ddgs failed: TimeoutError")
+    holly.searcher._wiki = lambda query: []  # Wikipedia found nothing either
 
 
 NUMBERS = re.compile(r"\d|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|"
@@ -950,6 +951,82 @@ MEMORY_OFFERS: list[tuple[str, list[str], int | None]] = [
     ("Biscuit used to sit on that shed for hours.", ["The boiler's broken again.", "Biscuit got stuck on the shed "
                                                      "roof again, and Jo had to get the ladder out to fetch him down."],
      2),
+]
+
+
+# Search questions (app/search.py), for Wikipedia first: (what he'd search for, what the crew
+# asked, group, words one of which a right answer has). Frozen before it was built:
+# - STABLE: facts that don't change. Wikipedia should answer most, and never wrongly.
+# - FAST: facts that change from week to week (prices, rates, tables, the latest winner):
+#   Wikipedia lags, so these must reach the web. Only where from is checked.
+# - SLOW: facts that change, but seldom (who holds a post, records, the tallest): Wikipedia
+#   keeps those current within hours (the user, 27 November), so either source will do.
+# - LACKS: local and of the moment: not in Wikipedia, so they fall through; the time it
+#   costs is measured.
+SEARCH_QUESTIONS: list[tuple[str, str, str, tuple[str, ...]]] = [
+    ("Scafell Pike height", "How tall is Scafell Pike?", "STABLE", ("978", "3,209", "3209")),
+    ("capital of Peru", "What's the capital of Peru?", "STABLE", ("Lima",)),
+    ("Middlemarch author", "Who wrote Middlemarch?", "STABLE", ("Eliot",)),
+    ("Titanic sinking year", "When did the Titanic sink?", "STABLE", ("1912",)),
+    ("moons of Mars", "How many moons does Mars have?", "STABLE", ("two", "2")),
+    ("boiling point of water Fahrenheit", "What's the boiling point of water in Fahrenheit?", "STABLE", ("212",)),
+    ("Mona Lisa painter", "Who painted the Mona Lisa?", "STABLE", ("Leonardo",)),
+    ("Battle of Hastings year", "What year was the Battle of Hastings?", "STABLE", ("1066",)),
+    ("who discovered penicillin", "Who discovered penicillin?", "STABLE", ("Fleming",)),
+    ("Great Red Spot planet", "Which planet has the Great Red Spot?", "STABLE", ("Jupiter",)),
+    ("first person on the moon", "Who was the first person to walk on the moon?", "STABLE", ("Armstrong",)),
+    ("Wast Water depth", "How deep is Wast Water?", "STABLE", ("79", "258")),
+    ("speed of light", "How fast is the speed of light?", "STABLE", ("299", "186")),
+    ("Hadrian's Wall length", "How long is Hadrian's Wall?", "STABLE", ("73", "117", "118")),
+    ("UK first class stamp price", "How much is a first class stamp now?", "FAST", ()),
+    ("current UK prime minister", "Who's the prime minister at the moment?", "SLOW", ()),
+    ("Booker Prize winner this year", "Who won the Booker Prize this year?", "FAST", ()),
+    ("Bank of England base rate now", "What's the Bank of England interest rate now?", "FAST", ()),
+    ("Premier League table top", "Who's top of the Premier League?", "FAST", ()),
+    ("Raspberry Pi 5 price UK", "How much does a Raspberry Pi 5 cost?", "FAST", ()),
+    ("average UK house price", "What's the average house price in the UK?", "FAST", ()),
+    ("UK inflation rate latest", "What's inflation at in the UK?", "FAST", ()),
+    ("Keswick tip opening hours Saturday", "When does the tip in Keswick open on Saturdays?", "LACKS", ()),
+    ("Tesco Keswick Sunday closing time", "What time does Tesco in Keswick shut on Sundays?", "LACKS", ()),
+    ("Theatre by the Lake Keswick what's on", "What's on at the Theatre by the Lake this week?", "LACKS", ()),
+    ("Penrith cinema listings", "What's on at the cinema in Penrith tonight?", "LACKS", ()),
+    # Held out, written before the words that skip Wikipedia were (some changing ones have none).
+    ("Channel Tunnel length", "How long is the Channel Tunnel?", "STABLE", ("50", "31")),
+    ("who invented the telephone", "Who invented the telephone?", "STABLE", ("Bell",)),
+    ("highest mountain in Wales", "What's the highest mountain in Wales?", "STABLE", ("Snowdon", "Wyddfa")),
+    ("Magna Carta year", "When was Magna Carta sealed?", "STABLE", ("1215",)),
+    ("bones in the human body", "How many bones are there in the human body?", "STABLE", ("206",)),
+    ("Four Seasons composer", "Who wrote The Four Seasons?", "STABLE", ("Vivaldi",)),
+    ("Manchester United manager", "Who's the manager of Manchester United?", "SLOW", ()),
+    ("TV licence cost UK", "How much is a TV licence?", "FAST", ()),
+    ("Grand National winner", "Who won the last Grand National?", "FAST", ()),
+    ("petrol price per litre UK", "How much is petrol a litre?", "FAST", ()),
+    ("Chancellor of the Exchequer", "Who's the Chancellor of the Exchequer?", "SLOW", ()),
+    # Held out again, after the judge got a CHANGES answer of its own (Manchester United's
+    # manager, above, had been answered from Wikipedia).
+    ("Liverpool captain", "Who's the Liverpool captain?", "SLOW", ()),
+    ("Archbishop of Canterbury", "Who's the Archbishop of Canterbury?", "SLOW", ()),
+    ("tallest building in the world", "What's the tallest building in the world?", "SLOW", ()),
+    ("world 100m record", "What's the world record for the 100 metres?", "SLOW", ()),
+    ("Doctor Who actor", "Who plays Doctor Who?", "SLOW", ()),
+    ("Eiffel Tower height", "How tall is the Eiffel Tower?", "STABLE", ("330", "1,083", "1083", "324")),
+    ("who wrote Pride and Prejudice", "Who wrote Pride and Prejudice?", "STABLE", ("Austen",)),
+    ("largest ocean", "What's the biggest ocean?", "STABLE", ("Pacific",)),
+    # Held out a third time, before the Wikipedia-or-web router was wired in.
+    ("Foreign Secretary", "Who's the Foreign Secretary?", "SLOW", ()),
+    ("Speaker of the House of Commons", "Who's the Speaker of the House of Commons?", "SLOW", ()),
+    ("richest person in the world", "Who's the richest person in the world?", "FAST", ()),
+    ("most streamed song on Spotify", "What's the most streamed song on Spotify?", "FAST", ()),
+    ("Match of the Day presenter", "Who presents Match of the Day?", "SLOW", ()),
+    ("distance to the Moon", "How far away is the Moon?", "STABLE", ("384", "238")),
+    ("Queen Victoria death", "When did Queen Victoria die?", "STABLE", ("1901",)),
+    ("longest river in Britain", "What's the longest river in Britain?", "STABLE", ("Severn",)),
+    # Held out a fourth time, before only fast change was sent to the web.
+    ("UK singles chart number one", "Who's number one in the charts?", "FAST", ()),
+    ("Strictly Come Dancing winner", "Who won Strictly Come Dancing?", "FAST", ()),
+    ("FTSE 100 level", "Where's the FTSE at?", "FAST", ()),
+    ("Bitcoin value", "What's a Bitcoin worth?", "FAST", ()),
+    ("Ashes series score", "Who's winning the Ashes?", "FAST", ()),
 ]
 
 

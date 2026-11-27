@@ -134,6 +134,14 @@ class SearchConfig:
     news: bool = True  # the news tool (the BBC's headlines), with search
     home_country: str = "GB"  # places here come first in weather lookups
     fillers: tuple[str, ...] = ()
+    # Wikipedia first, for settled facts (app/search.py): the opening paragraphs of its best
+    # few articles, in one request; the web only if they don't answer, or it's about now.
+    wikipedia: bool = True
+    wiki_lang: str = "en"
+    wiki_articles: int = 3
+    wiki_timeout_s: float = 2.0
+    # Wikimedia refuses requests without a contact: the repo's URL, nothing personal.
+    user_agent: str = "Holly/0.1 (https://github.com/Ryan-Palmer/Holly)"
 
 
 @dataclass(frozen=True)

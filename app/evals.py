@@ -2,7 +2,7 @@
 same way every time, so models and changes can be compared.
 
     python -m app.evals [--model KEY] [--runs N] [--label NAME]
-                        [--only persona|scenarios|conversations|memory|status] [--session] [--no-judge]
+                        [--only persona|scenarios|conversations|memory|status|search] [--session] [--no-judge]
     python -m app.evals --compare
 
 Five parts; the first three through his real reply loop with a silent voice, his memory in
@@ -619,6 +619,12 @@ async def run(args) -> dict:
                     when=datetime.now().isoformat(timespec="seconds"), session=False, persona={}, scenarios={},
                     turns=turn_regression(cfg), repeated=[], persona_rows=[], scenario_runs=[])
     model = cfg.llm.for_model(args.model).model
+    if args.only == "search":  # on demand: it spends Brave calls
+        print(f"Search questions, {len(scenarios.SEARCH_QUESTIONS)}, Wikipedia first, on {model}:", flush=True)
+        alone(model)
+        return dict(model=model, judges=[], raw=False, label=args.label, commit=commit(),
+                    when=datetime.now().isoformat(timespec="seconds"), session=False, persona={}, scenarios={},
+                    search=search_sources(model), repeated=[], persona_rows=[], scenario_runs=[])
     judges = {} if args.no_judge else ({m: cfg.evals.judges.get(m, "none") for m in args.judge} if args.judge
                                        else dict(cfg.evals.judges))
     persona_rows, scenario_rows = [], []
@@ -693,6 +699,32 @@ async def run(args) -> dict:
                 persona_rows=persona_rows, scenario_runs=scenario_rows, conversation_runs=conversation_rows)
 
 
+def search_sources(model: str) -> list[dict]:
+    """scenarios.SEARCH_QUESTIONS through the search tool, live: where each answer came from
+    (Wikipedia, the web, or none), whether a settled fact's answer is right, how long it took.
+    A fast-changing fact must reach the web; a settled one should come from Wikipedia, rightly."""
+    from .search import Searcher, asked
+
+    cfg = load_config()
+    searcher = Searcher(cfg.search, LmStudio(cfg.llm), model)
+    rows = []
+    for query, said, group, words in scenarios.SEARCH_QUESTIONS:
+        t0 = time.perf_counter()
+        found = searcher.look_up(query, asked(query, said))
+        source = ("wikipedia" if found.queries == [f"wikipedia: {query}"] else "web") if found.results else "none"
+        right = any(w.lower() in found.answer.lower() for w in words) if words and found.results else None
+        rows.append(dict(query=query, group=group, source=source, right=right,
+                         ms=round((time.perf_counter() - t0) * 1000), answer=found.answer))
+        print(f"  {group:8} {source:9} {'' if right is None else 'right' if right else 'WRONG':5} "
+              f"{rows[-1]['ms']:5} ms  {query}", flush=True)
+    for g in ("STABLE", "SLOW", "FAST", "LACKS"):
+        rs = [r for r in rows if r["group"] == g]
+        print(f"  {g}: {sum(r['source'] == 'wikipedia' for r in rs)} of {len(rs)} from Wikipedia, "
+              f"{sum(bool(r['right']) for r in rs)} right, median {statistics.median(r['ms'] for r in rs):.0f} ms",
+              flush=True)
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Score Holly on a model: character, tools and memory")
     parser.add_argument("--model", help="the LM Studio chat model to test (default: holly.toml's)")
@@ -700,7 +732,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="a judge's model, in place of [evals.judges] in holly.toml (again for more)")
     parser.add_argument("--runs", type=int, default=None, help="runs of each scenario (default: holly.toml's)")
     parser.add_argument("--persona-runs", type=int, default=1, help="replies per persona prompt (default 1)")
-    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "honesty", "long", "reports", "memory", "status", "turns",
+    parser.add_argument("--only", choices=["persona", "scenarios", "conversations", "honesty", "long", "reports", "memory", "status", "turns", "search",
                                                  "voice"],
                         help="one part only")
     parser.add_argument("--session", action="store_true", help="the persona prompts as one conversation")

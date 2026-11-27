@@ -31,6 +31,7 @@ def cfg(tmp_path):
         research=dataclasses.replace(c.research, dir=tmp_path / "research", pause_s=0.0),
         status=dataclasses.replace(c.status, file=tmp_path / "status.json"),
         spotify=dataclasses.replace(c.spotify, enabled=False),
+        search=dataclasses.replace(c.search, wikipedia=False),  # no network: tests that want it stand it in
     )
 
 

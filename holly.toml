@@ -225,6 +225,18 @@ enabled = true
 # A list is tried in order: with no key, an error or no results, the next.
 # Not brave after brave_context: one service and key, so they fail together.
 provider = "brave_context,ddgs"
+# Wikipedia first, for settled facts (history, geography, science, who wrote
+# or found what): the opening paragraphs of its best few articles, in one
+# request (~0.5 s), while the model says whether it's a question for
+# Wikipedia or the web. What changes from week to week (prices, rates,
+# tables, charts, the latest winner, opening times) goes to the web; what
+# changes only now and then (who holds a post, records), Wikipedia keeps
+# current within hours, so either will do. On 26 settled questions, 25 from
+# Wikipedia, all right, in ~0.9 s against ~1.8 s and no Brave call; 0 of 17
+# fast-changing ones; 5 of 11 slow-changing. `python -m app.evals --only search`.
+wikipedia = true
+wiki_articles = 3
+wiki_timeout_s = 2.0
 # Page text brave_context returns per search, in all.
 context_tokens = 2048
 # The ddgs engines to try. "auto" tries them all but waits on the ones that

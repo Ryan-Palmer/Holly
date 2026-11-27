@@ -17,6 +17,7 @@ import re
 import socket
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 from dataclasses import dataclass, field
 
@@ -67,6 +68,51 @@ PAGE_CHARS = 6000  # of a page's text for the judge: ~1,500 tokens
 
 LAST_ROUND = """\
 NO ANSWER: if the results don't answer the question."""
+
+# Wikipedia first (Searcher._from_wikipedia), for what doesn't change. It nearly always has an
+# answer, so the danger is a wrong one: "Scafell Pike height" found "Scafell" first, a different
+# fell, and "first class stamp price" a history of American postage. So only the very thing
+# asked, said outright, and only a settled fact: anything about now goes to the web.
+WIKI_PROMPT = """\
+Today is {today}. You answer a question from the opening paragraphs of a few
+Wikipedia articles, if you can: settled facts, and things that change only
+now and then, which Wikipedia keeps up to date (who holds a post or a role, a
+record). Reply in exactly one of these forms:
+
+CHANGES: if the answer could be different from a few weeks ago: a price, a
+rate, money or markets, a score, a table or a series, a chart, this year's or
+the latest winner of anything, opening times, what's on. The web will be
+searched instead.
+ANSWER: if one of the articles is about the very thing asked (not something
+with a like name: Scafell isn't Scafell Pike) and says the answer outright:
+two or three short, plain sentences of fact that answer the question, for
+someone to read aloud: no lists, no links, no markdown. Numbers, names and
+dates exactly as the articles give them.
+NO ANSWER: if the articles don't say."""
+WIKI_API = "https://{lang}.wikipedia.org/w/api.php"
+# Which to ask, from the question alone (the user's idea): asked while Wikipedia is fetched, so
+# it costs no time. With the articles in front of it, the judge wanted to answer: it took "who
+# plays Doctor Who?" from Wikipedia, in the past tense. 42 of 45 labelled questions right alone.
+ROUTE_PROMPT = """\
+Holly, a household computer, is about to look something up for someone. Is this a question
+Wikipedia would answer well, or would a general web search be better?
+WIKIPEDIA: what an encyclopedia covers and keeps up to date: settled facts (history, geography,
+nature, science, how big, old or far something is, who made, wrote, painted, found or invented
+something), and things that change only now and then, which it updates within hours (who holds a
+post or a role, records, the tallest or biggest of anything).
+WEB: anything that changes from week to week (news, prices, rates, money and markets, scores,
+tables and series, charts, this year's or the latest winner of anything, what's on), and anything
+local or practical (opening times, a shop or a service near them).
+Reply with one word: WIKIPEDIA or WEB."""
+# A question that says it's about now goes straight to the web: told so, the judge still
+# answered "who won the Booker Prize this year?" from Wikipedia, and it costs ~0.7 s to ask.
+# Not "now" or "current" alone: "who's the Speaker now?" is Wikipedia's (the user: posts change
+# slowly, and it's updated within hours).
+ABOUT_NOW = re.compile(
+    r"\b(?:latest|recent(?:ly)?|today|tonight|tomorrow|"
+    r"yesterday|this (?:year|week|month|season|weekend|morning|evening)|last (?:night|week|weekend)|"
+    r"news|price|prices|cost|costs|how much|open|opens|opening|shut|close|closes|closing|what's on|score|"
+    r"table|top of|rate|weather|forecast)\b", re.IGNORECASE)
 
 NO_ANSWER = "NO ANSWER"
 
@@ -191,6 +237,20 @@ def _public(url: str) -> bool:
         return False
 
 
+def wiki_intros(query: str, cfg: SearchConfig) -> list[tuple[str, str]]:
+    """The best few Wikipedia articles for `query`, best first, each (title, its opening
+    paragraphs as plain text), in one request: its search, and each result's intro."""
+    resp = httpx.get(WIKI_API.format(lang=cfg.wiki_lang), timeout=cfg.wiki_timeout_s,
+                     headers={"User-Agent": cfg.user_agent},
+                     params={"action": "query", "generator": "search", "gsrsearch": query,
+                             "gsrlimit": cfg.wiki_articles, "prop": "extracts", "exintro": 1, "explaintext": 1,
+                             "exlimit": cfg.wiki_articles, "redirects": 1, "format": "json", "formatversion": 2})
+    resp.raise_for_status()
+    pages = sorted(resp.json().get("query", {}).get("pages", []), key=lambda p: p.get("index", 99))
+    return [(p["title"], (p.get("extract") or "").strip()[:PAGE_CHARS // cfg.wiki_articles])
+            for p in pages if (p.get("extract") or "").strip()]
+
+
 def fetch_page(url: str, cfg: SearchConfig, chars: int = PAGE_CHARS) -> str:
     """A result's page as plain text, menus dropped, cut to `chars`.
 
@@ -248,6 +308,56 @@ class Searcher:
         return [], "; ".join(problems)
 
     def look_up(self, query: str, question: str) -> Lookup:
+        """`question` answered from Wikipedia, if it's a settled fact there (_from_wikipedia);
+        else from the web (_from_the_web). Steps show in `queries`, "wikipedia: <query>" first
+        if it was asked."""
+        if not self.cfg.wikipedia or ABOUT_NOW.search(question):  # the crew's words, and his query
+            return self._from_the_web(query, question)
+        t0 = time.perf_counter()
+        found = self._from_wikipedia(query, question)
+        if found:
+            return found
+        web = self._from_the_web(query, question, budget=self.cfg.max_lookup_s - (time.perf_counter() - t0))
+        web.queries.insert(0, f"wikipedia: {query}")
+        return web
+
+    def _wiki(self, query: str) -> list[tuple[str, str]]:
+        return wiki_intros(query, self.cfg)
+
+    def _for_wikipedia(self, question: str) -> bool:
+        """Is it a question for Wikipedia, not the web (ROUTE_PROMPT)? No, if the model can't say."""
+        try:
+            return self.lm.ask(ROUTE_PROMPT, question, self.model, max_tokens=4,
+                               temperature=0).strip().upper().startswith("WIKIPEDIA")
+        except Exception:
+            return False
+
+    def _from_wikipedia(self, query: str, question: str) -> Lookup | None:
+        """The answer from Wikipedia's best few articles, or None: it's a question for the web
+        (_for_wikipedia, asked while they're fetched), they don't say, it isn't a settled fact,
+        or Wikipedia failed (the web's tried then, as it would have been)."""
+        t0 = time.perf_counter()
+        with ThreadPoolExecutor(1) as pool:
+            routed = pool.submit(self._for_wikipedia, question)
+            try:
+                intros = self._wiki(query)
+            except Exception as e:  # slow or down: the web, as before
+                print(f"  (Wikipedia: {type(e).__name__}: {str(e)[:80]})", flush=True)
+                intros = []
+            for_wikipedia = routed.result()
+        t1 = time.perf_counter()
+        if not (intros and for_wikipedia):
+            return None
+        articles = "\n\n".join(f"{title}:\n{text}" for title, text in intros)
+        text = self.lm.ask(WIKI_PROMPT.format(today=today()), f"Question: {question}\n\n{articles}", self.model,
+                           self.cfg.summary_max_tokens, reasoning=self.cfg.summary_reasoning)
+        head, _, rest = text.partition(":")
+        if head.strip().upper() != "ANSWER" or not rest.strip() or NO_ANSWER in text.upper()[:20]:
+            return None
+        return Lookup(query, rest.strip(), len(intros), (t1 - t0) * 1000, (time.perf_counter() - t1) * 1000,
+                      [f"wikipedia: {query}"])
+
+    def _from_the_web(self, query: str, question: str, budget: float | None = None) -> Lookup:
         """Search for `query` and answer `question` (what was asked) from the results.
 
         The same Gemma judges what it has: it answers, or reads the page of a
@@ -280,8 +390,8 @@ class Searcher:
                 found.append(f"Page of result {text} ({r.title}):\n\n{fetch_page(r.url, self.cfg)}")
             search_s += time.perf_counter() - t0
             # Past the time budget, no more searches or reads: the stock line only
-            # covers ~1.5 s, and one sunset question once took 10 s.
-            late = time.perf_counter() - started > self.cfg.max_lookup_s
+            # covers ~1.5 s, and one sunset question once took 10 s. (Less what Wikipedia took.)
+            late = time.perf_counter() - started > (self.cfg.max_lookup_s if budget is None else budget)
             last = len(queries) >= self.cfg.max_rounds or late
             t1 = time.perf_counter()
             next_step = self._judge(question, found, last, len(everything))
