@@ -62,7 +62,13 @@ its title or snippet suggests so but doesn't give it (a price, a time, a
 date or a figure is often only on the page).
 SEARCH: if no result looks likely to hold the answer, a different web
 search that is more likely to: more specific, worded differently, or
-naming a site that would know."""
+naming a site that would know.
+NOT HERE: if these results don't have the answer, no page among them
+looks likely to, and no other search is likely to find it either."""
+# NOT HERE: with no way to say so before the last round, it answered "The provided search
+# results do not contain information regarding the opening hours for a tip in Keswick", and
+# that reached him marked "these facts are right" (2 runs in 3). With it, 3 in 3 were not
+# found, and none of 32 other questions was given up on.
 
 PAGE_CHARS = 6000  # of a page's text for the judge: ~1,500 tokens
 
@@ -423,7 +429,7 @@ class Searcher:
             self.cfg.summary_max_tokens + (2000 if thinking else 0), reasoning=self.cfg.summary_reasoning)
         head, _, rest = text.partition(":")
         head = head.strip().upper()
-        if NO_ANSWER in text.upper()[:20] or not text:
+        if NO_ANSWER in text.upper()[:20] or head == "NOT HERE" or not text:
             return "NO ANSWER", ""
         if head == "SEARCH" and rest.strip():
             return "SEARCH", rest.strip().strip('"')

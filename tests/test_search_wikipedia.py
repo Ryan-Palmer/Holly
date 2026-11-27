@@ -63,3 +63,12 @@ def test_off_is_the_web_alone(cfg):
     s = searcher(cfg, judging(), wiki=lambda q: pytest.fail("asked Wikipedia"))
     s.cfg = dataclasses.replace(s.cfg, wikipedia=False)
     assert s.look_up("q", "Who wrote Middlemarch?").queries == ["q"]
+
+
+def test_not_here_is_not_found(cfg):
+    # With no way to say "these results don't have it" before the last round, it answered "The
+    # provided search results do not contain information...", marked "these facts are right".
+    s = searcher(cfg, judging(route="WEB", web="NOT HERE: nothing about the tip."))
+    found = s.look_up("Keswick tip hours", "When does the tip open?")
+    assert not found.results and "You don't know the answer" in found.answer
+    assert "NOT HERE:" in s.lm.side_requests[-1]["system"]  # on offer before the last round
