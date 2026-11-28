@@ -115,6 +115,7 @@ class FaceConfig:
     idle_head: float = 0.2
     crt: bool = False  # an old monitor's look: a curved screen, scanlines, a rolling bar
     case: str = ""  # with crt: a picture of the monitor, its screen opening see-through; "" for a plain bezel
+    full_screen: bool = False  # open the window full screen (F11 or Escape leaves it)
 
 
 @dataclass(frozen=True)

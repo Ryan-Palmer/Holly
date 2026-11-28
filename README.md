@@ -97,6 +97,7 @@ shows what it makes of each pause. Settings: `[listen]` in `holly.toml`.
 | Option | |
 |---|---|
 | `--face` / `--no-face` | show his face |
+| `--full-screen` | open his face full screen (the face on too); F11 or Escape leaves it |
 | `--no-search` | no web search, weather, news or clock |
 | `--no-wake` | answer everything, without his name (`app.listen`) |
 | `--mic NAME` | another microphone, by name or part of it (`app.listen`); `--mic "Steam Streaming"` for your phone over Steam Link |

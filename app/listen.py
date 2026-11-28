@@ -207,6 +207,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Talk to Holly out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
     parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
+    parser.add_argument("--full-screen", action=argparse.BooleanOptionalAction,
+                        help="open his face full screen, the face on too (default: holly.toml)")
     parser.add_argument("--search", action=argparse.BooleanOptionalAction,
                         help="let Holly search the web (default: holly.toml)")
     parser.add_argument("--wake", action=argparse.BooleanOptionalAction,
@@ -220,7 +222,7 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
         asyncio.run(ListeningHolly(args.model, args.face, args.search, args.forget, args.reset,
-                                   wake=args.wake, mic=args.mic).run())
+                                   wake=args.wake, mic=args.mic, full_screen=args.full_screen).run())
     except KeyboardInterrupt:
         pass
 

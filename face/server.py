@@ -618,6 +618,7 @@ def main():
     p.add_argument("--parent", type=int, default=0, help="Holly's process ID: the face exits when it ends")
     p.add_argument("--crt", action="store_true", help="an old monitor's look (face/screen.py)")
     p.add_argument("--case", default="", help="with --crt: a picture of the monitor, its screen opening see-through")
+    p.add_argument("--full-screen", action="store_true", help="open full screen (F11 or Escape leaves it)")
     args = p.parse_args()
     if args.parent:
         # First, before Ditto's minute of warm-up: Holly can crash during his own.
@@ -709,6 +710,8 @@ def main():
             window.set_windowed()
         shown["full"] = on
 
+    if args.full_screen:
+        full_screen(True)
     show(np.asarray(still.resize((fw, fh))))  # until Ditto's first frame
 
     def handle_events():

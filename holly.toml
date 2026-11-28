@@ -121,6 +121,8 @@ crt = true
 # With crt: a picture of the monitor round him, its screen opening see-through (a PNG with
 # alpha); the picture is cut to the opening's shape. Empty for a plain bezel, 4:3.
 case = "face/data/monitor.png"
+# Open the window full screen (--full-screen does it for one run); F11 or Escape leaves it.
+full_screen = false
 # The face sleeps awake_s (under [listen]) after Holly last spoke: he nods off
 # into the still, eyes closed, and Ditto pauses, sparing the GPU (~40% of the 5090 and ~200 W
 # awake, ~0% and ~50 W asleep). It wakes as soon as anyone starts speaking.

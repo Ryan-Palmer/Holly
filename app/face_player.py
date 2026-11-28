@@ -42,7 +42,8 @@ def start_server(cfg: FaceConfig, host_api: str, device: str, awake_s: float = 3
          "--port", str(cfg.port), "--lead", str(cfg.lead_ms / 1000), "--height", str(cfg.height),
          "--idle-head", str(cfg.idle_head), "--sleep-after", str(awake_s),
          "--host-api", host_api, "--device", device, "--parent", str(os.getpid())] + (["--crt"] if cfg.crt else [])
-        + (["--case", str(ROOT / cfg.case)] if cfg.crt and cfg.case else []),
+        + (["--case", str(ROOT / cfg.case)] if cfg.crt and cfg.case else [])
+        + (["--full-screen"] if cfg.full_screen else []),
         cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
     )
 

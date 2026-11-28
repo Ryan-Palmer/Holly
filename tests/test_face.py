@@ -132,3 +132,23 @@ def test_the_case_picture_reaches_the_face(cfg, tmp_path, monkeypatch):
     face_player.start_server(dataclasses.replace(cfg.face, crt=False, case="face/data/case.png"), "WASAPI", "Out")
     assert started[0][started[0].index("--case") + 1] == str(tmp_path / "face/data/case.png")
     assert "--case" not in started[1]  # only with the CRT look
+
+
+def test_full_screen_reaches_the_face(cfg, tmp_path, monkeypatch):
+    import dataclasses
+
+    from app import face_player
+    started = []
+    monkeypatch.setattr(face_player, "ROOT", tmp_path)
+    monkeypatch.setattr(face_player.subprocess, "Popen", lambda args, **kw: started.append(args))
+    face_player.start_server(dataclasses.replace(cfg.face, full_screen=True), "WASAPI", "Out")
+    face_player.start_server(cfg.face, "WASAPI", "Out")
+    assert "--full-screen" in started[0] and "--full-screen" not in started[1]
+
+
+def test_full_screen_turns_the_face_on(make_holly):
+    from conftest import FakeLm
+
+    holly = make_holly(FakeLm(), full_screen=True)
+    assert holly.cfg.face.full_screen and holly.cfg.face.enabled
+    assert not make_holly(FakeLm()).cfg.face.full_screen

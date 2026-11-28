@@ -119,13 +119,17 @@ class Holly:
     HINT = " /reset to start over, /quit to leave."
 
     def __init__(self, model: str | None, face: bool | None = None, search: bool | None = None,
-                 forget: bool = False, reset: bool = False, cfg=None):
-        """`cfg`, if given, instead of holly.toml's (app/scenarios.py: his memory elsewhere)."""
+                 forget: bool = False, reset: bool = False, cfg=None, full_screen: bool | None = None):
+        """`cfg`, if given, instead of holly.toml's (app/scenarios.py: his memory elsewhere).
+        `full_screen`: his face's window opens full screen; True turns the face on too."""
         cfg = cfg or load_config()
         # The model's own settings and quirks ([models."key"] in holly.toml).
         cfg = dataclasses.replace(cfg, llm=cfg.llm.for_model(model))
         if face is not None:
             cfg = dataclasses.replace(cfg, face=dataclasses.replace(cfg.face, enabled=face))
+        if full_screen is not None:
+            cfg = dataclasses.replace(cfg, face=dataclasses.replace(
+                cfg.face, full_screen=full_screen, enabled=cfg.face.enabled or full_screen))
         if search is not None:
             cfg = dataclasses.replace(cfg, search=dataclasses.replace(cfg.search, enabled=search))
         if not torch.cuda.is_available():
@@ -706,6 +710,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Talk to Holly; he answers out loud")
     parser.add_argument("--model", help="LM Studio chat model key (default: holly.toml)")
     parser.add_argument("--face", action=argparse.BooleanOptionalAction, help="show Holly's face (default: holly.toml)")
+    parser.add_argument("--full-screen", action=argparse.BooleanOptionalAction,
+                        help="open his face full screen, the face on too (default: holly.toml)")
     parser.add_argument("--search", action=argparse.BooleanOptionalAction,
                         help="let Holly search the web (default: holly.toml)")
     parser.add_argument("--forget", action="store_true", help=yours.FORGET_HELP)
@@ -714,7 +720,8 @@ def main() -> None:
     # The Windows console defaults to cp1252, which can't print emoji.
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
-        asyncio.run(Holly(args.model, args.face, args.search, args.forget, args.reset).run())
+        asyncio.run(Holly(args.model, args.face, args.search, args.forget, args.reset,
+                          full_screen=args.full_screen).run())
     except KeyboardInterrupt:
         pass
 
