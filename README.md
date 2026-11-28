@@ -214,7 +214,8 @@ silent voice and his memory in a temporary folder:
   said, drags nothing in, has no running jokes, stays in character, is kind
   when you're upset, gets the facts right, and keeps track. A point fails
   when both judges fail it, each quoting his own words (checked to be his).
-  One judge alone flags it, for reading. Scenarios catch bugs already
+  One judge alone flags it, for reading. The judges answer in JSON, so every
+  point gets a verdict. Scenarios catch bugs already
   found. These catch the ones nobody has found yet, like the Cat tacked on
   to every reply for an evening, which a judge scoring one reply calls in
   character. (On the code before that fix, both judges failed it, 3 runs

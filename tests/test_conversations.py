@@ -1,6 +1,7 @@
 """Whole conversations, judged whole (app/conversations.py): what needs no model."""
 
 import asyncio
+import json
 
 from app import conversations as cv
 from conftest import FakeLm
@@ -36,8 +37,33 @@ def test_kindness_is_a_point_of_its_own():
     said = ["I'm sure he was. Though, knowing your luck, he probably died doing something incredibly undignified."]
     v = cv.verdict('CHARACTER: PASS\nKIND: FAIL - "knowing your luck, he probably died doing something" - cruel',
                    said)
-    assert "KIND" in cv.POINTS and "KIND: PASS" in cv.JUDGE_PROMPT
+    assert "KIND" in cv.POINTS and "KIND:" in cv.JUDGE_PROMPT and "KIND" in cv.SCHEMA["required"]
     assert cv.failed(v) == ["KIND"]
+
+
+def test_a_judges_json_is_read_as_its_free_text_was():
+    point = dict(why="fine", quotes=[], verdict="PASS")
+    got = {p: point for p in cv.POINTS} | dict(
+        overall=2, REPEATS=dict(why="again and again", quotes=["convinced the hangers", "The Cat is plotting", " "],
+                                verdict="FAIL"),
+        FACTS=dict(why="made up", quotes=["It's 22:15"], verdict="FAIL"))
+    del got["FLOW"]
+    v = cv.verdict(json.dumps(got), REPLIES)
+    assert v["overall"] == 2 and v["points"]["ANSWERS"]["ok"] and v["points"]["FLOW"] is None
+    assert v["points"]["REPEATS"]["quotes"] == ["convinced the hangers", "The Cat is plotting"]
+    assert v["points"]["REPEATS"]["shown"] == ["convinced the hangers"]
+    assert cv.failed(v) == ["REPEATS"]  # FACTS: its quote isn't his
+    assert cv.verdict(json.dumps(dict(got, overall=9)), REPLIES)["overall"] is None
+
+
+def test_the_judge_asks_for_json_and_asks_again_if_a_point_is_missing():
+    whole = {p: dict(why="fine", quotes=[], verdict="PASS") for p in cv.POINTS} | dict(overall=4)
+    answers = [json.dumps({k: v for k, v in whole.items() if k != "FLOW"}), json.dumps(whole)]
+    lm = FakeLm(side=lambda system, user: answers.pop(0))
+    v = cv.judge(lm, "google/gemma", dict(transcript="1. Crew: Hi.\n   Holly: Hi.", replies=["Hi."]))
+    assert v["overall"] == 4 and all(v["points"].values()) and len(lm.side_requests) == 2
+    asked = lm.side_requests[0]
+    assert asked["schema"] is cv.SCHEMA and asked["max_tokens"] == 1500 and "Reply as JSON" in asked["system"]
 
 
 def test_a_point_fails_when_both_judges_fail_it_with_his_words():

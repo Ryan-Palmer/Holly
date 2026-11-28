@@ -66,9 +66,9 @@ class FakeLm:
             calls.extend({"id": f"call{n}_{i}", "name": name, "arguments": json.dumps(args)}
                          for i, (name, args) in enumerate(tool_calls))
 
-    def ask(self, system, user, model=None, max_tokens=200, temperature=0.2, reasoning="none"):
+    def ask(self, system, user, model=None, max_tokens=200, temperature=0.2, reasoning="none", schema=None):
         self.side_requests.append(dict(system=system, user=user, model=model, max_tokens=max_tokens,
-                                       temperature=temperature, reasoning=reasoning))
+                                       temperature=temperature, reasoning=reasoning, schema=schema))
         return self.side(system, user).strip()
 
     async def aask(self, system, user, model=None, max_tokens=800, temperature=0.2, reasoning="none"):

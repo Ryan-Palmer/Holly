@@ -233,10 +233,14 @@ class LmStudio:
                                                          {"role": "user", "content": user}])
 
     def ask(self, system: str, user: str, model: str | None = None, max_tokens: int = 200,
-            temperature: float = 0.2, reasoning: str = "none") -> str:
-        """A whole reply, blocking: call it from a worker thread."""
+            temperature: float = 0.2, reasoning: str = "none", schema: dict | None = None) -> str:
+        """A whole reply, blocking: call it from a worker thread. With `schema`, the reply is
+        JSON in that shape (LM Studio's structured output), for a judge with several answers."""
         args = self._side_args(system, user, model, max_tokens, temperature, reasoning)
-        extra = dict(logprobs=True, top_logprobs=10) if self.keep_odds else {}
+        if schema:
+            args["response_format"] = {"type": "json_schema",
+                                       "json_schema": {"name": "reply", "strict": True, "schema": schema}}
+        extra = dict(logprobs=True, top_logprobs=10) if self.keep_odds and not schema else {}
         try:
             try:
                 reply = self.openai.chat.completions.create(**args, **extra)

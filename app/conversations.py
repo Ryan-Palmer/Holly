@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime
+import json
 import re
 import statistics
 from collections.abc import Callable
@@ -81,15 +82,17 @@ and doesn't contradict himself.
 Then OVERALL: 1 to 5, where 5 is a conversation a fan of the show would enjoy, with
 nothing odd in it, and 1 is one nobody could live with.
 
-Reply in exactly this form, a line each, nothing else:
-ANSWERS: PASS
-UNASKED: FAIL - "his exact words" - why
-REPEATS: PASS
-CHARACTER: PASS
-KIND: PASS
-FACTS: PASS
-FLOW: PASS
-OVERALL: n"""
+Reply as JSON. For each point: why, in a few words; quotes, his exact words that show a
+FAIL (none for a PASS); then the verdict, PASS or FAIL. Then overall, 1 to 5."""
+# The shape of the judges' reply (LM Studio's structured output). Free text, read line by
+# line, did as well on the user's 15 scored conversations, but this can't leave a point out
+# or run a quote into the why; and writing why before the verdict ranked Qwen's overall
+# scores nearer the user's (+0.30 against -0.14), for 28% more time (28 November 2026).
+SCHEMA = {"type": "object", "additionalProperties": False, "required": [*POINTS, "overall"], "properties": {
+    **{p: {"type": "object", "additionalProperties": False, "required": ["why", "quotes", "verdict"],
+           "properties": {"why": {"type": "string"}, "quotes": {"type": "array", "items": {"type": "string"}},
+                          "verdict": {"type": "string", "enum": ["PASS", "FAIL"]}}} for p in POINTS},
+    "overall": {"type": "integer", "minimum": 1, "maximum": 5}}}
 
 
 @dataclasses.dataclass
@@ -332,7 +335,14 @@ def found(quote: str, replies: list[str]) -> bool:
 
 def verdict(text: str, replies: list[str]) -> dict:
     """A judge's reply, read: each point PASS or FAIL, with its quotes and whether each is
-    his; and OVERALL. A point it didn't answer is None."""
+    his; and OVERALL. A point it didn't answer is None. JSON (SCHEMA), or free text, a line
+    a point, as judges replied before it."""
+    try:
+        got = json.loads(text)
+    except ValueError:
+        got = None
+    if isinstance(got, dict):
+        return _read_json(got, replies)
     points: dict[str, dict | None] = {p: None for p in POINTS}
     for line in text.splitlines():
         m = re.match(r"\W*(" + "|".join(POINTS) + r")\W*\s*:?\s*(PASS|FAIL)\b(.*)", line.strip(), re.IGNORECASE)
@@ -347,19 +357,33 @@ def verdict(text: str, replies: list[str]) -> dict:
     return dict(points=points, overall=int(m.group(1)) if m else None)
 
 
+def _read_json(got: dict, replies: list[str]) -> dict:
+    points: dict[str, dict | None] = {p: None for p in POINTS}
+    for p in POINTS:
+        r = got.get(p)
+        if not isinstance(r, dict) or str(r.get("verdict", "")).upper() not in ("PASS", "FAIL"):
+            continue
+        quotes = [q for q in r.get("quotes") or [] if isinstance(q, str) and q.strip()]
+        points[p] = dict(ok=r["verdict"].upper() == "PASS", quotes=quotes,
+                         shown=[q for q in quotes if found(q, replies)], why=str(r.get("why", ""))[:200])
+    overall = got.get("overall")
+    return dict(points=points, overall=overall if isinstance(overall, int) and 1 <= overall <= 5 else None)
+
+
 def failed(v: dict) -> list[str]:
     """The points a verdict fails, with his words to show for it."""
     return [p for p, r in v["points"].items() if r and not r["ok"] and r["shown"]]
 
 
 def judge(lm, model: str, row: dict, thinking: str = "none") -> dict:
-    """One judge's verdict on one conversation (as_row), thinking first if `thinking` isn't
-    "none": slower, and steadier. Asked again if it gives no verdict (its thinking ran out,
-    or Qwen, not thinking, said nothing)."""
+    """One judge's verdict on one conversation (as_row), as JSON (SCHEMA), thinking first if
+    `thinking` isn't "none": slower, and steadier. Asked again if it gives no verdict (its
+    thinking ran out, or Qwen, not thinking, said nothing). A why for every point is longer
+    than free text's PASS: 1,500 tokens, not thinking."""
     v: dict = {}
     for _ in range(3):
-        text = lm.ask(JUDGE_PROMPT, row["transcript"], model, max_tokens=400 if thinking == "none" else 12000,
-                      temperature=0.3, reasoning=thinking)
+        text = lm.ask(JUDGE_PROMPT, row["transcript"], model, max_tokens=1500 if thinking == "none" else 12000,
+                      temperature=0.3, reasoning=thinking, schema=SCHEMA)
         v = dict(judge=model, thinking=thinking, text=text, **verdict(text, row["replies"]))
         if all(v["points"].values()) and v["overall"]:
             break
