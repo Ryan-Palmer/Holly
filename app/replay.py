@@ -145,12 +145,15 @@ class RecordedModel:
     def __init__(self, replies: list[dict]):
         self.replies = list(replies)
         self.requests: list[list[dict]] = []
+        self.choices: list[str | None] = []
+        self.asked: list[str] = []  # side checks that went to the model: none should
 
     async def keep_loaded(self, model=None) -> bool:
         return False
 
     async def astream_reply(self, messages, timing, model=None, tools=None, calls=None, tool_choice=None):
         self.requests.append(messages)
+        self.choices.append(tool_choice)
         if not self.replies:
             raise LookupError("asked more often than it was then")
         wrote = self.replies.pop(0)
@@ -161,13 +164,15 @@ class RecordedModel:
             calls.extend({"id": f"r{n}_{i}", "name": c["name"], "arguments": c["arguments"]}
                          for i, c in enumerate(wrote["calls"]))
 
-    def ask(self, *args, **kwargs):
+    def ask(self, system, *args, **kwargs):
+        self.asked.append(system[:60])
         raise LookupError("a side check not in the log")
 
 
 async def check_turn(events: list[dict], turn: dict, cfg=None) -> str | None:
-    """Replays `turn` with the model's replies as they were. None if every request he's sent
-    is the one he was sent then (ids aside); else what differs. On `cfg` (holly.toml's, his
+    """Replays `turn` with the model's replies as they were. None if the turn went as it did
+    then: every request he's sent (ids aside) and its tool choice, the side checks consulted
+    (none asked of the model), the nets that fired, what's kept; else what differs. On `cfg` (holly.toml's, his
     memory in a temporary folder, Spotify off, as the evals' Holly is: a turn from a Holly
     with Spotify on had other rules in his system prompt)."""
     from .scenarios import SilentPlayer, SilentVoice, quiet_config
@@ -179,14 +184,32 @@ async def check_turn(events: list[dict], turn: dict, cfg=None) -> str | None:
     holly.events = ev.EventLog(None)  # not into the log being checked
     model = RecordedModel(turn["replies"])
     holly.lm.keep_loaded, holly.lm.astream_reply, holly.lm.ask = model.keep_loaded, model.astream_reply, model.ask
+    ended: dict = {}
+    holly.events.turn = lambda event, recorded: ended.update(event=event, recorded=recorded)
     prepare(holly, events, turn)
     try:
         await holly.respond(turn["said"])
     except LookupError as e:
         return str(e)
+    if model.asked:
+        return f"side checks asked of the model: {model.asked}"
     logged = [r["messages"] for r in turn["requests"]]
     if len(model.requests) != len(logged):
         return f"{len(model.requests)} requests, not {len(logged)}"
+    if model.choices != (choices := [r["choice"] for r in turn["requests"]]):
+        return f"tool choices {model.choices}, not {choices}"
+    got = ended.get("event") or {}
+    if sorted(got.get("decisions", {})) != sorted(turn.get("decisions", {})):
+        return f"side checks {sorted(got.get('decisions', {}))}, not {sorted(turn.get('decisions', {}))}"
+    for key in ("nets", "kept"):
+        if got.get(key) != turn.get(key):
+            return f"{key} {got.get(key)!r}, not {turn.get(key)!r}"
+
+    def without_at(ms: list[dict]) -> list[dict]:
+        return ev.comparable([{k: v for k, v in m.items() if k != "at"} for m in ms])
+
+    if without_at(ended.get("recorded") or []) != without_at(turn.get("recorded") or []):
+        return "what's recorded in his history differs"
     for n, (a, b) in enumerate(zip(model.requests, logged), 1):
         a, b = ev.comparable(a), ev.comparable(b)
         if a != b:
