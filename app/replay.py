@@ -138,6 +138,82 @@ async def replay(events: list[dict], turn: dict, runs: int, say: str | None = No
     return replies
 
 
+class RecordedModel:
+    """The model, as it answered then: each request gets the reply written then, word by
+    word, with the same tool calls. Side checks must come from the log: asking one fails."""
+
+    def __init__(self, replies: list[dict]):
+        self.replies = list(replies)
+        self.requests: list[list[dict]] = []
+
+    async def keep_loaded(self, model=None) -> bool:
+        return False
+
+    async def astream_reply(self, messages, timing, model=None, tools=None, calls=None, tool_choice=None):
+        self.requests.append(messages)
+        if not self.replies:
+            raise LookupError("asked more often than it was then")
+        wrote = self.replies.pop(0)
+        for word in re.findall(r"\S+\s*|\s+", wrote["raw"]):
+            yield word
+        if calls is not None:
+            n = len(self.requests)
+            calls.extend({"id": f"r{n}_{i}", "name": c["name"], "arguments": c["arguments"]}
+                         for i, c in enumerate(wrote["calls"]))
+
+    def ask(self, *args, **kwargs):
+        raise LookupError("a side check not in the log")
+
+
+async def check_turn(events: list[dict], turn: dict, cfg=None) -> str | None:
+    """Replays `turn` with the model's replies as they were. None if every request he's sent
+    is the one he was sent then (ids aside); else what differs. On `cfg` (holly.toml's, his
+    memory in a temporary folder, Spotify off, as the evals' Holly is: a turn from a Holly
+    with Spotify on had other rules in his system prompt)."""
+    from .scenarios import SilentPlayer, SilentVoice, quiet_config
+    from .speak import Holly
+
+    holly = Holly(turn["model"], face=False, cfg=cfg or quiet_config(Path(tempfile.mkdtemp(prefix="holly-check-"))))
+    holly.tts, holly.player = SilentVoice(), SilentPlayer()
+    holly.nets_act = holly.convo.clean = turn["nets_act"]
+    holly.events = ev.EventLog(None)  # not into the log being checked
+    model = RecordedModel(turn["replies"])
+    holly.lm.keep_loaded, holly.lm.astream_reply, holly.lm.ask = model.keep_loaded, model.astream_reply, model.ask
+    prepare(holly, events, turn)
+    try:
+        await holly.respond(turn["said"])
+    except LookupError as e:
+        return str(e)
+    logged = [r["messages"] for r in turn["requests"]]
+    if len(model.requests) != len(logged):
+        return f"{len(model.requests)} requests, not {len(logged)}"
+    for n, (a, b) in enumerate(zip(model.requests, logged), 1):
+        a, b = ev.comparable(a), ev.comparable(b)
+        if a != b:
+            i = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+            return f"request {n}, message {i}: {str(a[i] if i < len(a) else None)[:200]!r} " \
+                   f"against {str(b[i] if i < len(b) else None)[:200]!r}"
+    return None
+
+
+async def check(paths: list[Path], cfg=None) -> tuple[int, list[str]]:
+    """Every turn in these event logs (files, or folders searched for them), replayed with
+    the model's replies as they were: for a change that mustn't change what he's sent.
+    Returns how many turns were the same, and what differed in the others."""
+    files = [f for p in paths for f in ([p] if p.is_file() else sorted(p.rglob("*.jsonl")))]
+    same, differ = 0, []
+    for f in files:
+        events = ev.read(f)
+        for t in ev.turns(events):
+            if t.get("failed"):
+                continue
+            if why := await check_turn(events, t, cfg):
+                differ.append(f"{f} turn {t['turn']} ({t['said'][:40]!r}): {why}")
+            else:
+                same += 1
+    return same, differ
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Replay a turn from Holly's event log")
     p.add_argument("turn", nargs="?", type=int, help="the turn's number in the day's listing")
@@ -149,8 +225,16 @@ def main() -> None:
     p.add_argument("--match", help="count the replies matching this regular expression")
     p.add_argument("--model", help="another model as Holly's brain")
     p.add_argument("--live", action="store_true", help="ask the side checks and his tools afresh")
+    p.add_argument("--check", nargs="+", type=Path, metavar="LOG",
+                   help="replay every turn in these logs (files or folders) with the model's replies as they "
+                        "were, and say which requests aren't the ones he was sent: no model needed")
     args = p.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if args.check:
+        same, differ = asyncio.run(check(args.check))
+        print("\n".join(differ))
+        print(f"{same} of {same + len(differ)} turns sent the same requests")
+        sys.exit(1 if differ else 0)
     try:
         path = ev.day_file(args.folder or folder(), args.day)
         events = ev.read(path)

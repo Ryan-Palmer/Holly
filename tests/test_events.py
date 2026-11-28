@@ -89,6 +89,19 @@ def test_a_failed_turn_is_logged_and_kept_out_of_his_state(make_holly):
     assert "(failed)" in replay.listing([failed])
 
 
+def test_a_check_replays_every_turn_with_the_models_replies(make_holly, cfg, monkeypatch):
+    from app import speak
+    monkeypatch.setattr(persona, "PINNED", None)
+    holly, _ = two_turns(make_holly)
+    asyncio.run(holly.respond("[A timer you set is due: tea.]"))  # him speaking up
+    monkeypatch.setattr(speak.torch.cuda, "is_available", lambda: True)
+    assert asyncio.run(replay.check([holly.events.folder], cfg)) == (3, [])
+    # A change to what he's sent shows, turn by turn.
+    monkeypatch.setattr(persona, "IN_CHARACTER", "[Be yourself.]")
+    same, differ = asyncio.run(replay.check([holly.events.folder], cfg))
+    assert same == 1 and len(differ) == 2 and "request 1, message " in differ[0], differ
+
+
 def test_reset_clears_the_log(make_holly):
     holly, _ = two_turns(make_holly)
     assert holly.events.folder.exists()

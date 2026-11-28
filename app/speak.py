@@ -399,6 +399,9 @@ class Holly:
             # had him ask), or their taking him up on something he offered (app/offers.py):
             # either way, what they chose is theirs, and research isn't held for asking which.
             # Or carried on past it: then his request says to leave it (persona.PASSED_OVER).
+            # Timers going, as the turn starts: a time he gives may be a countdown (guards.unsaid).
+            # Only a tool call (then "timer" is in called) changes them mid-turn.
+            counting = await self._decide("counting", lambda: bool(self.timers and self.timers.items))
             held = await self._decide("held", lambda: bool(self.research_tool
                                                            and self.research_tool.held_turn == self.turns - 1))
             took_up, self.memory = await asyncio.gather(self._decide("taken_up", self._taken_up, user),
@@ -527,7 +530,7 @@ class Holly:
                                     can_research="research" in self.toolbox,
                                     answering_choice=turn.answering_choice, clocked="clock" in called,
                                     can_clock="clock" in self.toolbox,
-                                    counting=bool(self.timers and self.timers.items) and "timer" not in called,
+                                    counting=counting and "timer" not in called,
                                     told=told())
                 return why if why and self.fired(why) else None
 
