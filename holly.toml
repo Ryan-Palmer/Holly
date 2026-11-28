@@ -181,6 +181,8 @@ awake_s = 30.0
 [persona]
 system_prompt = "persona/system_prompt.md"
 examples = "persona/examples.toml"
+# The lines added to what he's sent, each with why (app/context.py).
+notes = "persona/notes.toml"
 # Rolling history, in tokens (counted as ~4 characters each). Past
 # history_soft_tokens, once he's asleep (awake_s after he last spoke), the
 # older exchanges are folded into his notes (app/memory.py), at most

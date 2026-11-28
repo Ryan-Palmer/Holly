@@ -4,7 +4,7 @@ started a report 2 times in 16."""
 
 import asyncio
 
-from app import offers
+from app import context, offers
 from conftest import FakeLm
 
 RECIPE = "If you're really going to bother, I'll find one. Want me to search for it now or later?"
@@ -59,5 +59,5 @@ def test_the_tools_his_last_reply_came_from(make_holly):
                                                               "function": {"name": "news", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "1", "content": "Science: a comet."},
         {"role": "assistant", "content": "A comet. Shall I read you the rest of that story?"}]
-    assert holly._last_tools() == ["news"]
-    assert holly._last_reply() == "A comet. Shall I read you the rest of that story?"
+    assert context.last_tools(holly.convo.history) == ["news"]
+    assert context.last_reply(holly.convo.history) == "A comet. Shall I read you the rest of that story?"

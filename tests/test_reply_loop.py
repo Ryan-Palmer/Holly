@@ -261,9 +261,9 @@ def test_turning_research_down_isnt_taking_it_up(make_holly):
     assert lm.requests[1]["tool_choice"] is None and not holly.research.jobs
     # Nothing offered or asked in his last reply ("Suit yourself.", "Fifty-six."): nothing to judge.
     assert len([r for r in lm.side_requests if r["system"] == offers.TAKEN_UP_PROMPT]) == 1
-    # Passed over: that request says to leave it (persona.PASSED_OVER), with the offer still
+    # Passed over: that request says to leave it (persona/notes.toml's passed_over), with the offer still
     # in his history; and the next, after nothing offered, doesn't.
-    from app.persona import PASSED_OVER
+    PASSED_OVER = holly.convo.notes.passed_over
 
     assert lm.requests[1]["messages"][-1]["content"].endswith(PASSED_OVER)
     assert "I can do a proper research job on it if you want." in [m["content"] for m in lm.requests[1]["messages"]]
@@ -272,7 +272,9 @@ def test_turning_research_down_isnt_taking_it_up(make_holly):
 
 def test_an_offer_taken_up_isnt_noted_as_passed_over(make_holly):
     from app import offers
-    from app.persona import PASSED_OVER
+    from app.config import load_config
+    from app.context import load_notes
+    PASSED_OVER = load_notes(load_config().persona.notes).passed_over
 
     lm = FakeLm(["Want me to set a timer for the pasta?",
                  [("timer", {"action": "set", "duration": "10 minutes", "label": "pasta"})], "Set. Ten minutes."],
@@ -543,8 +545,7 @@ def test_the_memory_check_sees_the_last_two_exchanges():
     """"I just wanted to know more about the toe eating", after "Human Toes" / "I've already
     given you the news", was taken for a memory: the toe eating was his own news, a turn
     before. A long reply keeps its start and its end."""
-    from types import SimpleNamespace
-    from app.speak import Holly
+    from app.context import last_exchange
     report = "Politics — a bill. " + "Sport — a match. " * 60 + "Additional — a vending machine eats toes."
     history = [{"role": "user", "content": "Guess what I want"}, {"role": "assistant", "content": "A nap."},
                {"role": "user", "content": "Status report"},
@@ -552,7 +553,7 @@ def test_the_memory_check_sees_the_last_two_exchanges():
                {"role": "tool", "tool_call_id": "1", "content": "The BBC's latest..."},
                {"role": "assistant", "content": report},
                {"role": "user", "content": "Human Toes"}, {"role": "assistant", "content": "I gave you the news."}]
-    before = Holly._last_exchange(SimpleNamespace(convo=SimpleNamespace(history=history)))
+    before = last_exchange(history)
     assert before.startswith("Status report / Politics — a bill.")
     assert before.endswith("a vending machine eats toes. / Human Toes / I gave you the news.")
     assert "A nap" not in before and "The BBC" not in before and " ... " in before

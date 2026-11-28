@@ -178,9 +178,12 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 
 `holly.toml` holds every setting, with comments: models (and each chat
 model's quirks), microphone and speakers, wake words, memory budgets, search providers and more. Holly's
-character is in `persona/`: `system_prompt.md` and example exchanges in
-`examples.toml`. Each tool's rules for when and how he uses it sit beside its
-code in `app/`, as a `.md` with the same name (`search.md` for `search.py`).
+character is in `persona/`: `system_prompt.md`, example exchanges in
+`examples.toml`, and in `notes.toml` the lines added to what he's sent (stay
+in character, an offer passed over, the tool to call), each with why. Each
+tool's rules for when and how he uses it sit beside its code in `app/`, as a
+`.md` with the same name (`search.md` for `search.py`). Everything about what
+he's sent is built in `app/context.py`.
 
 ## Evals
 
@@ -332,6 +335,12 @@ same tools' answers and side checks' answers, so the model gets the request
 he was sent. `--say` puts another line in its place, `--match` counts the
 replies that match a pattern, and `--live` asks the side checks and tools
 again. Run it with no Holly running.
+
+`python -m app.replay --check LOGS` replays every turn in some event logs
+with the model's replies as they were, and names any request that isn't the
+one he was sent. No model is needed. Run it after a change that mustn't change
+what he's sent, on logs from the evals' Holly (Spotify off): a log from real
+use had other tool rules in his prompt.
 
 ## Tests
 

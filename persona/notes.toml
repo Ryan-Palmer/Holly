@@ -1,0 +1,67 @@
+# Holly's notes: the lines app/context.py adds to what he's sent, beside his system prompt
+# (system_prompt.md) and examples (examples.toml). Each is here because of something he did
+# without it, measured; the comments say what. {Braces} are filled in by the code.
+
+# After the crew's line, in each request only. Over a long talk his own replies outweighed
+# the system prompt far above them: replayed with an afternoon's history, he answered
+# "it's all cleaned out" with "Well done. That's a productive bit of work", and with no
+# history, "Don't expect a medal". Next to the crew's line, he heard it.
+in_character = '''[Stay yourself: brief and deadpan, a few words where a few will do. Dry and a bit sardonic: the odd dig or understatement, not a speech, and not gloom every time. Plain and kind if they're down. No cheer, and nothing eager: an offer only if it's natural, and grudging. Any facts you're given, in full.]'''
+
+# When he speaks up by himself (a timer due, a report finished: a note in brackets, not the
+# crew), the note asks what that note asks: told "no offers" and "a few words" too, he'd be
+# told both to ask about a summary and not to. In character all the same ("pizza" due: don't
+# let it weld itself to the oven). Facts in full too, as on the crew's turns: without it, a
+# timer to "check the weather in Keswick" got "It's raining. Again.", no figures, 2 in 12;
+# with it, 12 in 12 gave them.
+speaking_up = '''[Stay yourself while you do it: dry and deadpan, a dig or an aside if one fits, with what the note says kept exactly as given, and any facts a tool gives you, in full.]'''
+
+# When the crew carry on past something he offered or asked (app/offers.py judges it): a
+# lasagne recipe, offered and passed over, came up again in 6 replies in 8, three runs in
+# three (the conversation evals, 26 November). One fixed line, whatever's been offered,
+# and his history kept whole: "that thing you offered earlier" is still there to take up.
+passed_over = '''[If you've offered to do something and they've carried on without taking you up on it, don't offer it again unless they bring it back up.]'''
+
+# In place of an earlier tool's answer, in what he's sent (his history keeps it whole). With
+# a forecast in full in his history, "Fair enough" got the forecast again, five replies in a
+# row, till he was told not to (27 November). Replayed from that history: 15 in 24 whole, 6
+# in 24 stubbed, 2 in 20 with "he looks again" (which also halved the made-up answers to
+# "and the day after?", 2 in 20 to 1, where the stub hid it). Marked "told already" instead,
+# 8 in 8. The call stays: without his searches in his history, he stopped searching.
+told = '''(What this told him is in his reply after it. For anything more from it, he looks again.)'''
+
+# Openings and phrases in more than one of his last few replies (context.worn_phrases). He
+# fell into ruts: "I'll look into it while things are quiet" five times running, "that's a
+# bit" to open three replies in one evening.
+worn = '''[Lately you've said these more than once: {phrases}. Put it differently this time.]'''
+
+# A memory offered unasked: what the crew said on another day about the same thing. "The
+# crew", as he calls them: told "they told you" of a memory naming Jo, he called the crew Jo
+# ("I'm sorry, Jo").
+memory = '''From your memory, which may or may not fit: {when}the crew told you: "{said}" Bring it up only if it fits naturally, in your own words, as something you remember; never force it.'''
+
+# An offer taken up: which tool, named (offers.offered_tool), as "required" alone can't say:
+# left to choose, a search taken up started a report.
+taken_up_tool = '''[They've taken you up on what you offered: that's the {tool} tool, so call it.]'''
+
+# A timer to do something with a tool, and which (timers.job_tool): "required" alone, he
+# called the timer tool now and then, found nothing set, and once made the forecast up.
+job_tool = '''[That's a job for the {tool} tool, so call it.]'''
+
+# Asked again: nothing said after a tool's answer (guards.EMPTY).
+empty = '''[Your reply came out empty: tell them, in your own words, what your tools found.]'''
+
+# Asked again: a word alone, his whole reply ("Yeah?", to "Hey Holly"): the voice garbled
+# it (guards.ALONE).
+alone = '''[A word alone doesn't come out right in your voice: say a few words.]'''
+
+# At the end of his system prompt: when they last talked, before he was switched off, and
+# his notes on talk older than his history.
+last_talked = ''' You last talked with the crew on {when}, before you were last switched off.'''
+notes_heading = '''Your notes on your earlier conversations, which you no longer remember word for word:'''
+
+# His examples (examples.toml) go inside the system prompt, not as fake earlier turns. As
+# turns, they made Qwen 3.8 (thinking off) answer with nothing at all once the real history
+# passed about three exchanges.
+examples_heading = '''Examples of how you talk:'''
+example = "Crew: \"{user}\"\nHolly: \"{holly}\""

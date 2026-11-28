@@ -2,7 +2,12 @@
 
 import json
 
-from app.persona import IN_CHARACTER, PASSED_OVER, SPEAKING_UP, Conversation
+from app.config import load_config
+from app.context import load_notes
+from app.persona import Conversation
+
+NOTES = load_notes(load_config().persona.notes)  # persona/notes.toml
+IN_CHARACTER, PASSED_OVER, SPEAKING_UP, TOLD = NOTES.in_character, NOTES.passed_over, NOTES.speaking_up, NOTES.told
 
 
 def convo(cfg, memory_file=None) -> Conversation:
@@ -143,10 +148,12 @@ def test_unreadable_file_is_set_aside(cfg, tmp_path):
 def test_the_date_in_his_prompt_moves_on_at_midnight(cfg, monkeypatch):
     from app import persona
 
+    import datetime as dt
+
     c = convo(cfg)
-    monkeypatch.setattr(persona, "today", lambda: "Monday 23 November 2026")
+    monkeypatch.setattr(persona, "PINNED", dt.date(2026, 11, 23))
     assert "Today is Monday 23 November 2026." in c.messages_for("Hello.")[0]["content"]
-    monkeypatch.setattr(persona, "today", lambda: "Tuesday 24 November 2026")  # past midnight, same session
+    monkeypatch.setattr(persona, "PINNED", dt.date(2026, 11, 24))  # past midnight, same session
     assert "Today is Tuesday 24 November 2026." in c.messages_for("Still up?")[0]["content"]
 
 
@@ -224,7 +231,6 @@ def test_his_tools_earlier_answers_are_sent_stubbed(cfg):
     """A forecast kept whole in what he saw, "Fair enough" got the forecast again (27 November,
     9 replays in 12). His history keeps it; what he's sent has TOLD in its place, but not a
     status report's (said as written, and how earlier ones are found)."""
-    from app.persona import TOLD
 
     c = convo(cfg)
     c.record("Weather tomorrow?", "Rain, 7 to 14 degrees.", steps=[

@@ -1,6 +1,7 @@
 """His event log (app/events.py) and replaying a turn from it (app/replay.py)."""
 
 import asyncio
+import dataclasses
 import datetime
 
 from app import events as ev
@@ -97,7 +98,9 @@ def test_a_check_replays_every_turn_with_the_models_replies(make_holly, cfg, mon
     monkeypatch.setattr(speak.torch.cuda, "is_available", lambda: True)
     assert asyncio.run(replay.check([holly.events.folder], cfg)) == (3, [])
     # A change to what he's sent shows, turn by turn.
-    monkeypatch.setattr(persona, "IN_CHARACTER", "[Be yourself.]")
+    notes = cfg.persona.notes.read_text(encoding="utf-8").replace("[Stay yourself: brief", "[Be you: brief")
+    (changed := holly.events.folder.parent / "notes.toml").write_text(notes, encoding="utf-8")
+    cfg = dataclasses.replace(cfg, persona=dataclasses.replace(cfg.persona, notes=changed))
     same, differ = asyncio.run(replay.check([holly.events.folder], cfg))
     assert same == 1 and len(differ) == 2 and "request 1, message " in differ[0], differ
 

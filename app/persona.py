@@ -185,41 +185,6 @@ def about_the_crew(user: str, tools: set[str]) -> bool:
     there?"), they're no aside (guards.CREW_ASIDE)."""
     return bool(guards.CREW_ASKED.search(user) or tools & {"status", "recall"})
 
-# After the crew's line, in each request only. Over a long talk his own replies outweighed
-# the system prompt far above them: replayed with an afternoon's history, he answered
-# "it's all cleaned out" with "Well done. That's a productive bit of work", and with no
-# history, "Don't expect a medal". Next to the crew's line, he heard it.
-IN_CHARACTER = ("[Stay yourself: brief and deadpan, a few words where a few will do. Dry and a bit sardonic: the "
-                "odd dig or understatement, not a speech, and not gloom every time. Plain and kind if they're "
-                "down. No cheer, and nothing eager: an offer only if it's natural, and grudging. Any facts "
-                "you're given, in full.]")
-# When he speaks up by himself (a timer due, a report finished: a note in brackets, not the
-# crew), the note asks what that note asks: told "no offers" and "a few words" too, he'd be
-# told both to ask about a summary and not to. In character all the same ("pizza" due: don't
-# let it weld itself to the oven). Facts in full too, as on the crew's turns: without it, a
-# timer to "check the weather in Keswick" got "It's raining. Again.", no figures, 2 in 12;
-# with it, 12 in 12 gave them.
-SPEAKING_UP = ("[Stay yourself while you do it: dry and deadpan, a dig or an aside if one fits, with what the "
-               "note says kept exactly as given, and any facts a tool gives you, in full.]")
-# When the crew carry on past something he offered or asked (app/offers.py judges it): a
-# lasagne recipe, offered and passed over, came up again in 6 replies in 8, three runs in
-# three (the conversation evals, 26 November). One fixed line, whatever's been offered,
-# and his history kept whole: "that thing you offered earlier" is still there to take up.
-PASSED_OVER = ("[If you've offered to do something and they've carried on without taking you up on it, don't "
-               "offer it again unless they bring it back up.]")
-# In place of an earlier tool's answer, in what he's sent (his history keeps it whole). With
-# a forecast in full in his history, "Fair enough" got the forecast again, five replies in a
-# row, till he was told not to (27 November). Replayed from that history: 15 in 24 whole, 6
-# in 24 stubbed, 2 in 20 with "he looks again" (which also halved the made-up answers to
-# "and the day after?", 2 in 20 to 1, where the stub hid it). Marked "told already" instead,
-# 8 in 8. The call stays: without his searches in his history, he stopped searching.
-TOLD = "(What this told him is in his reply after it. For anything more from it, he looks again.)"
-# Whose answers are stubbed: lookups of the world, which can be looked up again and go stale.
-# Not his memory's (recall, status, research), which follow-ups lean on: with recall's stubbed,
-# "What was her problem at home?", after recall had found Jo's boiler, recalled again with a
-# weaker question and missed it, 3 in 6 (6 in 6 whole).
-LOOKUPS = {"weather", "search", "news", "clock", "timer", "spotify"}
-
 class Conversation:
     def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None,
                  archive=None):
@@ -228,17 +193,14 @@ class Conversation:
         `memory_file`, the history and notes are loaded from it, and saved to
         it after every change. With `archive` (app/archive.py), every exchange
         that leaves the history is stored there."""
-        self.system_prompt = cfg.system_prompt.read_text(encoding="utf-8").strip()
-        if extra_prompt:
-            self.system_prompt += "\n\n" + extra_prompt.strip()
+        from . import context
+
+        # The lines added to what he's sent (persona/notes.toml), and his system prompt.
+        self.notes = context.load_notes(cfg.notes)
         with open(cfg.examples, "rb") as f:
             examples = tomllib.load(f).get("example", [])
-        # The examples go inside the system prompt, not as fake earlier turns.
-        # As turns, they made Qwen 3.8 (thinking off) answer with nothing at
-        # all once the real history passed about three exchanges.
-        if examples:
-            lines = [f'Crew: "{ex["user"]}"\nHolly: "{ex["holly"]}"' for ex in examples]
-            self.system_prompt += "\n\nExamples of how you talk:\n\n" + "\n\n".join(lines)
+        self.system_prompt = context.system_prompt(cfg.system_prompt.read_text(encoding="utf-8"), extra_prompt,
+                                                   examples, self.notes)
         # History budgets, in characters (~4 a token).
         self.soft_chars = cfg.history_soft_tokens * CHARS_PER_TOKEN
         self.hard_chars = cfg.history_hard_tokens * CHARS_PER_TOKEN
@@ -258,109 +220,19 @@ class Conversation:
         self._made_for: tuple = ()
         self.preamble: list[dict] = []
         self.load()
-        self._build_preamble()
 
-    def _build_preamble(self) -> None:
-        """Holly knows the date (without it he searched for last year's
-        results), and has his notes on anything older than the history. Both go
-        at the end of the system prompt, which changes only when one of them
-        does (the notes only while he sleeps), so LM Studio's cache survives
-        until then."""
-        key = (today(), self.memory, self.previous_end)
-        if self._made_for != key:
-            self._made_for = key
-            content = f"{self.system_prompt}\n\nToday is {key[0]}. {week_around(today_date())}"
-            if self.previous_end:
-                content += (f" You last talked with the crew on {when(self.previous_end)}, "
-                            "before you were last switched off.")
-            if self.memory:
-                content += ("\n\nYour notes on your earlier conversations, which you no longer "
-                            f"remember word for word:\n{self.memory}")
-            self.preamble = [{"role": "system", "content": content}]
+    def worn_phrases(self, replies: int = 8, at_most: int = 4) -> list[str]:
+        """Phrases in more than one of his last few replies (context.worn_phrases)."""
+        from .context import worn_phrases
 
-    def worn_phrases(self, replies: int = 8, at_most: int = 4, history: list[dict] | None = None) -> list[str]:
-        """Openings (three words) and phrases (four) in more than one of his last few
-        replies. He fell into ruts: "I'll look into it while things are quiet" five
-        times running, "that's a bit" to open three replies in one evening. In `history`,
-        if given: his history as he's sent it (messages_for), so what's cut from it isn't
-        quoted back to him ("convinced the hangers are", from crew asides cut). Not status
-        reports: said as written, they're not his wording, and "Lately you've said 'the cat
-        refused to'" would only have him on about the crew again."""
-        from .status import SAID
-
-        history = self.history if history is None else history
-        said = [m["content"] for i, m in enumerate(history) if m["role"] == "assistant" and m.get("content")
-                and not (i and history[i - 1]["role"] == "tool"
-                         and (history[i - 1].get("content") or "").startswith(SAID))][-replies:]
-        openings: dict[str, int] = {}
-        phrases: dict[str, int] = {}
-        for text in said:
-            words = re.findall(r"[a-z']+", text.lower())
-            if len(words) >= 3:
-                openings[" ".join(words[:3])] = openings.get(" ".join(words[:3]), 0) + 1
-            for p in {" ".join(words[i:i + 4]) for i in range(len(words) - 3)}:
-                phrases[p] = phrases.get(p, 0) + 1
-        worn = [p for p, n in openings.items() if n > 1]
-        worn += [p for p, n in sorted(phrases.items(), key=lambda x: -x[1]) if n > 1 and p not in worn
-                 and not any(p in w or w in p for w in worn)]
-        return worn[:at_most]
+        return worn_phrases(self.history, replies, at_most)
 
     def messages_for(self, user_text: str | None = None, taken_up: bool | None = None,
                      memory: str = "") -> list[dict]:
-        """The full message list to send for a new user line. The time isn't
-        here: he asks the clock tool for it (app/clock.py). Without
-        `user_text`, just the preamble and history. After `user_text`, notes:
-        to stay in character (IN_CHARACTER), if he's fallen into a rut
-        (worn_phrases), that he has, and if they've passed over what he offered
-        (`taken_up` False, app/offers.py), to leave it (PASSED_OVER); and a
-        `memory` offered (app/speak.py), to bring up if it fits. They're
-        in this request only: not kept in
-        his history, and being last, they leave LM Studio's cache of the rest.
-        His replies in the history are sent without their offers of more help
-        (guards.OFFER), so he doesn't copy them, older ones included; and his
-        tools' earlier answers, if they're lookups of the world (LOOKUPS), as TOLD."""
-        from . import status
+        """What he's sent for a new line (context.messages_for)."""
+        from .context import messages_for
 
-        self._build_preamble()
-        history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
-        told: list[str] = []
-        tools: set[str] = set()
-        called = {c.get("id"): c["function"]["name"] for m in history for c in m.get("tool_calls") or []}
-        crew = crew_before = False  # this exchange about the crew of Red Dwarf; the one before
-        for m in history:
-            if m["role"] == "user":
-                told, tools, crew_before = [m.get("content") or ""], set(), crew
-            elif m["role"] == "tool":
-                told.append(m.get("content") or "")  # whole: a time he gives is checked against it
-                # Never a status report's, whatever tool gave it: said as written, it's what he's told
-                # to do if asked more (status.AFTER), and how an earlier one is found
-                # (status.without_earlier_reports).
-                if (self.clean and called.get(m.get("tool_call_id")) in LOOKUPS
-                        and not told[-1].startswith(status.SAID + status.REPORTS)):
-                    m["content"] = TOLD
-            elif m["role"] == "assistant" and m.get("tool_calls"):
-                tools |= {c["function"]["name"] for c in m["tool_calls"]}
-            if m["role"] == "assistant" and m.get("content") and self.clean:
-                # And, unasked, without timers counted down or times of day nobody gave him:
-                # with six in his history, a minute on each reply, he went on counting,
-                # whatever the time. Nor the crew of Red Dwarf tacked on to something else:
-                # copying those, he tacked them on to every reply (guards.CREW_ASIDE).
-                unasked = not guards.TIME_ASKED.search(told[0] if told else "")
-                crew = about_the_crew(told[0] if told else "", tools)
-                m["content"] = guards.without_offers(m["content"], countdowns=unasked, told=told if unasked else None,
-                                                     asides=not (crew or crew_before))
-        tail = []
-        if user_text is not None:
-            note = SPEAKING_UP if user_text.startswith("[") else IN_CHARACTER
-            if worn := self.worn_phrases(history=history):
-                user_text += ("\n[Lately you've said these more than once: " + "; ".join(f'"{p}"' for p in worn)
-                              + ". Put it differently this time.]")
-            if memory:
-                user_text += f"\n[{memory}]"
-            if taken_up is False:
-                note += f"\n{PASSED_OVER}"
-            tail = [{"role": "user", "content": f"{user_text}\n{note}"}]
-        return [*self.preamble, *history, *tail]
+        return messages_for(self, user_text, taken_up, memory)
 
     def record(self, user_text: str, holly_text: str, steps: list[dict] | None = None) -> int:
         """Add an exchange: what was said, plus any `steps` between (his

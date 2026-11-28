@@ -93,6 +93,7 @@ class ListenConfig:
 class PersonaConfig:
     system_prompt: Path
     examples: Path
+    notes: Path = ROOT / "persona/notes.toml"  # the lines added to what he's sent (app/context.py)
     # Token budgets (~4 characters a token). Past soft, the older history is folded
     # into his notes while he sleeps; past hard, the oldest is dropped at once.
     history_soft_tokens: int = 20_000
@@ -272,6 +273,7 @@ def load_config(path: Path = DEFAULT_CONFIG) -> Config:
         persona=PersonaConfig(
             system_prompt=base / p["system_prompt"],
             examples=base / p["examples"],
+            **({"notes": base / p["notes"]} if p.get("notes") else {}),
             memory_file=base / p["memory_file"] if p.get("memory_file") else None,
             **{k: p[k] for k in ("history_soft_tokens", "history_hard_tokens", "history_keep_tokens",
                                  "history_resume_tokens", "memory_tokens") if k in p},

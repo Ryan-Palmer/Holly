@@ -29,7 +29,8 @@ import time
 from .announce import Announcement
 from .console import DIM, RESET, YELLOW, stamp
 from .mic import Mic
-from .speak import FORGET_HELP, RESET_HELP, Holly, TurnTimes
+from .speak import Holly, TurnTimes
+from .yours import FORGET_HELP, RESET_HELP
 from .stt import Transcriber
 from .turn import TurnModel, verdict
 from .vad import TurnDetector

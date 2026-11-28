@@ -84,7 +84,7 @@ TAKEN_UP_TOOLS = {
 
 
 def _exchange(turns: list[dict], i: int, exchanges: int = 2, chars: int = 600) -> str:
-    """What speak.Holly._last_exchange gives the memory check, from a saved run's turns."""
+    """What context.last_exchange gives the memory check, from a saved run's turns."""
     said = []
     for t in turns[max(0, i - exchanges):i]:
         for text in (t["said"], t["reply"]):
