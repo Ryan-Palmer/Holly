@@ -15,7 +15,7 @@ test sentences (`sentences.txt`).
 `run` unloads LM Studio's models first, so timings aren't skewed by VRAM
 running out (`--keep-lm` to skip). Results go to `voice/data/harness/RUN/`.
 Samples are scored blind, for **similarity** (does it sound like Holly?)
-and **naturalness**; while scoring, `r` replays the reference.
+and **naturalness**. While scoring, `r` replays the reference.
 
 ## Adding a candidate
 
@@ -28,7 +28,12 @@ and **naturalness**; while scoring, `r` replays the reference.
    The `_adapter` suffix stops it shadowing the package it imports.
 4. Add it to `candidates.toml`.
 
-## Installing the current candidates
+## Installing the candidates
+
+VoxCPM2 won and runs in the app's own venv. The other candidates'
+environments and weights were deleted on 27 November 2026. To compare them
+again, rebuild an environment as below, and its weights download on the
+first run.
 
 | Candidate | Install |
 |---|---|

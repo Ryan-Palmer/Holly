@@ -16,12 +16,12 @@ across sessions, as well as everything that happened on Red Dwarf.
 - [LM Studio](https://lmstudio.ai), with its server on port 1234 and these
   models downloaded:
   - `google/gemma-4-26b-a4b-qat` (the chat model)
-  - `text-embedding-nomic-embed-text-v1.5` (for recall by meaning; optional)
+  - `text-embedding-nomic-embed-text-v1.5` (optional, for recall by meaning)
 
   Holly loads and unloads them himself. If LM Studio's engine crashes, it
   loads the chat model again by itself, with its own defaults (a short
-  context, cutting his prompts); Holly notices before his next reply and
-  loads it his way. To have LM Studio's own reload right too, set the
+  context, which cuts his prompts). Holly notices before his next reply and
+  loads it his way. To make LM Studio's own reload right too, set the
   model's defaults there to a 30,208-token context and one parallel slot.
 - A microphone and speakers. A headset is best: while Holly talks, the mic
   is ignored.
@@ -77,27 +77,27 @@ past conversations, timers, research reports, and the Spotify login.
 ```
 .venv\Scripts\python -m app.listen            # talk to him
 .venv\Scripts\python -m app.listen --face     # with his face
-.venv\Scripts\python -m app.speak             # type to him; he answers out loud
+.venv\Scripts\python -m app.speak             # type to him, and he answers out loud
 .venv\Scripts\python -m app.chat              # text only, no tools or memory
 ```
 
 Run one Holly at a time: two won't fit on the GPU.
 
-The first start after installing spends a few minutes compiling the voice;
-later starts take about a minute.
+The first start after installing spends a few minutes compiling the voice.
+Later starts take about a minute.
 
 Say "Holly" near the start or end of what you say. For 30 s after he last
 spoke he's awake and listens without it.
 
 You can pause mid-sentence. At each pause, a small model (Smart Turn, on
 the CPU, fetched once from Hugging Face) judges from your voice whether
-you've finished. Sure you have, he answers after 200 ms; otherwise ("I was
-thinking we could… go to the beach") he waits up to 1.5 s for the rest,
-since being cut off is worse than a slower answer. `python -m app.turn`
-tries it on your voice, showing what it makes of each pause, with Holly
-closed. On a first try it cut in on 10 of 34 pauses mid-thought, where
-waiting 400 ms cut in on 30; finished questions it was sure of were
-answered sooner, the rest after 1.5 s. Settings: `[listen]` in
+you've finished. If it's sure you have, he answers after 200 ms. If not
+("I was thinking we could… go to the beach"), he waits up to 1.5 s for the
+rest, because being cut off is worse than a slower answer. With Holly
+closed, `python -m app.turn` tries it on your voice and shows what it makes
+of each pause. On a first try it cut in on 10 of 34 pauses mid-thought,
+where waiting 400 ms cut in on 30. It answered finished questions sooner
+when it was sure, and the rest after 1.5 s. Settings: `[listen]` in
 `holly.toml`.
 
 | Option | |
@@ -121,9 +121,11 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   sessions.
 - **The ship's records.** Recall searches them too, and status reports are
   written from them.
-- **Web search.** Free (DuckDuckGo and others) without setup. For better
-  results, put a [Brave Search API](https://brave.com/search/api/) key in
-  the Windows user environment variable `BRAVE_API_KEY`.
+- **Web search.** Settled facts come from Wikipedia first. What changes
+  from week to week (prices, rates, the latest winner) goes to the web: free
+  (DuckDuckGo and others) without setup. For better results, put a
+  [Brave Search API](https://brave.com/search/api/) key in the Windows user
+  environment variable `BRAVE_API_KEY`.
 - **Weather.** Forecasts for any town, from Open-Meteo. No setup.
 - **Clock.** The time here or anywhere, and how many days until a day.
 - **News.** The BBC's latest headlines, by subject or on anything you name
@@ -164,9 +166,9 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   says so and asks if you'd like a summary, then whether to open it. The
   report is saved as markdown, with its sources, in `data/research/`. Any
   time later, ask him to sum one up, talk you through it, answer a detail
-  from it, or open it; he finds it from your words, and if more than one
-  might be meant, he asks which. No setup; limits are under `[research]` in
-  `holly.toml`.
+  from it, or open it. He finds it from your words or its day, and if more
+  than one might be meant, he asks which. No setup. Limits are under
+  `[research]` in `holly.toml`.
 - **His face.** Ditto animates the still from his voice, in a window that
   scales to any size (F11 or a double-click for full screen), on an old
   monitor if you like (see `face/README.md`). It dozes off when he does. If the window is closed, or its sound stalls, his voice
@@ -204,28 +206,33 @@ silent voice and his memory in a temporary folder:
   report, reading and announcing reports, weather, a failed search), each
   run three times, since the model varies.
 - **Conversations** (`app/conversations.py`): whole conversations, each run
-  three times: an evening with everything in it (small talk, Red Dwarf,
-  every tool, a timer and a report coming due mid-talk), and ones on their
-  own: ordinary talk after an evening of status reports, a cheery chat,
-  errands, and old times. The code checks the tools; each judge reads each
-  transcript whole, against a checklist: he answers what's said, drags
-  nothing in, has no running jokes, stays in character, gets the facts
-  right, and keeps track. A point both judges fail, each quoting his own
-  words (checked to be his), fails it; one judge alone flags it, for
-  reading. Scenarios catch bugs already found; these are for the ones
-  nobody has found yet, like the Cat tacked on to every reply for an
-  evening, which a judge scoring one reply calls in character. (On the code
-  before that fix, both judges failed it, 3 runs in 3.)
+  three times. One evening has everything in it (small talk, Red Dwarf,
+  every tool, a timer and a report coming due mid-talk). The others are
+  ordinary talk after an evening of status reports, a cheery chat, errands,
+  old times, and talk about a cat who died. The code checks the tools. Each
+  judge reads each transcript whole, against a checklist: he answers what's
+  said, drags nothing in, has no running jokes, stays in character, is kind
+  when you're upset, gets the facts right, and keeps track. A point fails
+  when both judges fail it, each quoting his own words (checked to be his).
+  One judge alone flags it, for reading. Scenarios catch bugs already
+  found. These catch the ones nobody has found yet, like the Cat tacked on
+  to every reply for an evening, which a judge scoring one reply calls in
+  character. (On the code before that fix, both judges failed it, 3 runs
+  in 3.)
 - **Made-up memories** (`app/honesty.py`): asked about things nobody ever
   told him (lunch on Tuesday, Jo's husband's name, what the boiler engineer
   found), against the made-up memories, he must say he doesn't know. Both
-  judges read each answer for anything he presents as remembered that isn't;
-  both saying so fails it. Some he was told are asked too, so "I don't know"
-  to everything doesn't pass.
+  judges read each answer for anything he presents as remembered that
+  isn't, and both saying so fails it. Some he was told are asked too, so "I
+  don't know" to everything doesn't pass.
 - **A long talk** (`app/long_talk.py`): an evening's talk with four facts
   said early, the start folded into his notes as it is while he sleeps,
   then each fact asked about: in his notes, in his answer, and in
   character.
+- **A week of folds** (`app/many_folds.py`): seven days of made-up talk
+  folded into his notes night after night, checked in code after every
+  fold: lasting facts kept, a changed plan rewritten rather than added
+  beside the old one, nothing invented.
 - **Research reports** (`app/report_check.py`): two everyday questions
   researched the real way (capped at 15 minutes each), then both judges
   score each report for keeping to his notes, answering what was asked and
@@ -239,8 +246,8 @@ silent voice and his memory in a temporary folder:
   crashes (it's tried three times).
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
-  (`MEMORY_LINES` in `app/scenarios.py`), each asked twice; and the other
-  side checks, whether a line asks for a status report, whether a timer
+  (`MEMORY_LINES` in `app/scenarios.py`), each asked twice. Also the other
+  side checks: whether a line asks for a status report, whether a timer
   come due is a job for one of his tools, and whether a reply takes him up
   on an offer. Each answer's odds (LM Studio's logprobs) say how sure the
   model was: the scorecard lists those under 80%, right today but the first
@@ -256,21 +263,24 @@ depends on what the model says.
 
 The judges are two fixed models, Gemma and Qwen (`[evals.judges]` in
 `holly.toml`), whatever model is being tested, so scores compare between
-runs. Two, so neither one's taste or blind spots decide alone: Gemma
-marking Gemma's replies might let its own habits pass. Each scores
-everything; a score is their mean, and each one's own is kept. Each is
-loaded once every reply is written, one after the other, with a longer
-context than Holly's (`judge_context`), and thinks as hard as `holly.toml`
-says over a whole conversation (Gemma not at all: its thinking ran to
-28,000 tokens of "I'll check one more time", with no verdict). `--judge MODEL`, given
-once or more, judges with others instead; `--no-judge` skips them.
-Scorecards from before the second judge (25 November 2026) are Gemma's
-alone. The persona replies are the exception: one judge, Qwen
-(`reply_judge`), calibrated on your scores, scores them, since 27 November
-2026 (`--compare` marks the older persona scores "old": rules of ours, not
-comparable). Of four judges tried, it agreed with your order best; adding
-Gemma or a thinking judge pulled it down. Like them all, it still scores a
-quip that makes no sense well: your ear is the check for that.
+runs. There are two so that neither one's taste or blind spots decide
+alone: Gemma marking Gemma's replies might let its own habits pass. Each
+scores everything. A score is their mean, and each one's own is kept. Each
+is loaded once every reply is written, one after the other, with a longer
+context than Holly's (`judge_context`). Each thinks as hard as `holly.toml`
+says over a whole conversation. Gemma doesn't think at all: its thinking
+ran to 28,000 tokens of "I'll check one more time", with no verdict.
+`--judge MODEL`, given once or more, judges with others instead, and
+`--no-judge` skips them. Scorecards from before the second judge (25
+November 2026) are Gemma's alone.
+
+The persona replies are the exception. Since 27 November 2026, one judge,
+Qwen (`reply_judge`), scores them, calibrated on your own scores.
+`--compare` marks the older persona scores "old", because they came from
+rules of ours and don't compare. Of four judges tried, it agreed with your
+order best, and adding Gemma or a thinking judge pulled it down. Like them
+all, it still scores a quip that makes no sense well, so your ear is the
+check for that.
 
 **Reply nets.** Holly's reply loop has nets that make up for what a model
 gets wrong: an offer of more help not said, a timer counted down unasked, a
@@ -287,8 +297,10 @@ into nets on what he says.
 
 A scorecard goes to `runs/`: Markdown with every reply and transcript, and
 JSON for `--compare`. `--only` runs one part: `persona`, `scenarios`,
-`conversations`, `honesty`, `long`, `reports`, `memory`, `status`, or
-`voice` (the latest scorecard's replies, said and heard). `--session` asks
+`conversations`, `honesty`, `long`, `folds`, `reports`, `memory`, `status`,
+`voice` (the latest scorecard's replies, said and heard), or, on demand
+only, `search` (58 labelled questions, where each answer came from; it
+spends Brave searches) and `turns` (below). `--session` asks
 the persona prompts as one conversation, which shows ruts. Run it with LM
 Studio up and no Holly running. A new model also wants its quirks in a
 `[models]` table in `holly.toml`, including, for one that can't stop
@@ -296,9 +308,10 @@ thinking (LM Studio's reasoning options for it have no "off"), its least
 effort and the tokens that thinking takes.
 
 **Turn-taking**, only on demand: `--only turns` scores your own saved
-pauses (`python -m app.turn --save data/turn_clips`, labelled by whether
-you went on; your voice, so they stay out of git) with the turn-ending
-model and settings as they are, against the old 400 ms rule. Run it before
+pauses with the turn-ending model and settings as they are, against the
+old 400 ms rule. Save them with `python -m app.turn --save data/turn_clips`,
+labelled by whether you went on. They're your voice, so they stay out of
+git. Run it before
 changing the model or its settings.
 
 ## Tests

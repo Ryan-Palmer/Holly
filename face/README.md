@@ -40,7 +40,8 @@ phosphor mask, a soft glow round bright parts, reflections and a bar rolling
 down every few seconds, all drawn by one OpenGL shader (`screen.py`) in
 about 1 ms a frame. Put a picture of a monitor at `face/data/monitor.png`,
 its screen opening see-through (a PNG with alpha), and he's shown inside
-it, in 4:3; without one, a plain bezel. `crt = false` gives the plain face.
+it, in 4:3. Without one, he gets a plain bezel. `crt = false` gives the
+plain face.
 
 Settings are under `[face]` in `holly.toml`: `enabled` (to have it on
 without `--face`), how far the audio runs ahead of the face (`lead_ms`), the
