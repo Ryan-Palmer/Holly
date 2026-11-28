@@ -84,10 +84,14 @@ def after_speaking(now: float, last_played: float | None, awake_s: float) -> tup
 class ListeningHolly(Holly):
     HINT = ""
 
-    def __init__(self, *args, wake: bool | None = None, **kwargs):
+    def __init__(self, *args, wake: bool | None = None, mic: str | None = None, **kwargs):
+        """`mic`: the microphone, by name or part of it, in place of holly.toml's input_device
+        (--mic "Steam Streaming" for a phone over Steam Link)."""
         super().__init__(*args, **kwargs)
         if wake is False:
             self.cfg = dataclasses.replace(self.cfg, listen=dataclasses.replace(self.cfg.listen, wake_words=()))
+        if mic is not None:
+            self.cfg = dataclasses.replace(self.cfg, listen=dataclasses.replace(self.cfg.listen, input_device=mic))
         self.wake_words = set(self.cfg.listen.wake_words)
         self.awake_until = 0.0  # the follow-up window: no name needed until then
         self.quiet_since = 0.0  # when the room last went quiet; notes wait for COMPACT_QUIET_S of it
@@ -207,13 +211,16 @@ def main() -> None:
                         help="let Holly search the web (default: holly.toml)")
     parser.add_argument("--wake", action=argparse.BooleanOptionalAction,
                         help="answer only when you say his name (default: on, unless wake_words is empty)")
+    parser.add_argument("--mic", metavar="NAME",
+                        help="the microphone, by name or part of it (default: holly.toml's input_device, else "
+                             "Windows' default); \"Steam Streaming\" for a phone over Steam Link")
     parser.add_argument("--forget", action="store_true", help=FORGET_HELP)
     parser.add_argument("--reset", action="store_true", help=RESET_HELP)
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
         asyncio.run(ListeningHolly(args.model, args.face, args.search, args.forget, args.reset,
-                                   wake=args.wake).run())
+                                   wake=args.wake, mic=args.mic).run())
     except KeyboardInterrupt:
         pass
 

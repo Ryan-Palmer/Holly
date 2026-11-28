@@ -99,6 +99,7 @@ shows what it makes of each pause. Settings: `[listen]` in `holly.toml`.
 | `--face` / `--no-face` | show his face |
 | `--no-search` | no web search, weather, news or clock |
 | `--no-wake` | answer everything, without his name (`app.listen`) |
+| `--mic NAME` | another microphone, by name or part of it (`app.listen`); `--mic "Steam Streaming"` for your phone over Steam Link |
 | `--forget` | start afresh, setting his memory of you aside |
 | `--reset` | start afresh, deleting his memory of you |
 | `--model KEY` | another LM Studio chat model (its settings: `[models]` in `holly.toml`) |
