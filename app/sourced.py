@@ -80,12 +80,15 @@ def from_words(text: str) -> list[float]:
 
 
 def numbers(text: str) -> set[float]:
-    """Every number in `text`, in digits or words; a time ("21:15") as itself and its parts."""
+    """Every number in `text`, in digits or words; a time ("21:15") as itself and its parts,
+    and on the twelve-hour clock too ("9:15"): told 14:58, he said "2:58"."""
     found: set[float] = set()
     for d in _DIGITS.findall(text):
         if ":" in d:
             h, m = d.split(":")
             found |= {float(h), float(m), float(h + m)}
+            if (twelve := int(h) % 12 or 12) != int(h):
+                found |= {float(twelve), float(f"{twelve}{m}")}
         else:
             try:
                 found.add(float(d.replace(",", "")))

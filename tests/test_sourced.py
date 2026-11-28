@@ -24,6 +24,15 @@ def test_times_and_prices_said_as_he_says_them():
     assert sourced.unsourced("A pound eighty, or three pounds thirty.", ["First class: £1.80; large: £3.30."]) == []
 
 
+def test_a_time_on_the_twelve_hour_clock_is_the_clocks():
+    """Told 14:58, he said "2:58", flagged as 258 from nowhere (the evals, 28 November)."""
+    told = ["UTC: 14:58 on Saturday 28 November 2026."]
+    assert sourced.unsourced("2:58. Not that it matters.", told) == []
+    assert sourced.unsourced("Two fifty-eight.", told) == []
+    assert sourced.unsourced("12:24, if you must know.", ["It's 00:24 on Sunday."]) == []
+    assert sourced.unsourced("3:58.", told) == [358]  # an hour out is still from nowhere
+
+
 def test_a_number_from_the_tool_is_his_to_say():
     reply = "Rain. One hundred per cent chance of it. Eight to twelve degrees, gusts of twenty-one."
     assert sourced.unsourced(reply, [FORECAST]) == []
