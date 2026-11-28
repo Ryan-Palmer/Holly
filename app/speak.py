@@ -401,11 +401,18 @@ class Holly:
             if (not user.startswith("[") and "research" in self.toolbox and guards.REPORT_ASKED.search(user)
                     and guards.reported_on(user)):
                 choice = choice or required
-            # A timer to do something with a tool ("check the weather in Keswick"), not just say.
+            # A timer to do something with a tool ("check the weather in Keswick"), not just say,
+            # and which tool, named in his request (timers.job_tool): "required" alone, he called
+            # the timer tool now and then, found nothing set, and once made the forecast up.
             if (user.startswith("[") and (labels := [label for label in guards.DUE_LABEL.findall(user)
                                                      if guards.ACTION_WORDS.search(label)])
                     and await asyncio.to_thread(timers.to_do, self.lm, self.model, labels)):
                 choice = choice or required
+                if tool := await asyncio.to_thread(timers.job_tool, self.lm, self.model, labels[0],
+                                                   set(self.toolbox.by_name)):
+                    last = messages[asked - 1]
+                    messages = [*messages[:asked - 1], {**last, "content": last["content"] + (
+                        f"\n[That's a job for the {tool} tool, so call it.]")}]
             # Which tool is his to choose: made to call one for a memory, he chose recall every
             # time (25 of 25 in the evals). A web search turned into recall only ever caught the
             # news, judged a memory by mistake.

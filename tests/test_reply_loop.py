@@ -299,13 +299,21 @@ def test_a_timer_to_do_something_must_call_a_tool(make_holly):
     """"Check the weather in Keswick" came due, and he announced it without checking, one
     time in four, though the note told him to use the tool. A "pasta" timer is just said."""
     from app import timers
+    def side(system, user):
+        if system == timers.TO_DO_PROMPT:
+            return "DO" if "weather" in user else "SAY"
+        return "weather" if system == timers.JOB_TOOL_PROMPT else ""
+
     lm = FakeLm([[("weather", {"place": "Keswick"})], "Six degrees and drizzle.", "Pasta's done.", "Off you go."],
-                side=lambda system, user: ("DO" if "weather" in user else "SAY") if system == timers.TO_DO_PROMPT else "")
+                side=side)
     holly = make_holly(lm)
     due = (dt.datetime.now() - dt.timedelta(seconds=5)).isoformat(timespec="seconds")
     holly.timers.items = [{"label": "check the weather in Keswick", "due": due, "kind": "timer"}]
     asyncio.run(holly.announce(announce.timers_due(holly.timers)))
     assert lm.requests[0]["tool_choice"] == "required" and lm.requests[1]["tool_choice"] is None
+    # Which tool, named: made only to call one, he called the timer, found nothing set, and
+    # once gave a forecast he never looked up.
+    assert lm.requests[0]["messages"][-1]["content"].endswith("[That's a job for the weather tool, so call it.]")
     holly.timers.items = [{"label": "pasta", "due": due, "kind": "timer"}]
     asyncio.run(holly.announce(announce.timers_due(holly.timers)))
     assert lm.requests[2]["tool_choice"] is None

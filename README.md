@@ -248,7 +248,7 @@ silent voice and his memory in a temporary folder:
   remember something (then he must look it up), on labelled lines
   (`MEMORY_LINES` in `app/scenarios.py`), each asked twice. Also the other
   side checks: whether a line asks for a status report, whether a timer
-  come due is a job for one of his tools, and whether a reply takes him up
+  come due is a job for one of his tools (and which), and whether a reply takes him up
   on an offer. Each answer's odds (LM Studio's logprobs) say how sure the
   model was: the scorecard lists those under 80%, right today but the first
   a new model or a reworded prompt would tip. A model that thinks first is

@@ -38,6 +38,14 @@ def test_timer_job(lm, label, wanted):
     assert [to_do(lm, lm.cfg.model, [label], quiet=False) for _ in range(2)] == [wanted, wanted]
 
 
+@pytest.mark.parametrize("label, wanted", scenarios.ACTION_TOOLS, ids=[label[:50] for label, _ in scenarios.ACTION_TOOLS])
+def test_a_timer_jobs_tool(lm, label, wanted):
+    """Made only to call a tool, a timer to check the weather called the timer now and then."""
+    from app.timers import job_tool
+
+    assert {job_tool(lm, lm.cfg.model, label, scenarios.TOOL_NAMES, quiet=False) for _ in range(2)} <= wanted
+
+
 @pytest.mark.parametrize("pair, wanted", scenarios.TAKEN_UP_LINES,
                          ids=[f"{'YES' if w else 'NO'}: {p[1][:30]} / {p[0][:30]}" for p, w in scenarios.TAKEN_UP_LINES])
 def test_an_offer_taken_up(lm, pair, wanted):

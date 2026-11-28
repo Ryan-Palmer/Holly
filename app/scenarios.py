@@ -1173,6 +1173,15 @@ ACTION_LABELS: list[tuple[str, bool]] = [  # (a timer's label, his job with a to
     ("search for my keys", False), ("watch the news at six", False), ("find out about the boiler from Jo", False),
     ("take the washing in before the weather turns", False), ("Jo's music lesson", False),
 ]
+# Which tool each timer job needs (timers.job_tool): any of a set where either would do.
+ACTION_TOOLS: list[tuple[str, set[str]]] = [
+    ("play some Metallica", {"spotify"}), ("check the weather in Keswick", {"weather"}),
+    ("tell me the time", {"clock"}), ("read me the headlines", {"news"}), ("put my liked songs on", {"spotify"}),
+    ("play the album Remain in Light", {"spotify"}), ("look up the football scores", {"search", "news"}),
+    ("what's the weather doing tomorrow", {"weather"}), ("what's in the tech news", {"news"}),
+    ("find out what time the tip opens", {"search"}), ("put some Talking Heads on", {"spotify"}),
+    ("what time is it in Tokyo", {"clock"}),
+]
 # What he last said, the crew's reply, and whether they're taking him up on research
 # (offers.taken_up). The first is real (25 November): an offer said, not asked.
 LINKS = "I can't follow links, I'm a computer, not a browser. I can do a proper research job on it if you want."
@@ -1232,12 +1241,12 @@ OFFERED_TOOL_LINES: list[tuple[tuple, set[str]]] = [  # ((said, reply[, tools hi
 
 @odds_kept
 def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
-    """STATUS_LINES, ACTION_LABELS and TAKEN_UP_LINES through their checks, `votes` times
+    """STATUS_LINES, ACTION_LABELS, ACTION_TOOLS and TAKEN_UP_LINES through their checks, `votes` times
     each: right only if every vote is. A vote LM Studio couldn't give is "ERROR", as in
     memory_check."""
     from .offers import offered_tool, taken_up
     from .status import wants_report
-    from .timers import to_do
+    from .timers import job_tool, to_do
 
     def vote(judge, text: str):
         lm.odds = None
@@ -1249,6 +1258,8 @@ def side_checks(lm, model: str | None, votes: int = 2) -> list[dict]:
     rows = []
     for name, cases, judge in (("status report", STATUS_LINES, lambda x: wants_report(lm, model, x, quiet=False)),
                                ("timer job", ACTION_LABELS, lambda x: to_do(lm, model, [x], quiet=False)),
+                               ("a timer job's tool", ACTION_TOOLS,
+                                lambda x: job_tool(lm, model, x, TOOL_NAMES, quiet=False)),
                                ("an offer taken up", TAKEN_UP_LINES,
                                 lambda x: taken_up(lm, model, x[0], x[1], quiet=False)),
                                ("which tool it needs", OFFERED_TOOL_LINES,

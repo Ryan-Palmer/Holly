@@ -188,9 +188,11 @@ IN_CHARACTER = ("[Stay yourself: brief and deadpan, a few words where a few will
 # When he speaks up by himself (a timer due, a report finished: a note in brackets, not the
 # crew), the note asks what that note asks: told "no offers" and "a few words" too, he'd be
 # told both to ask about a summary and not to. In character all the same ("pizza" due: don't
-# let it weld itself to the oven).
+# let it weld itself to the oven). Facts in full too, as on the crew's turns: without it, a
+# timer to "check the weather in Keswick" got "It's raining. Again.", no figures, 2 in 12;
+# with it, 12 in 12 gave them.
 SPEAKING_UP = ("[Stay yourself while you do it: dry and deadpan, a dig or an aside if one fits, with what the "
-               "note says kept exactly as given.]")
+               "note says kept exactly as given, and any facts a tool gives you, in full.]")
 # When the crew carry on past something he offered or asked (app/offers.py judges it): a
 # lasagne recipe, offered and passed over, came up again in 6 replies in 8, three runs in
 # three (the conversation evals, 26 November). One fixed line, whatever's been offered,

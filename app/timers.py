@@ -283,6 +283,32 @@ def to_do(lm, model: str | None, labels: list[str], quiet: bool = True) -> bool:
         return False
 
 
+# Which tool a timer's job needs, once it's a job (to_do). Made only to call one, he called the
+# timer tool now and then, found the timer gone ("There's nothing set"), and once gave a
+# forecast he never looked up ("overcast with light rain, 7 degrees"): about 1 run in 15.
+# Named in his request, as for an offer taken up (app/offers.py).
+JOB_TOOL_PROMPT = """\
+A timer or reminder the crew set has come due, and its label is a job for Holly, the household computer, to do now
+with one of his tools. Which tool does it need?
+spotify: music. weather: a forecast. news: the headlines or a story. clock: the time.
+search: anything else to look up on the web (a score, a price, a fact).
+Reply with one word: the tool's name, or NONE if it's unclear."""
+
+
+def job_tool(lm, model: str | None, label: str, tools, quiet: bool = True) -> str | None:
+    """The tool a timer job (`label`) needs: one of `tools` (those he has), or None if the
+    model can't say (then he's left to choose, as before), or with `quiet` off (the evals),
+    the error."""
+    try:
+        text = lm.ask(JOB_TOOL_PROMPT, f"The label: {label}", model, max_tokens=4, temperature=0).strip().lower()
+    except Exception:
+        if not quiet:
+            raise
+        return None
+    word = text.split()[0].strip(".,:;!\"'") if text else ""
+    return word if word in tools else None
+
+
 class TimerTool(Tool):
     name, schema, rules, local = "timer", TOOL, "timers", True
 
