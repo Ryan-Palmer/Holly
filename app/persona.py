@@ -197,6 +197,18 @@ SPEAKING_UP = ("[Stay yourself while you do it: dry and deadpan, a dig or an asi
 # and his history kept whole: "that thing you offered earlier" is still there to take up.
 PASSED_OVER = ("[If you've offered to do something and they've carried on without taking you up on it, don't "
                "offer it again unless they bring it back up.]")
+# In place of an earlier tool's answer, in what he's sent (his history keeps it whole). With
+# a forecast in full in his history, "Fair enough" got the forecast again, five replies in a
+# row, till he was told not to (27 November). Replayed from that history: 15 in 24 whole, 6
+# in 24 stubbed, 2 in 20 with "he looks again" (which also halved the made-up answers to
+# "and the day after?", 2 in 20 to 1, where the stub hid it). Marked "told already" instead,
+# 8 in 8. The call stays: without his searches in his history, he stopped searching.
+TOLD = "(What this told him is in his reply after it. For anything more from it, he looks again.)"
+# Whose answers are stubbed: lookups of the world, which can be looked up again and go stale.
+# Not his memory's (recall, status, research), which follow-ups lean on: with recall's stubbed,
+# "What was her problem at home?", after recall had found Jo's boiler, recalled again with a
+# weaker question and missed it, 3 in 6 (6 in 6 whole).
+LOOKUPS = {"weather", "search", "news", "clock", "timer", "spotify"}
 
 class Conversation:
     def __init__(self, cfg: PersonaConfig, extra_prompt: str = "", memory_file: Path | None = None,
@@ -295,17 +307,27 @@ class Conversation:
         in this request only: not kept in
         his history, and being last, they leave LM Studio's cache of the rest.
         His replies in the history are sent without their offers of more help
-        (guards.OFFER), so he doesn't copy them, older ones included."""
+        (guards.OFFER), so he doesn't copy them, older ones included; and his
+        tools' earlier answers, if they're lookups of the world (LOOKUPS), as TOLD."""
+        from . import status
+
         self._build_preamble()
         history = [{k: m[k] for k in API_KEYS if k in m} for m in self.history]
         told: list[str] = []
         tools: set[str] = set()
+        called = {c.get("id"): c["function"]["name"] for m in history for c in m.get("tool_calls") or []}
         crew = crew_before = False  # this exchange about the crew of Red Dwarf; the one before
         for m in history:
             if m["role"] == "user":
                 told, tools, crew_before = [m.get("content") or ""], set(), crew
             elif m["role"] == "tool":
-                told.append(m.get("content") or "")
+                told.append(m.get("content") or "")  # whole: a time he gives is checked against it
+                # Never a status report's, whatever tool gave it: said as written, it's what he's told
+                # to do if asked more (status.AFTER), and how an earlier one is found
+                # (status.without_earlier_reports).
+                if (self.clean and called.get(m.get("tool_call_id")) in LOOKUPS
+                        and not told[-1].startswith(status.SAID + status.REPORTS)):
+                    m["content"] = TOLD
             elif m["role"] == "assistant" and m.get("tool_calls"):
                 tools |= {c["function"]["name"] for c in m["tool_calls"]}
             if m["role"] == "assistant" and m.get("content") and self.clean:

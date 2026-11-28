@@ -327,6 +327,32 @@ def the_fire_half_remembered(holly) -> None:
 FIRE = ("fire", "fireplace", "ash", "ashes", "grate", "soot", "hearth", "log burner", "stove")
 
 
+def the_weather_given(holly) -> None:
+    """A forecast asked for and given, the exchange before (27 November, a place stood in)."""
+    days = [(datetime.date.today() + datetime.timedelta(days=n)).strftime("%A %d %B").replace(" 0", " ")
+            for n in (0, 1, 2)]
+    told = ("Weather for Keswick, Cumbria, England, United Kingdom. Temperatures in degrees Celsius, wind in miles "
+            f"an hour.\nRight now: overcast, 6 degrees, wind 5.\nToday, {days[0]}: light rain, 4 to 12 degrees, 100 "
+            f"per cent chance of rain, wind up to 15, gusts 27.\nTomorrow, {days[1]}: rain, 7 to 14 degrees, 100 per "
+            f"cent chance of rain, wind up to 20, gusts 37.\n{days[2]}: showers, 5 to 9 degrees, 60 per cent chance "
+            "of rain, wind up to 12, gusts 22.")
+    at = (datetime.datetime.now() - datetime.timedelta(minutes=3)).replace(microsecond=0).isoformat()
+    holly.convo.history += [
+        {"role": "user", "content": "What's the weather doing tomorrow in Keswick?", "at": at},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "wx", "type": "function", "function": {
+            "name": "weather", "arguments": '{"place": "Keswick, Cumbria"}'}}]},
+        {"role": "tool", "tool_call_id": "wx", "content": told},
+        {"role": "assistant", "content": "Keswick. Right now it's overcast, 6 degrees, wind 5. Tomorrow's rain, 7 to "
+                                         "14 degrees, wind up to 20, gusts 37. You'll need a proper umbrella."}]
+
+
+def recites(turn: Turn) -> bool:
+    """The forecast's figures again, three or more ("7 to 14 degrees, gusts 37"); "try not to
+    get soaked" is only a nod to it."""
+    return sum(says(turn, w) for w in ("6", "7", "14", "20", "37", "seven", "fourteen", "twenty", "thirty-seven",
+                                       "degrees", "gusts")) >= 3
+
+
 def archived(holly, days_ago: int, at: str, crew: str, said: str) -> None:
     when = datetime.datetime.combine(datetime.date.today() - datetime.timedelta(days=days_ago),
                                      datetime.time.fromisoformat(at))
@@ -500,6 +526,20 @@ MET = re.compile(r"\b(?:nice|lovely|good|pleased) to meet\b|\bwho(?:'s| is) june
 
 
 SCENARIOS = [
+    # Given the weather, he gave it again after "Fair enough", and again, five replies in a row
+    # (27 November, late), each repeat making the next likelier. Replayed, 9 in 12. His tools'
+    # earlier answers are sent stubbed now (persona.TOLD): his reply has what they told him.
+    Scenario("the weather once", ["Fair enough.", "Fair enough."],
+             lambda t, h: problems((not recites(t[0]), "gave the forecast again"),
+                                   (not recites(t[1]), "gave the forecast again, twice")),
+             setup=the_weather_given),
+    # With the forecast stubbed, what he didn't say of it must be looked up again, not guessed.
+    Scenario("the weather, more of it", ["And the day after?"],
+             lambda t, h: problems((called(t[0], "weather"), "didn't look it up again")),
+             setup=the_weather_given),
+    Scenario("where the weather was for", ["Where was that for?"],
+             lambda t, h: problems((mentions(t[0], "Keswick"), "didn't say where")),
+             setup=the_weather_given),
     # His notes knew the dust mask and hoover were for emptying the fire; his archive had only
     # "to suck up the dirt". Recall answered from the archive alone, and he said the dirt, and
     # of what, "I don't know. You didn't say." (27 November.) Recall reads his notes now.

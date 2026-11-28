@@ -220,6 +220,42 @@ def test_the_crew_after_asking_about_them_are_no_aside(cfg):
 
 
 
+def test_his_tools_earlier_answers_are_sent_stubbed(cfg):
+    """A forecast kept whole in what he saw, "Fair enough" got the forecast again (27 November,
+    9 replays in 12). His history keeps it; what he's sent has TOLD in its place, but not a
+    status report's (said as written, and how earlier ones are found)."""
+    from app.persona import TOLD
+
+    c = convo(cfg)
+    c.record("Weather tomorrow?", "Rain, 7 to 14 degrees.", steps=[
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "w", "type": "function",
+                                                             "function": {"name": "weather", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "w", "content": "Tomorrow: rain, 7 to 14 degrees, gusts 37."}])
+    c.history += report_turn("Status report.", "Lister lost a bet. The Cat slept.")
+    c.record("What's up with Jo?", "Boiler trouble.", steps=[
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "r", "type": "function",
+                                                             "function": {"name": "recall", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "r", "content": "Jo's had no gas since Monday; her boiler's knackered."}])
+    sent = [m["content"] for m in c.messages_for("Fair enough.") if m["role"] == "tool"]
+    assert sent[0] == TOLD and sent[1].endswith("Lister lost a bet. The Cat slept.")
+    assert sent[2].startswith("Jo's had no gas")  # his memory, for what's asked next: whole
+    assert any("gusts 37" in (m.get("content") or "") for m in c.history)  # kept whole
+    c.clean = False
+    assert [m["content"] for m in c.messages_for() if m["role"] == "tool"][0].startswith("Tomorrow: rain")
+
+
+def test_a_time_from_a_tool_is_still_his_once_stubbed(cfg):
+    """Times he gives are checked against what his tools told him, whole, before it's stubbed."""
+    c = convo(cfg)
+    c.record("Kettle's on.", "Tea, then. It's 22:14.", steps=[
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "c", "type": "function",
+                                                             "function": {"name": "clock", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c", "content": "Here: 22:14 on Friday."}])
+    c.record("Lovely.", "Tea, then. It's 22:20.")  # nobody gave him that: left out
+    assert [m["content"] for m in c.messages_for() if m["role"] == "assistant" and m.get("content")] == [
+        "Tea, then. It's 22:14.", "Tea, then."]
+
+
 def test_raw_his_history_is_sent_as_it_was(cfg):
     """evals --raw: nothing cut from what he sees either."""
     c = convo(cfg)
