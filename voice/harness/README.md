@@ -30,10 +30,9 @@ and **naturalness**. While scoring, `r` replays the reference.
 
 ## Installing the candidates
 
-VoxCPM2 won and runs in the app's own venv. The other candidates'
-environments and weights were deleted on 27 November 2026. To compare them
-again, rebuild an environment as below, and its weights download on the
-first run.
+VoxCPM2 is the voice Holly uses, in the app's own venv. The other
+candidates aren't installed. To compare one, build its environment as below;
+its weights download on the first run.
 
 | Candidate | Install |
 |---|---|

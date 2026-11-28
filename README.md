@@ -18,11 +18,9 @@ across sessions, as well as everything that happened on Red Dwarf.
   - `google/gemma-4-26b-a4b-qat` (the chat model)
   - `text-embedding-nomic-embed-text-v1.5` (optional, for recall by meaning)
 
-  Holly loads and unloads them himself. If LM Studio's engine crashes, it
-  loads the chat model again by itself, with its own defaults (a short
-  context, which cuts his prompts). Holly notices before his next reply and
-  loads it his way. To make LM Studio's own reload right too, set the
-  model's defaults there to a 30,208-token context and one parallel slot.
+  Holly loads and unloads them himself. In LM Studio, set the chat model's
+  defaults to a 30,208-token context and one parallel slot, so a reload
+  after an engine crash doesn't cut his prompts short.
 - A microphone and speakers. A headset is best: while Holly talks, the mic
   is ignored.
 
@@ -93,12 +91,8 @@ You can pause mid-sentence. At each pause, a small model (Smart Turn, on
 the CPU, fetched once from Hugging Face) judges from your voice whether
 you've finished. If it's sure you have, he answers after 200 ms. If not
 ("I was thinking we could… go to the beach"), he waits up to 1.5 s for the
-rest, because being cut off is worse than a slower answer. With Holly
-closed, `python -m app.turn` tries it on your voice and shows what it makes
-of each pause. On a first try it cut in on 10 of 34 pauses mid-thought,
-where waiting 400 ms cut in on 30. It answered finished questions sooner
-when it was sure, and the rest after 1.5 s. Settings: `[listen]` in
-`holly.toml`.
+rest. With Holly closed, `python -m app.turn` tries it on your voice and
+shows what it makes of each pause. Settings: `[listen]` in `holly.toml`.
 
 | Option | |
 |---|---|
@@ -135,11 +129,11 @@ Typed, `/reset` clears his memory and `/quit` leaves.
 - **Status reports.** Ask for a status report and he gives a line each on
   what Lister, Rimmer, the Cat and Kryten have been up to lately, then an
   "Additional" item from the wider Red Dwarf universe, all made up. It's
-  written from their pages of the ship's records (three drafts, the best of
-  each line kept), so it's better with the records built. Ask where one of
+  written from their pages of the ship's records, so it's better with the
+  records built. Ask where one of
   them is ("where's Kryten?", "what's Rimmer up to?") and he makes up a line
-  about just them, the same way, carrying on from his last report. Settings
-  under `[status]` in `holly.toml`.
+  about just them, carrying on from his last report. Settings are under
+  `[status]` in `holly.toml`.
 - **Timers and reminders.** "Set a timer for 20 minutes", "remind me at half
   seven tomorrow to ring Mum". He speaks up when one is due, even after a
   restart.
@@ -171,13 +165,15 @@ Typed, `/reset` clears his memory and `/quit` leaves.
   `[research]` in `holly.toml`.
 - **His face.** Ditto animates the still from his voice, in a window that
   scales to any size (F11 or a double-click for full screen), on an old
-  monitor if you like (see `face/README.md`). It dozes off when he does. If the window is closed, or its sound stalls, his voice
-  carries on through the speakers.
+  monitor if you like (see `face/README.md`). It dozes off when he does. If
+  the window is closed, or its sound stalls, his voice carries on through
+  the speakers.
 
 ## Configuration
 
 `holly.toml` holds every setting, with comments: models (and each chat
-model's quirks), microphone and speakers, wake words, memory budgets, search providers and more. Holly's
+model's quirks), microphone and speakers, wake words, memory budgets, search
+providers and more. Holly's
 character is in `persona/`: `system_prompt.md`, example exchanges in
 `examples.toml`, and in `notes.toml` the lines added to what he's sent (stay
 in character, an offer passed over, the tool to call), each with why. Each
@@ -217,12 +213,9 @@ silent voice and his memory in a temporary folder:
   said, drags nothing in, has no running jokes, stays in character, is kind
   when you're upset, gets the facts right, and keeps track. A point fails
   when both judges fail it, each quoting his own words (checked to be his).
-  One judge alone flags it, for reading. The judges answer in JSON, so every
-  point gets a verdict. Scenarios catch bugs already
-  found. These catch the ones nobody has found yet, like the Cat tacked on
-  to every reply for an evening, which a judge scoring one reply calls in
-  character. (On the code before that fix, both judges failed it, 3 runs
-  in 3.)
+  One judge alone flags it, for reading. Scenarios catch bugs already found.
+  These catch the ones that show only over a whole talk, such as the same
+  joke tacked on to every reply, which a judge scoring one reply would pass.
 - **Made-up memories** (`app/honesty.py`): asked about things nobody ever
   told him (lunch on Tuesday, Jo's husband's name, what the boiler engineer
   found), against the made-up memories, he must say he doesn't know. Both
@@ -245,20 +238,21 @@ silent voice and his memory in a temporary folder:
   a number of 10 or more he said that nothing his tools told him had.
 - **His voice** (`app/voice_check.py`): after the scorecard's written, up
   to 120 of his replies said in his own voice and heard back by Whisper,
-  word for word: what his voice garbles ("Lasagne" came back "Lazane")
-  shows. In a process of its own, as the voice's start-up is where this PC
-  crashes (it's tried three times).
+  word for word, which shows what his voice garbles. It runs in a process
+  of its own, so a crash in the voice's start-up can't take the evals with
+  it.
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
   (`MEMORY_LINES` in `app/labelled.py`), each asked twice. Also the other
   side checks: whether a line asks for a status report, whether a timer
-  come due is a job for one of his tools (and which), and whether a reply takes him up
-  on an offer (and with which tool). Every side check is registered in
-  `app/decisions.py`, beside its labelled cases in `app/labelled.py`; a new one
-  goes in both, and a test fails until it has cases. Each answer's odds (LM Studio's logprobs) say how sure the
-  model was: the scorecard lists those under 80%, right today but the first
-  a new model or a reworded prompt would tip. A model that thinks first is
-  always sure, so they tell you nothing there.
+  come due is a job for one of his tools (and which), and whether a reply
+  takes him up on an offer (and with which tool). Every side check is in
+  `app/decisions.py`, and its labelled cases are in `app/labelled.py`. A new
+  one goes in both: a test fails until it has cases. Each answer's odds (LM
+  Studio's logprobs) say how sure the model was. The scorecard lists those
+  under 80%: right today, but the first a new model or a reworded prompt
+  would tip. A model that thinks first is always sure, so they tell you
+  nothing there.
 - **Status reports**: five status reports, written as his are, and his
   answer to where each of the crew is, each line scored by the judges for
   being that character, in that world, and funny.
@@ -269,24 +263,17 @@ depends on what the model says.
 
 The judges are two fixed models, Gemma and Qwen (`[evals.judges]` in
 `holly.toml`), whatever model is being tested, so scores compare between
-runs. There are two so that neither one's taste or blind spots decide
-alone: Gemma marking Gemma's replies might let its own habits pass. Each
-scores everything. A score is their mean, and each one's own is kept. Each
-is loaded once every reply is written, one after the other, with a longer
-context than Holly's (`judge_context`). Each thinks as hard as `holly.toml`
-says over a whole conversation. Gemma doesn't think at all: its thinking
-ran to 28,000 tokens of "I'll check one more time", with no verdict.
-`--judge MODEL`, given once or more, judges with others instead, and
-`--no-judge` skips them. Scorecards from before the second judge (25
-November 2026) are Gemma's alone.
+runs. Two, so that neither one's taste or blind spots decide alone. Each
+scores everything, and a score is their mean, with each one's own kept.
+They're loaded one after the other once every reply is written, with a
+longer context than Holly's (`judge_context`), and each thinks as hard as
+`holly.toml` says. `--judge MODEL`, given once or more, judges with others
+instead, and `--no-judge` skips them.
 
-The persona replies are the exception. Since 27 November 2026, one judge,
-Qwen (`reply_judge`), scores them, calibrated on your own scores.
-`--compare` marks the older persona scores "old", because they came from
-rules of ours and don't compare. Of four judges tried, it agreed with your
-order best, and adding Gemma or a thinking judge pulled it down. Like them
-all, it still scores a quip that makes no sense well, so your ear is the
-check for that.
+The persona replies are the exception: one judge, Qwen (`reply_judge`),
+scores them, calibrated on your own scores. `--compare` marks older persona
+scores "old", as they don't compare. Like every judge tried, it still
+scores a quip that makes no sense well, so your ear is the check for that.
 
 **Reply nets.** Holly's reply loop has nets that make up for what a model
 gets wrong: an offer of more help not said, a timer counted down unasked, a
@@ -297,9 +284,7 @@ lets the nets count what they would do and do nothing (nor clean his
 history), to see the model as it is. Holly keeps the counts from real use
 too, per model, in `data/nets.json` (`--forget` and `--reset` leave them):
 `python -m app.evals --nets` shows them. A net a new model never trips, in
-the evals or in real talk, can come out: fixes go first into what he's given (prompt, history, notes),
-then into routing (a tool required when the ask is plain), and only last
-into nets on what he says.
+the evals or in real talk, can come out.
 
 A scorecard goes to `runs/`: Markdown with every reply and transcript, and
 JSON for `--compare`. `--only` runs one part: `persona`, `scenarios`,
@@ -317,8 +302,7 @@ effort and the tokens that thinking takes.
 pauses with the turn-ending model and settings as they are, against the
 old 400 ms rule. Save them with `python -m app.turn --save data/turn_clips`,
 labelled by whether you went on. They're your voice, so they stay out of
-git. Run it before
-changing the model or its settings.
+git. Run it before changing the model or its settings.
 
 **Replaying a turn.** Holly writes every turn to `data/events/`, one file a
 day. Each turn has what he was sent, what he wrote, his tools' answers, the
@@ -340,9 +324,9 @@ again. Run it with no Holly running.
 
 `python -m app.replay --check LOGS` replays every turn in some event logs
 with the model's replies as they were, and names any request that isn't the
-one he was sent. No model is needed. Run it after a change that mustn't change
-what he's sent, on logs from the evals' Holly (Spotify off): a log from real
-use had other tool rules in his prompt.
+one he was sent. No model is needed. Run it after a change that mustn't
+change what he's sent, on logs from the evals' Holly (Spotify off). Logs
+from real use have Spotify's rules in his prompt, so they won't match.
 
 ## Tests
 
