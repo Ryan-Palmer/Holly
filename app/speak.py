@@ -40,6 +40,7 @@ from .background import Background, context_report
 from .clock import ClockTool
 from .config import load_config
 from .console import CYAN, DIM, RESET, YELLOW, note, stamp
+from .events import EventLog
 from .face_player import FacePlayer, start_server
 from .lmstudio import LmStudio, ReplyTiming
 from .nets import NetCounts
@@ -138,13 +139,15 @@ class Holly:
             # reminders, and whatever --forget or an unreadable file set aside. Not the
             # ship's records.
             gone = wipe_yours([memory_file, cfg.recall.file, cfg.timers.file]) + wipe_folder(cfg.research.dir)
+            if events_folder(memory_file):
+                gone += wipe_folder(events_folder(memory_file))
             print(f"{DIM}Deleted {len(gone)} file{'s' * (len(gone) != 1)} of Holly's memory"
                   f"{': ' + ', '.join(p.name for p in gone) if gone else ''}; he starts afresh.{RESET}")
         elif forget:
             # Everything of yours (history and notes, the archive, timers and reminders), but
             # not the ship's records. Set aside, not deleted, in case it was a mistake; each
             # with its own time, so a second --forget doesn't overwrite the first.
-            yours = [memory_file, cfg.recall.file, cfg.timers.file, cfg.research.dir]
+            yours = [memory_file, cfg.recall.file, cfg.timers.file, cfg.research.dir, events_folder(memory_file)]
             asides = [set_aside_with_sidecars(f, "forgotten") for f in yours if f and f.exists()]
             if asides:
                 print(f"{DIM}Holly's memory of earlier sessions is set aside "
@@ -211,6 +214,22 @@ class Holly:
         self.net_counts = NetCounts(memory_file.with_name("nets.json") if memory_file else None)
         # Empty replies after a tool, as the model wrote them (guards.EMPTY), to see what they are.
         self.empty_log = memory_file.with_name("empty_replies.jsonl") if memory_file else None
+        # Every turn as it happens, beside his memory (app/events.py), to replay (app/replay.py).
+        self.events = EventLog(events_folder(memory_file))
+        # Replaying a turn: its side checks' answers, by name, given rather than asked
+        # (_decide), so his request is the one he was sent. None: asked.
+        self.replaying: dict | None = None
+        self._turn: dict = {}  # this turn's event, filled as it goes
+
+    async def _decide(self, name: str, fn, *args):
+        """A side check's answer (fn(*args), in a worker thread), kept with the turn; or,
+        replaying, the one it gave then."""
+        if self.replaying is not None and name in self.replaying:
+            got = self.replaying[name]
+        else:
+            got = await asyncio.to_thread(fn, *args)
+        self._turn.setdefault("decisions", {})[name] = got
+        return got
 
     def _log_empty(self, user: str, called: set[str], raw: str, timing) -> None:
         """An empty reply after a tool, as the model wrote it, and any reasoning LM Studio sent
@@ -334,6 +353,9 @@ class Holly:
         assert self.tts and self.player
         times = times or TurnTimes(start=time.perf_counter())
         self.turns += 1
+        self.events.before_turn(self.convo)
+        self._turn = dict(turn=self.turns, at=datetime.datetime.now().isoformat(timespec="seconds"),
+                          model=self.model, nets_act=self.nets_act, said=user, replies=[], tools=[])
         nets_before = Counter(self.nets)  # this turn's, for the counts kept (app/nets.py)
         sentences: asyncio.Queue[str | None] = asyncio.Queue()
         parts: list[str] = []
@@ -377,16 +399,17 @@ class Holly:
             # had him ask), or their taking him up on something he offered (app/offers.py):
             # either way, what they chose is theirs, and research isn't held for asking which.
             # Or carried on past it: then his request says to leave it (persona.PASSED_OVER).
-            held = bool(self.research_tool and self.research_tool.held_turn == self.turns - 1)
-            took_up, self.memory = await asyncio.gather(asyncio.to_thread(self._taken_up, user),
-                                                        self._memory_for(user))
+            held = await self._decide("held", lambda: bool(self.research_tool
+                                                           and self.research_tool.held_turn == self.turns - 1))
+            took_up, self.memory = await asyncio.gather(self._decide("taken_up", self._taken_up, user),
+                                                        self._offer(user))
             messages = self.convo.messages_for(user, taken_up=took_up, memory=self.memory)
             asked = len(messages)
             # Taken up: which tool, from what he offered (offers.offered_tool), named in his
             # request, as "required" alone can't: left to choose, a search taken up started a report.
-            if took_up and (tool := await asyncio.to_thread(
-                    offers.offered_tool, self.lm, self.model, self._last_reply(), user, set(self.toolbox.by_name),
-                    self._last_tools())):
+            if took_up and (tool := await self._decide(
+                    "offered_tool", offers.offered_tool, self.lm, self.model, self._last_reply(), user,
+                    set(self.toolbox.by_name), self._last_tools())):
                 last = messages[asked - 1]
                 messages = [*messages[:asked - 1], {**last, "content": last["content"] + (
                     f"\n[They've taken you up on what you offered: that's the {tool} tool, so call it.]")}]
@@ -411,7 +434,7 @@ class Holly:
             # every time. So he must call a tool, and the earlier reports are stubbed before he
             # sees them, not only once he's called it.
             if (not user.startswith("[") and "status" in self.toolbox and guards.STATUS_ASKED.search(user)
-                    and await asyncio.to_thread(status.wants_report, self.lm, self.model, user)):
+                    and await self._decide("wants_report", status.wants_report, self.lm, self.model, user)):
                 messages = status.without_earlier_reports(messages, asked - 1)
                 choice = choice or required
             # A report asked for in so many words (guards.REPORT_ASKED): well into a talk, he
@@ -425,10 +448,10 @@ class Holly:
             # the timer tool now and then, found nothing set, and once made the forecast up.
             if (user.startswith("[") and (labels := [label for label in guards.DUE_LABEL.findall(user)
                                                      if guards.ACTION_WORDS.search(label)])
-                    and await asyncio.to_thread(timers.to_do, self.lm, self.model, labels)):
+                    and await self._decide("to_do", timers.to_do, self.lm, self.model, labels)):
                 choice = choice or required
-                if tool := await asyncio.to_thread(timers.job_tool, self.lm, self.model, labels[0],
-                                                   set(self.toolbox.by_name)):
+                if tool := await self._decide("job_tool", timers.job_tool, self.lm, self.model, labels[0],
+                                              set(self.toolbox.by_name)):
                     last = messages[asked - 1]
                     messages = [*messages[:asked - 1], {**last, "content": last["content"] + (
                         f"\n[That's a job for the {tool} tool, so call it.]")}]
@@ -436,8 +459,8 @@ class Holly:
             # time (25 of 25 in the evals). A web search turned into recall only ever caught the
             # news, judged a memory by mistake.
             if required and not choice and "recall" in self.toolbox and not user.startswith("["):
-                if await asyncio.to_thread(archive.about_the_past, self.lm, self.model, user,
-                                           self._last_exchange()):
+                if await self._decide("about_the_past", archive.about_the_past, self.lm, self.model, user,
+                                      self._last_exchange()):
                     choice = required
                     if self.memory:  # recall will answer it properly: no memory offered beside it
                         last = messages[asked - 1]
@@ -512,6 +535,7 @@ class Holly:
                 calls: list[dict] = []
                 said: list[str] = []
                 redo = None
+                self.events.request(self.turns, messages, choice)
                 async for delta in self.lm.astream_reply(messages, timing, self.model, self.tools, calls, choice):
                     if redo:
                         # Let it run out, unsaid: closing LM Studio's stream part-way left
@@ -525,6 +549,10 @@ class Holly:
                         if redo := dropped(sentence):
                             break
                         await say(sentence)
+                wrote = dict(raw="".join(said), calls=[dict(name=c["name"], arguments=c["arguments"]) for c in calls])
+                self._turn["replies"].append(wrote)
+                if not wrote["raw"] and not calls:  # what it thought instead, if anything
+                    wrote["reasoning"] = timing.reasoning[-500:]
                 if redo:
                     calls.clear()  # whatever it went on to ask for, it's asked again
                 if not redo and not calls:  # the end of the reply: its last words
@@ -551,6 +579,7 @@ class Holly:
                                 "your voice: say a few words.]")}, *messages[asked:]]
                             break
                         await say(sentence)
+                wrote["redo"] = redo
                 if redo:
                     # Not said: asked again, with a tool required if he claimed one.
                     print(f"\n{DIM}  ({redo}: not said; asking again){RESET}", flush=True)
@@ -582,6 +611,7 @@ class Holly:
                         lookups += 1
                     called.add(call["name"])
                     result = await self.toolbox.run(call, turn, lookups)
+                    self._turn["tools"].append(dict(name=call["name"], arguments=call["arguments"], result=result))
                     messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
                     if result.startswith(status.REPORTS):  # a new report: not the last one again
                         messages = status.without_earlier_reports(messages, asked - 1)
@@ -633,9 +663,11 @@ class Holly:
         times.first_played = self.player.first_played
         times.first_voice = self.player.first_voice
         times.underruns = self.player.underruns
+        self._turn.update(spoken=spoken, times=dict(report=times.report(), context_tokens=times.context_tokens))
         if failed:  # not kept: half a turn would confuse the next one
             print()
             times.failed = True
+            self.events.turn(dict(self._turn, failed=repr(failed[0]), nets=dict(self.nets - nets_before)), [])
             return times
         this_turn = [user] + [m.get("content") or "" for m in steps if m["role"] == "tool"]
         said = "".join(last_said).strip()
@@ -649,6 +681,9 @@ class Holly:
         if guards.guessed_time(said, told) and self.fired(guards.GUESS_MARKED):
             said += guards.GUESSED
         dropped = self.convo.record(user, said, steps)
+        self.events.turn(dict(self._turn, kept=said, nets=dict(self.nets - nets_before), dropped=dropped),
+                         self.convo.history[-(len(steps) + 2):])
+        self.events.after_turn(self.convo)
         if self.nets_act:  # (raw, they're the model's own, not kept with real use's)
             self.net_counts.add(self.model, self.nets - nets_before)
         print(f"{DIM}  {times.report()}{RESET}")
@@ -686,6 +721,15 @@ class Holly:
             if m["role"] == "user" and (users := users + 1) == exchanges:
                 break
         return " / ".join(reversed(said))
+
+    async def _offer(self, user: str) -> str:
+        """_memory_for, kept with the turn; or, replaying, the memory offered then."""
+        if self.replaying is not None and "memory" in self.replaying:
+            got = self.replaying["memory"]
+        else:
+            got = await self._memory_for(user)
+        self._turn.setdefault("decisions", {})["memory"] = got
+        return got
 
     async def _memory_for(self, user: str) -> str:
         """A memory to offer him with `user`: what the crew said on another day about the same
@@ -808,12 +852,13 @@ class Holly:
                 if user == "/reset":
                     async with self.turn_lock:  # not mid-way through a timer's announcement
                         self.convo.reset()
+                        self.events.clear()
                         if self.timers:
                             self.timers.clear()
                         if self.research:
                             self.research.clear()
-                    print(f"{DIM}History, notes, archive, timers, reminders and research cleared, on disk "
-                          f"too.{RESET}\n")
+                    print(f"{DIM}History, notes, archive, timers, reminders, research and event log cleared, "
+                          f"on disk too.{RESET}\n")
                     continue
                 try:
                     async with self.turn_lock:
@@ -830,9 +875,14 @@ class Holly:
 
 
 FORGET_HELP = ("start afresh, setting aside (renamed, not deleted) his history, notes, archive, timers, "
-               "reminders and research; the ship's records stay")
-RESET_HELP = ("start afresh, deleting his history, notes, archive, timers, reminders and research for good, "
-              "and anything --forget set aside; the ship's records stay")
+               "reminders, research and event log; the ship's records stay")
+RESET_HELP = ("start afresh, deleting his history, notes, archive, timers, reminders, research and event log "
+              "for good, and anything --forget set aside; the ship's records stay")
+
+
+def events_folder(memory_file: Path | None) -> Path | None:
+    """His event log (app/events.py): beside his memory, or none without it."""
+    return memory_file.with_name("events") if memory_file else None
 
 
 def sidecars(f: Path) -> list[Path]:

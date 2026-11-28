@@ -17,8 +17,16 @@ CHARS_PER_TOKEN = 4  # roughly, for English
 TOOL_RESULT_CHARS = 600  # of each tool result, in the transcript the notes are written from
 
 
+# The day it is, for a replay of a turn from another day (app/replay.py): None, today.
+PINNED: datetime.date | None = None
+
+
+def today_date() -> datetime.date:
+    return PINNED or datetime.date.today()
+
+
 def today() -> str:
-    return day(datetime.date.today())
+    return day(today_date())
 
 
 def day(d: datetime.date) -> str:
@@ -261,7 +269,7 @@ class Conversation:
         key = (today(), self.memory, self.previous_end)
         if self._made_for != key:
             self._made_for = key
-            content = f"{self.system_prompt}\n\nToday is {key[0]}. {week_around(datetime.date.today())}"
+            content = f"{self.system_prompt}\n\nToday is {key[0]}. {week_around(today_date())}"
             if self.previous_end:
                 content += (f" You last talked with the crew on {when(self.previous_end)}, "
                             "before you were last switched off.")

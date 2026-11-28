@@ -315,6 +315,24 @@ labelled by whether you went on. They're your voice, so they stay out of
 git. Run it before
 changing the model or its settings.
 
+**Replaying a turn.** Holly writes every turn to `data/events/`, one file a
+day. Each turn has what he was sent, what he wrote, his tools' answers, the
+side checks' answers and the nets that fired. `--forget`, `--reset` and
+`/reset` deal with it like the rest of your memory.
+
+```
+.venv\Scripts\python -m app.replay                  # the day's turns, numbered
+.venv\Scripts\python -m app.replay 12 --show        # turn 12 as it happened
+.venv\Scripts\python -m app.replay 12 --runs 6      # turn 12 asked again, six times
+.venv\Scripts\python -m app.replay 12 --say "Fair enough" --match "degrees"
+```
+
+A replay rebuilds his history, notes and day as they were, and gives the
+same tools' answers and side checks' answers, so the model gets the request
+he was sent. `--say` puts another line in its place, `--match` counts the
+replies that match a pattern, and `--live` asks the side checks and tools
+again. Run it with no Holly running.
+
 ## Tests
 
 ```
