@@ -36,6 +36,7 @@ import numpy as np
 
 from .config import RecallConfig
 from .console import DIM, RESET
+from .decisions import Decision, numbered, register, starts
 from .lmstudio import LmStudio
 from .persona import WEEKDAYS, _DAY_WORDS, day, resolve_day, today
 from .search import Lookup, Searcher
@@ -768,33 +769,41 @@ def crew_said(entry: str) -> tuple[str, str]:
     return day, said if len(said) <= OFFER_CHARS else said[:OFFER_CHARS].rsplit(" ", 1)[0] + " ..."
 
 
+def _listed(memories: list[tuple[int, str, str]]) -> str:
+    return "\n".join(f"{k}. ({day}) {said}" if day else f"{k}. {said}" for k, (_, day, said) in enumerate(memories, 1))
+
+
+def _which(text: str, line: str, memories: list[tuple[int, str, str]]) -> int | None:
+    k = numbered(text)
+    return memories[k - 1][0] if 1 <= k <= len(memories) else None
+
+
+MEMORY_OFFERED = register(Decision(
+    "memory_offered", OFFER_PROMPT,
+    lambda line, memories: f"They say now: {line}\n\nOn other days they said:\n{_listed(memories)}",
+    "a memory's number, or NONE", _which, fallback=None))
+ABOUT_THE_PAST = register(Decision(
+    "about_the_past", PAST_PROMPT, lambda line, before="": (f"Just before: {before}\n" if before else "")
+                                                          + f"They say: {line}", "PAST / OTHER", starts("PAST")))
+
+
 def memory_offered(lm: LmStudio, model: str | None, line: str, memories: list[tuple[int, str, str]]) -> int | None:
     """Which of `memories` (Archive.memories) is about what's just been said, as the model
     judges it: its rowid, or None. Raises if LM Studio can't answer."""
     if not memories:
         return None
-    listed = "\n".join(f"{k}. ({day}) {said}" if day else f"{k}. {said}"
-                        for k, (_, day, said) in enumerate(memories, 1))
-    text = lm.ask(OFFER_PROMPT, f"They say now: {line}\n\nOn other days they said:\n{listed}", model,
-                  max_tokens=4, temperature=0)
-    m = re.match(r"\W*(\d+)", text)
-    k = int(m.group(1)) if m else 0
-    return memories[k - 1][0] if 1 <= k <= len(memories) else None
+    return MEMORY_OFFERED.ask(lm, model, line, memories, quiet=False)
 
 
 def judged_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:
     """Is `line` asking him for something from the past? `before`: the exchange just before,
     for follow-ups ("and who was in charge of them?"). Raises if LM Studio can't answer."""
-    user = (f"Just before: {before}\n" if before else "") + f"They say: {line}"
-    return lm.ask(PAST_PROMPT, user, model, max_tokens=4, temperature=0).strip().upper().startswith("PAST")
+    return ABOUT_THE_PAST.ask(lm, model, line, before, quiet=False)
 
 
 def about_the_past(lm: LmStudio, model: str | None, line: str, before: str = "") -> bool:
     """judged_past, or False if it can't be asked: he answers as he would have."""
-    try:
-        return judged_past(lm, model, line, before)
-    except Exception:  # LM Studio busy or gone
-        return False
+    return ABOUT_THE_PAST.ask(lm, model, line, before)  # LM Studio busy or gone: False
 
 
 class RecallTool(LookupTool):

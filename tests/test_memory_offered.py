@@ -1,4 +1,4 @@
-"""Memories offered, unasked (app/speak.py's _memory_for, archive.memories and
+"""Memories offered, unasked (context.memory_for, archive.memories and
 memory_offered): what the crew said on another day about what they've just said, given him
 with it, if the model judges it the same thing; at most every few replies, each once."""
 

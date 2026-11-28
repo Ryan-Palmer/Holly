@@ -250,10 +250,12 @@ silent voice and his memory in a temporary folder:
   crashes (it's tried three times).
 - **Memory check**: the side task that decides whether a line asks him to
   remember something (then he must look it up), on labelled lines
-  (`MEMORY_LINES` in `app/scenarios.py`), each asked twice. Also the other
+  (`MEMORY_LINES` in `app/labelled.py`), each asked twice. Also the other
   side checks: whether a line asks for a status report, whether a timer
   come due is a job for one of his tools (and which), and whether a reply takes him up
-  on an offer. Each answer's odds (LM Studio's logprobs) say how sure the
+  on an offer (and with which tool). Every side check is registered in
+  `app/decisions.py`, beside its labelled cases in `app/labelled.py`; a new one
+  goes in both, and a test fails until it has cases. Each answer's odds (LM Studio's logprobs) say how sure the
   model was: the scorecard lists those under 80%, right today but the first
   a new model or a reworded prompt would tip. A model that thinks first is
   always sure, so they tell you nothing there.

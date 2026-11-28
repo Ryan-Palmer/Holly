@@ -1,6 +1,6 @@
 """A long evening's talk, folded into his notes, then asked about: do the facts survive, and
-does he stay himself? Over a long talk his history outweighed his character (persona.py's
-IN_CHARACTER note), and older talk is folded into notes while he sleeps (background.compact):
+does he stay himself? Over a long talk his history outweighed his character (persona/notes.toml's
+in_character note), and older talk is folded into notes while he sleeps (background.compact):
 what's said early must still be his to answer from after. The evals' other conversations
 are too short to reach a fold.
 

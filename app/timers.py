@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .announce import retry_wait
 from .console import DIM, RESET
+from .decisions import Decision, register, starts, tool_named
 from .persona import day, resolve_day, _DAY_WORDS
 from .tools import Tool, Turn
 
@@ -271,12 +272,14 @@ football with Sam", "search for my keys", "watch the news at six").
 Reply with one word: DO or SAY."""
 
 
+TO_DO = register(Decision("to_do", TO_DO_PROMPT, lambda label: f"The label: {label}", "DO / SAY", starts("DO")))
+
+
 def to_do(lm, model: str | None, labels: list[str], quiet: bool = True) -> bool:
     """Is any of these labels something he does with a tool? If it can't be asked, False
     (the note still tells him to do it, as before), or with `quiet` off (the evals), the error."""
     try:
-        return any(lm.ask(TO_DO_PROMPT, f"The label: {label}", model, max_tokens=4,
-                          temperature=0).strip().upper().startswith("DO") for label in labels)
+        return any(TO_DO.ask(lm, model, label, quiet=False) for label in labels)
     except Exception:
         if not quiet:
             raise
@@ -295,18 +298,16 @@ search: anything else to look up on the web (a score, a price, a fact).
 Reply with one word: the tool's name, or NONE if it's unclear."""
 
 
+JOB_TOOL = register(Decision("job_tool", JOB_TOOL_PROMPT, lambda label, tools: f"The label: {label}",
+                             "a tool's name, or NONE", lambda text, label, tools: tool_named(text, tools),
+                             fallback=None))
+
+
 def job_tool(lm, model: str | None, label: str, tools, quiet: bool = True) -> str | None:
     """The tool a timer job (`label`) needs: one of `tools` (those he has), or None if the
     model can't say (then he's left to choose, as before), or with `quiet` off (the evals),
     the error."""
-    try:
-        text = lm.ask(JOB_TOOL_PROMPT, f"The label: {label}", model, max_tokens=4, temperature=0).strip().lower()
-    except Exception:
-        if not quiet:
-            raise
-        return None
-    word = text.split()[0].strip(".,:;!\"'") if text else ""
-    return word if word in tools else None
+    return JOB_TOOL.ask(lm, model, label, tools, quiet=quiet)
 
 
 class TimerTool(Tool):

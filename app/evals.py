@@ -23,9 +23,9 @@ a temporary folder, and Spotify off:
   together). A point both judges fail, each with his own words quoted, fails it; one
   alone flags it, for reading.
 - memory: the memory check (app/archive.py's about_the_past), which decides whether a
-  line asks him to remember something, on labelled lines (scenarios.MEMORY_LINES); and
+  line asks him to remember something, on labelled lines (labelled.MEMORY_LINES); and
   the other side checks, whether a line asks for a status report and whether a timer
-  come due is a job for a tool (scenarios.STATUS_LINES, ACTION_LABELS).
+  come due is a job for a tool, and the rest (labelled.SIDE_CHECKS).
 - folds: a week of made-up talk folded into his notes night after night (app/many_folds.py):
   lasting facts kept, changes taken in (a plan off, moved or done is one note, not two),
   nothing invented; checked in code after every fold.

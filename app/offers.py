@@ -18,12 +18,14 @@ story?" for yes to "Not much to do, is there?": a tool forced for nothing, and a
 story searched for, not read. A note telling him they'd taken it up, for picking the
 tool, made no difference: 2 wrong in 16 with it and without (a report started when told
 "you can get it now"), so it went. Carried on past, though, his request says to leave it
-(persona.PASSED_OVER): a lasagne recipe, passed over, was offered in 6 replies in 8.
+(persona/notes.toml's passed_over): a lasagne recipe, passed over, was offered in 6 replies in 8.
 
 Asked only after a reply that offered or asked something (guards.ASKED_OR_OFFERED): ~0.25 s then.
 """
 
 from __future__ import annotations
+
+from .decisions import Decision, register, starts, tool_named
 
 TAKEN_UP_PROMPT = """\
 Holly, the household computer, does things with his tools: he searches the web, reads or sums up his \
@@ -57,29 +59,29 @@ now", "now's fine" or "later's fine", to a search he offered, is search.
 Reply with one word: the tool's name, or NONE if it's unclear."""
 
 
+def _after(used) -> str:
+    return f" (after using the {' and '.join(used)} tool{'s' * (len(used) > 1)})" if used else ""
+
+
+TAKEN_UP = register(Decision(
+    "taken_up", TAKEN_UP_PROMPT, lambda said, reply: f"Holly said: {said}\nThey reply: {reply}", "YES / NO",
+    starts("YES")))
+OFFERED_TOOL = register(Decision(
+    "offered_tool", OFFERED_TOOL_PROMPT, lambda said, reply, tools, used=(): f"Holly said{_after(used)}: {said}\n"
+                                                                             f"They reply: {reply}",
+    "a tool's name, or NONE", lambda text, said, reply, tools, used=(): tool_named(text, tools), fallback=None))
+
+
 def offered_tool(lm, model: str | None, said: str, reply: str, tools, used=()) -> str | None:
     """The tool what he offered in `said`, taken up by `reply`, needs: one of `tools` (those he
     has), or None if the model can't say (then he's left to choose, as before). `used`: the
     tools his reply came from: "Shall I read you the rest of that story?" / "Go on." was
     research, from his words alone; it was a news story, as the news tool said."""
-    after = f" (after using the {' and '.join(used)} tool{'s' * (len(used) > 1)})" if used else ""
-    try:
-        text = lm.ask(OFFERED_TOOL_PROMPT, f"Holly said{after}: {said}\nThey reply: {reply}", model, max_tokens=4,
-                      temperature=0).strip().lower()
-    except Exception:
-        return None
-    word = text.split()[0].strip(".,:;!\"'") if text else ""
-    return word if word in tools else None
+    return OFFERED_TOOL.ask(lm, model, said, reply, tools, used)
 
 
 def taken_up(lm, model: str | None, said: str, reply: str, quiet: bool = True) -> bool:
     """Is the crew's `reply` to his `said` taking him up on something he offered with his
     tools? If it can't be asked, False (as before), or with `quiet` off (the evals), the
     error."""
-    try:
-        return lm.ask(TAKEN_UP_PROMPT, f"Holly said: {said}\nThey reply: {reply}", model, max_tokens=4,
-                      temperature=0).strip().upper().startswith("YES")
-    except Exception:
-        if not quiet:
-            raise
-        return False
+    return TAKEN_UP.ask(lm, model, said, reply, quiet=quiet)

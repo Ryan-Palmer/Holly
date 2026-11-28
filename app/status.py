@@ -25,6 +25,7 @@ import re
 from pathlib import Path
 
 from .console import DIM, RESET, YELLOW, note
+from .decisions import Decision, register, starts
 from .tools import Tool, Turn
 
 # How a status report's tool result starts.
@@ -301,16 +302,14 @@ write", "my boss wants a status update by five"), or a remark about one he's giv
 Reply with one word: YES or NO."""
 
 
+WANTS_REPORT = register(Decision("wants_report", ASKED_PROMPT, lambda line: f"They say: {line}", "YES / NO",
+                                 starts("YES")))
+
+
 def wants_report(lm, model: str | None, line: str, quiet: bool = True) -> bool:
     """Is `line` asking him for a status report? If it can't be asked, False (he answers as
     he would have), or with `quiet` off (the evals), the error."""
-    try:
-        return lm.ask(ASKED_PROMPT, f"They say: {line}", model, max_tokens=4,
-                      temperature=0).strip().upper().startswith("YES")
-    except Exception:
-        if not quiet:
-            raise
-        return False
+    return WANTS_REPORT.ask(lm, model, line, quiet=quiet)
 
 
 class StatusTool(Tool):
