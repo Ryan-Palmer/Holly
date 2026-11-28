@@ -41,6 +41,7 @@ class ReplyTiming:
     first_token_ms: float | None = None
     total_ms: float | None = None
     reasoning_chars: int = 0
+    reasoning: str = ""  # its last 2,000 characters, kept to show what came instead of a reply
     # From LM Studio, for the last request: the prompt, and what it wrote.
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
@@ -183,6 +184,7 @@ class LmStudio:
         reasoning = extra.get("reasoning_content") or extra.get("reasoning")
         if reasoning:
             timing.reasoning_chars += len(reasoning)
+            timing.reasoning = (timing.reasoning + reasoning)[-2000:]
         if delta.content and timing.first_token_ms is None:
             timing.first_token_ms = (time.perf_counter() - t0) * 1000
         return delta.content

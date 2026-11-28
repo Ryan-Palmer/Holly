@@ -184,13 +184,17 @@ TIMED = "he gave a time of day without the clock"
 NO_CLOCK_SAID = "he said he couldn't tell the time without calling the clock"
 PROMISED = "he promised research without calling the research tool"
 ALONE = "a word alone"
+# After a tool's answer, a reply with nothing to say in it: blank lines, and silence after he'd
+# looked up the weather, and once a timer (two in ~400 eval replies, 28 November; none in 118
+# replays of the same turns). Asked again once; what came instead is logged (app/speak.py).
+EMPTY = "an empty reply after a tool"
 # Not said, nor kept (app/speak.py); and marked in his history:
 OFFERED = "an offer, not said"
 GUESS_CUT = "a guessed time, not said"
 COUNT_CUT = "a countdown, not said"
 ASIDE_CUT = "a crew aside, not said"
 GUESS_MARKED = "a guessed time, marked as one in his history"
-NETS = (STRAY, COUNTED, TIMED, NO_CLOCK_SAID, PROMISED, ALONE,
+NETS = (STRAY, COUNTED, TIMED, NO_CLOCK_SAID, PROMISED, ALONE, EMPTY,
         OFFERED, GUESS_CUT, COUNT_CUT, ASIDE_CUT, GUESS_MARKED)
 
 

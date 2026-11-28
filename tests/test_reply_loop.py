@@ -3,6 +3,7 @@ runs, and the safety nets that make him redo a reply."""
 
 import asyncio
 import datetime as dt
+import json
 
 import pytest
 
@@ -355,6 +356,32 @@ def test_a_word_alone_again_is_said(make_holly):
     holly = make_holly(lm)
     respond(holly, "Hey Holly")
     assert holly.tts.said == ["Yes?"] and len(lm.requests) == 2  # asked once, not forever
+
+
+def test_an_empty_reply_after_a_tool_is_logged_and_asked_again(make_holly):
+    """After the weather, blank lines and silence (28 November, twice in ~400 eval replies)."""
+    from app import guards
+
+    lm = FakeLm([[("clock", {})], "**\n\n", "Ten past nine."])
+    holly = make_holly(lm)
+    respond(holly, "What time is it?")
+    assert holly.tts.said == ["Ten past nine."] and holly.nets[guards.EMPTY] == 1
+    assert any(m["role"] == "user" and m["content"].endswith("what your tools found.]") for m in lm.requests[2]["messages"])
+    assert not any("came out empty" in (m.get("content") or "") for m in lm.requests[1]["messages"])
+    logged = [json.loads(line) for line in holly.empty_log.read_text(encoding="utf-8").splitlines()]
+    assert [(e["raw"], e["tools"], e["said"]) for e in logged] == [("**\n\n", ["clock"], "What time is it?")]
+
+
+def test_an_empty_reply_is_asked_again_only_after_a_tool_and_raw_only_logged(make_holly):
+    lm = FakeLm(["**\n\n"])
+    holly = make_holly(lm)
+    respond(holly, "Hmm.")
+    assert len(lm.requests) == 1 and not holly.empty_log.exists()  # no tool: nothing to tell
+    lm = FakeLm([[("clock", {})], "**\n\n"])
+    holly = make_holly(lm)
+    holly.nets_act = False  # evals --raw: counted and logged, not acted on
+    respond(holly, "What time is it?")
+    assert len(lm.requests) == 2 and holly.empty_log.exists()
 
 
 def test_a_word_then_more_is_said_as_it_is(make_holly):

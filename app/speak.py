@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import datetime
+import json
 import random
 from collections import Counter
 from pathlib import Path
@@ -207,6 +209,23 @@ class Holly:
         # ...and kept between sessions, per model, beside his memory (app/nets.py): what real
         # talk trips, not only the evals'.
         self.net_counts = NetCounts(memory_file.with_name("nets.json") if memory_file else None)
+        # Empty replies after a tool, as the model wrote them (guards.EMPTY), to see what they are.
+        self.empty_log = memory_file.with_name("empty_replies.jsonl") if memory_file else None
+
+    def _log_empty(self, user: str, called: set[str], raw: str, timing) -> None:
+        """An empty reply after a tool, as the model wrote it, and any reasoning LM Studio sent
+        with it: on the console, and appended to empty_replies.jsonl beside his nets.json."""
+        print(f"\n{DIM}  (empty after {', '.join(sorted(called))}: wrote {raw!r}; reasoning "
+              f"{timing.reasoning_chars} characters){RESET}", flush=True)
+        if not self.empty_log:
+            return
+        try:
+            with self.empty_log.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(dict(at=datetime.datetime.now().isoformat(timespec="seconds"), model=self.model,
+                                        said=user, tools=sorted(called), raw=raw,
+                                        reasoning=timing.reasoning[-500:]), ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # a log only: never in the way of his reply
 
     def fired(self, net: str) -> bool:
         """Count a net firing; True if it's to act."""
@@ -511,6 +530,15 @@ class Holly:
                 if not redo and not calls:  # the end of the reply: its last words
                     last = chunker.flush()
                     lone = not retried and not spoken and len(last) == 1 and len(last[0].split()) == 1
+                    if not retried and not spoken and not last and called:
+                        # Nothing to say after a tool's answer (guards.EMPTY): logged as written,
+                        # then asked again, once.
+                        self._log_empty(user, called, "".join(said), timing)
+                        if self.fired(guards.EMPTY):
+                            redo = guards.EMPTY
+                            messages = [*messages[:asked - 1], {**messages[asked - 1], "content": (
+                                messages[asked - 1]["content"] + "\n[Your reply came out empty: tell them, in "
+                                "your own words, what your tools found.]")}, *messages[asked:]]
                     for sentence in last:
                         if redo := dropped(sentence):
                             break
