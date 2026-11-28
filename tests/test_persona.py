@@ -1,6 +1,7 @@
 """His conversation: the prompt he's sent, his history, its compacting, and keeping it on disk."""
 
 import json
+from pathlib import Path
 
 from app.config import load_config
 from app.context import load_notes
@@ -60,6 +61,22 @@ def test_offers_of_more_help_left_out_of_what_he_sees(cfg):
     sent = [m["content"] for m in c.messages_for() if m["role"] == "assistant"]
     assert sent == ["Up again.", "Anything else?"]
     assert c.history[1]["content"] == "Up again. Anything else you need me to dig up?"  # his history as it was
+
+
+def test_worn_phrases_that_tie_come_in_the_order_said():
+    """Not in hash order, which changes from one process to the next: then the same history
+    sent him another request each time, and a replay couldn't match it."""
+    import subprocess
+    import sys
+
+    code = ("from app.context import worn_phrases\n"
+            "h = [dict(role='assistant', content=c) for c in ('Would you like me to zap it? Shall I ring Jo now?',"
+            " 'Shall I ring Jo now? Would you like me to zap it?')]\n"
+            "print(worn_phrases(h))")
+    runs = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={"PYTHONHASHSEED": seed,
+            "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", "")}, cwd=Path(__file__).parent.parent).stdout
+            for seed in ("0", "1", "2", "3")}
+    assert len(runs) == 1 and runs.pop().startswith("['would you like me', 'you like me to', 'like me to zap'")
 
 
 def test_worn_phrases_noted_in_the_request_only(cfg):

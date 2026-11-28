@@ -143,7 +143,10 @@ def worn_phrases(history: list[dict], replies: int = 8, at_most: int = 4) -> lis
         words = re.findall(r"[a-z']+", text.lower())
         if len(words) >= 3:
             openings[" ".join(words[:3])] = openings.get(" ".join(words[:3]), 0) + 1
-        for p in {" ".join(words[i:i + 4]) for i in range(len(words) - 3)}:
+        # Each once a reply, in the order said: phrases that tie are then listed in that order.
+        # From a set, they came in the order of Python's string hashes, new each process: the
+        # same history gave "a"; "b" one time and "b"; "a" the next.
+        for p in dict.fromkeys(" ".join(words[i:i + 4]) for i in range(len(words) - 3)):
             phrases[p] = phrases.get(p, 0) + 1
     worn = [p for p, n in openings.items() if n > 1]
     worn += [p for p, n in sorted(phrases.items(), key=lambda x: -x[1]) if n > 1 and p not in worn
